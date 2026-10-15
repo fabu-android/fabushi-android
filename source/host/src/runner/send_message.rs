@@ -352,13 +352,24 @@ fn send_message_definition() -> Value {
             "required":["type"],
             "additionalProperties":false,
             "properties":{
-                "type":{"type":"string","enum":["text","attachment","widget"]},
+                "type":{"type":"string","enum":["text","attachment","widget","secret-request"]},
                 "content":{"type":"string"},
                 "url":{"type":"string"},
                 "images":{"type":"array","items":{"type":"object","required":["url"],"additionalProperties":false,"properties":{"url":{"type":"string"},"alt":{"type":"string"}}}},
                 "alt":{"type":"string"},
                 "reply_to":{"type":"string"},
                 "channel":{"type":"string"},
+                "secret":{
+                    "type":"object",
+                    "required":["label","connector","field"],
+                    "additionalProperties":false,
+                    "properties":{
+                        "label":{"type":"string","minLength":1},
+                        "description":{"type":"string"},
+                        "connector":{"type":"string","minLength":1,"maxLength":64},
+                        "field":{"type":"string","minLength":1,"maxLength":64}
+                    }
+                },
                 "widget":{
                     "type":"object",
                     "required":["prompt","options"],
@@ -382,19 +393,20 @@ fn normalize_message(args: &Value) -> Result<Value, String> {
         .ok_or("SendMessage arguments must be an object")?;
     reject_unknown(
         object,
-        &["type", "content", "url", "images", "alt", "reply_to", "channel", "widget"],
+        &["type", "content", "url", "images", "alt", "reply_to", "channel", "widget", "secret"],
     )?;
     let message_type = required_field(object, "type")?;
     match message_type {
         "text" => normalize_text(object),
         "attachment" => normalize_attachment(object),
         "widget" => normalize_widget_message(object),
-        _ => Err("SendMessage type must be text, attachment, or widget on Android".into()),
+        "secret-request" => normalize_secret_request(object),
+        _ => Err("SendMessage type must be text, attachment, widget, or secret-request on Android".into()),
     }
 }
 
 fn normalize_text(object: &Map<String, Value>) -> Result<Value, String> {
-    reject_cross_type(object, &["url", "alt", "widget"])?;
+    reject_cross_type(object, &["url", "alt", "widget", "secret"])?;
     let content = required_field(object, "content")?;
     let mut message = json!({"type":"text","content":content});
     if let Some(reply) = optional_string(object.get("reply_to"))? {
@@ -428,7 +440,7 @@ fn normalize_text(object: &Map<String, Value>) -> Result<Value, String> {
 }
 
 fn normalize_attachment(object: &Map<String, Value>) -> Result<Value, String> {
-    reject_cross_type(object, &["content", "images", "widget"])?;
+    reject_cross_type(object, &["content", "images", "widget", "secret"])?;
     let url = required_field(object, "url")?;
     validate_attachment_identity(url)?;
     let mut message = json!({"type":"attachment","url":url});
@@ -447,7 +459,7 @@ fn normalize_attachment(object: &Map<String, Value>) -> Result<Value, String> {
 fn normalize_widget_message(object: &Map<String, Value>) -> Result<Value, String> {
     reject_cross_type(
         object,
-        &["content", "url", "images", "alt", "reply_to", "channel"],
+        &["content", "url", "images", "alt", "reply_to", "channel", "secret"],
     )?;
     let widget = object
         .get("widget")
@@ -505,6 +517,56 @@ fn normalize_widget_message(object: &Map<String, Value>) -> Result<Value, String
         }
     }
     Ok(json!({"type":"widget","widget":normalized}))
+}
+
+fn normalize_secret_request(object: &Map<String, Value>) -> Result<Value, String> {
+    reject_cross_type(
+        object,
+        &["content", "url", "images", "alt", "reply_to", "channel", "widget"],
+    )?;
+    let secret = object
+        .get("secret")
+        .and_then(Value::as_object)
+        .ok_or("secret is required when SendMessage type is secret-request")?;
+    reject_unknown(secret, &["label", "description", "connector", "field"])?;
+    let label = required_field(secret, "label")?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(120)
+        .collect::<String>();
+    if label.is_empty() {
+        return Err("secret label is required".into());
+    }
+    let connector = required_field(secret, "connector")?;
+    let field = required_field(secret, "field")?;
+    if connector.len() > 64
+        || !connector.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'.' | b'_' | b'-')
+        })
+    {
+        return Err("secret connector must be a canonical lowercase platform id".into());
+    }
+    if field.len() > 64
+        || !field.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-')
+        })
+    {
+        return Err("secret field must be a canonical credential field id".into());
+    }
+    let mut request = json!({
+        "label":label,
+        "target":{
+            "kind":"channel-credential",
+            "platform":connector,
+            "field":field,
+        }
+    });
+    if let Some(description) = optional_string(secret.get("description"))? {
+        request["description"] = Value::String(description.chars().take(400).collect());
+    }
+    Ok(json!({"type":"secret-request","secretRequest":request}))
 }
 
 fn validate_attachment_identity(url: &str) -> Result<(), String> {
@@ -589,7 +651,7 @@ mod tests {
         let definition = send_message_definition();
         assert_eq!(
             definition["parameters"]["properties"]["type"]["enum"],
-            json!(["text","attachment","widget"])
+            json!(["text","attachment","widget","secret-request"])
         );
     }
 
@@ -800,6 +862,52 @@ mod tests {
             AWAITING_USER_BLOCKED
         );
         assert_eq!(transcript.lock().unwrap().get_transcript().len(), 1);
+    }
+
+    #[test]
+    fn secret_request_is_canonical_durable_and_never_contains_a_secret_value() {
+        let (tools, transcript, _lifecycle, events, _live, _root) = fixture("secret-request");
+        let result = tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({
+                    "type":"secret-request",
+                    "secret":{
+                        "label":"  Discord   bot token  ",
+                        "description":"  Paste the bot token securely  ",
+                        "connector":"discord",
+                        "field":"token"
+                    }
+                }),
+                "secret-call",
+            )
+            .unwrap();
+        assert_eq!(result["sent"], true);
+        let rows = transcript.lock().unwrap().get_transcript();
+        assert_eq!(rows.len(), 1);
+        let message = &rows[0]["message"];
+        assert_eq!(message["type"], "secret-request");
+        assert_eq!(message["secretRequest"]["label"], "Discord bot token");
+        assert_eq!(message["secretRequest"]["target"]["kind"], "channel-credential");
+        assert_eq!(message["secretRequest"]["target"]["platform"], "discord");
+        assert_eq!(message["secretRequest"]["target"]["field"], "token");
+        assert!(message.get("value").is_none());
+        assert!(message["secretRequest"].get("value").is_none());
+        assert_eq!(events.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn secret_request_validation_fails_before_transcript_side_effect() {
+        let (tools, transcript, _lifecycle, _events, _live, _root) = fixture("secret-invalid");
+        assert!(tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({"type":"secret-request","secret":{"label":"Token","connector":"Discord","field":"token"}}),
+                "secret-invalid",
+            )
+            .unwrap_err()
+            .contains("canonical lowercase platform id"));
+        assert!(transcript.lock().unwrap().get_transcript().is_empty());
     }
 
     #[test]

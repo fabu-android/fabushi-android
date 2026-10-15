@@ -294,6 +294,15 @@ fn send_message_args_from_json(args: &serde_json::Value) -> Result<SendMessageAr
         "widget" => send_message_args::Message::Text(SendMessageText {
             content: widget_summary(message)?,
         }),
+        "secret-request" => {
+            let secret = message.get("secret").unwrap_or(message);
+            let label = required_string(secret.get("label"), "SendMessage secret label")?;
+            send_message_args::Message::Text(SendMessageText {
+                content: format!("Requested a secret from the user securely: {}",
+                    label.split_whitespace().collect::<Vec<_>>().join(" ")
+                ),
+            })
+        },
         _ => return Err("unsupported SendMessage canonical message type".into()),
     };
     Ok(SendMessageArgs { message: Some(message) })
@@ -618,6 +627,46 @@ mod tests {
                 ));
             }
             _ => panic!("wrong AgentToolCall tag"),
+        }
+    }
+
+    #[test]
+    fn secret_request_projects_to_frozen_send_message_text_without_secret_material() {
+        let args = serde_json::json!({
+            "type":"secret-request",
+            "secret":{
+                "label":" Discord   bot token ",
+                "description":"never a credential value",
+                "connector":"discord",
+                "field":"token"
+            }
+        });
+        let result = serde_json::json!({"messageId":"secret-card-1"});
+        let wire = encode_routed_tool_call_observation(
+            "SendMessage",
+            &args,
+            Ok(&result),
+            "secret-call",
+            10,
+            11,
+        )
+        .unwrap()
+        .unwrap();
+        let decoded = decode_agent_tool_call(&wire).unwrap();
+        match decoded.tool.unwrap() {
+            agent_tool_call::Tool::SendMessageToolCall(call) => {
+                match call.args.unwrap().message.unwrap() {
+                    send_message_args::Message::Text(text) => {
+                        assert_eq!(
+                            text.content,
+                            "Requested a secret from the user securely: Discord bot token"
+                        );
+                        assert!(!text.content.contains("credential value"));
+                    }
+                    _ => panic!("secret request must project to canonical SendMessageText"),
+                }
+            }
+            _ => panic!("secret request must remain field 55 SendMessageToolCall"),
         }
     }
 

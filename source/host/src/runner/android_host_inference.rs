@@ -1377,6 +1377,63 @@ mod tests {
     }
 
     #[test]
+    fn production_secret_request_dispatch_preserves_field_55_without_secret_material() {
+        use super::super::agent_v1_wire::{
+            agent_tool_call, decode_agent_tool_call, send_message_args,
+        };
+
+        let endpoint = spawn_sse_server(vec![
+            tool_sse(
+                "SendMessage",
+                "call-secret-1",
+                r#"{"type":"secret-request","secret":{"label":" Discord   bot token ","description":"Paste it securely","connector":"discord","field":"token"}}"#,
+            ),
+            final_sse(),
+        ]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Ok(json!({"sent":true,"messageId":"secret-card-1"})),
+            calls: Arc::clone(&calls),
+        }))
+        .with_tool_call_observation_sink(sink.clone());
+
+        let output = provider.start_stream(&input(), 1).unwrap();
+        assert_eq!(output.chunks.concat(), "done");
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+        let observations = sink.observations.lock().unwrap();
+        assert_eq!(observations.len(), 2);
+        assert_eq!(observations[0].phase, "initial");
+        assert_eq!(observations[1].phase, "completed");
+        assert_eq!(&observations[0].protobuf_bytes[..2], &[0xba, 0x03]);
+        assert_eq!(&observations[1].protobuf_bytes[..2], &[0xba, 0x03]);
+        for observation in observations.iter() {
+            let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
+            assert_eq!(decoded.tool_call_id.as_deref(), Some("call-secret-1"));
+            match decoded.tool.unwrap() {
+                agent_tool_call::Tool::SendMessageToolCall(call) => {
+                    match call.args.unwrap().message.unwrap() {
+                        send_message_args::Message::Text(text) => {
+                            assert_eq!(
+                                text.content,
+                                "Requested a secret from the user securely: Discord bot token"
+                            );
+                            assert!(!text.content.contains("Paste it securely"));
+                        }
+                        _ => panic!("secret request must project to canonical SendMessageText"),
+                    }
+                }
+                _ => panic!("secret request must remain field 55 SendMessageToolCall"),
+            }
+        }
+    }
+
+    #[test]
     fn production_frozen_communicate_bridge_failure_records_error_and_suppresses_retry() {
         use super::super::agent_v1_wire::{
             agent_tool_call, communicate_update_result, decode_agent_tool_call,
