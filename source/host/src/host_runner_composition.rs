@@ -279,6 +279,21 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
             .map_err(ExecutionError::Transport)?;
 
         match self.runner.execute(context, request.clone())? {
+            RemoteDispatchOutcome::Accepted { ack_id } => {
+                self.journal
+                    .acknowledge(
+                        &request.operation_id,
+                        &context.request_id,
+                        &context.account_fence,
+                        context.account_epoch,
+                        &ack_id,
+                        now_ms,
+                    )
+                    .map_err(ExecutionError::Transport)?;
+                Err(ExecutionError::Transport(
+                    "remote_execution_accepted_pending".into(),
+                ))
+            }
             RemoteDispatchOutcome::Completed { ack_id, result } => {
                 self.journal
                     .acknowledge(
@@ -399,44 +414,78 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                 "remote reconciliation identity conflicts with durable journal".into(),
             ));
         }
-        if record.state != RemoteExecutionState::OutcomeUnknown {
+        if !matches!(
+            record.state,
+            RemoteExecutionState::Acked | RemoteExecutionState::OutcomeUnknown
+        ) {
             return Err(ExecutionError::InvalidRequest(
-                "remote reconciliation requires outcome-unknown state".into(),
+                "remote reconciliation requires acknowledged or outcome-unknown state".into(),
             ));
         }
+        let was_acked = record.state == RemoteExecutionState::Acked;
         match self.runner.reconcile(
             context,
             &context.operation_id,
             &context.request_id,
         )? {
             RemoteReconcileOutcome::Completed { result, .. } => {
-                self.journal
-                    .reconcile(
-                        &context.operation_id,
-                        &context.account_fence,
-                        context.account_epoch,
-                        result.output_json.clone(),
-                        now_ms,
-                    )
-                    .map_err(ExecutionError::Transport)?;
+                if was_acked {
+                    self.journal
+                        .complete(
+                            &context.operation_id,
+                            &context.request_id,
+                            &context.account_fence,
+                            context.account_epoch,
+                            result.output_json.clone(),
+                            now_ms,
+                        )
+                        .map_err(ExecutionError::Transport)?;
+                } else {
+                    self.journal
+                        .reconcile(
+                            &context.operation_id,
+                            &context.account_fence,
+                            context.account_epoch,
+                            result.output_json.clone(),
+                            now_ms,
+                        )
+                        .map_err(ExecutionError::Transport)?;
+                }
                 Ok(result)
             }
             RemoteReconcileOutcome::Rejected { ack_id, reason } => {
-                self.journal
-                    .reconcile_rejected(
-                        &context.operation_id,
-                        &context.account_fence,
-                        context.account_epoch,
-                        ack_id.as_deref(),
-                        now_ms,
-                    )
-                    .map_err(ExecutionError::Transport)?;
+                if was_acked {
+                    self.journal
+                        .reject_after_dispatch(
+                            &context.operation_id,
+                            &context.request_id,
+                            &context.account_fence,
+                            context.account_epoch,
+                            ack_id.as_deref(),
+                            now_ms,
+                        )
+                        .map_err(ExecutionError::Transport)?;
+                } else {
+                    self.journal
+                        .reconcile_rejected(
+                            &context.operation_id,
+                            &context.account_fence,
+                            context.account_epoch,
+                            ack_id.as_deref(),
+                            now_ms,
+                        )
+                        .map_err(ExecutionError::Transport)?;
+                }
                 Err(ExecutionError::Transport(format!(
                     "remote_execution_rejected:{reason}"
                 )))
             }
             RemoteReconcileOutcome::Pending { .. } => Err(ExecutionError::Transport(
-                "remote_outcome_unknown_reconcile_pending".into(),
+                if was_acked {
+                    "remote_execution_accepted_pending".into()
+                } else {
+                    "remote_outcome_unknown_reconcile_pending".into()
+                },
             )),
         }
     }
@@ -851,6 +900,51 @@ mod tests {
         assert!(result.output_json.contains("ok"));
         assert_eq!(
             composition.remote().journal().record("remote-op").unwrap().state,
+            RemoteExecutionState::Completed
+        );
+    }
+
+    #[test]
+    fn accepted_remote_execution_persists_acked_and_reconciles_without_replay() {
+        let root = tempfile::tempdir().unwrap();
+        let journal =
+            RemoteExecutionJournal::open(root.path().join("remote.json"), 1).unwrap();
+        let remote = AuthenticatedRemoteHostRunner::new(
+            RecordingRemoteTransport {
+                executes: 0,
+                result: Some(RemoteDispatchOutcome::Accepted {
+                    ack_id: "ack-async".into(),
+                }),
+            },
+            journal,
+        );
+        let mut composition =
+            AuthorizedHostRunnerComposition::new(RecordingRunner::default(), remote);
+        let ctx = context("remote-async");
+        let error = composition
+            .run(
+                ExecutionTarget::RemoteBox,
+                &request("remote-async"),
+                Some(&ctx),
+                2,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            ExecutionError::Transport(ref value)
+                if value == "remote_execution_accepted_pending"
+        ));
+        assert_eq!(
+            composition.remote().journal().record("remote-async").unwrap().state,
+            RemoteExecutionState::Acked
+        );
+        let reconciled = composition
+            .remote
+            .reconcile_authorized(&ctx, 3)
+            .unwrap();
+        assert!(reconciled.output_json.contains("reconciled"));
+        assert_eq!(
+            composition.remote().journal().record("remote-async").unwrap().state,
             RemoteExecutionState::Completed
         );
     }

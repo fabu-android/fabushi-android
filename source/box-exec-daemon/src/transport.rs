@@ -88,6 +88,9 @@ impl RemoteExecutionContext {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RemoteDispatchOutcome {
+    Accepted {
+        ack_id: String,
+    },
     Completed {
         ack_id: String,
         result: ExecutionResult,
@@ -545,15 +548,20 @@ fn dispatch_from_wire(
                     .unwrap_or_else(|| response.status.clone()),
             ),
         }),
-        "accepted" | "pending" | "running" | "outcome_unknown" => {
-            Ok(RemoteDispatchOutcome::OutcomeUnknown {
-                ack_id: response.ack_id,
-                reason: sanitize_reason(format!(
-                    "remote execution acknowledged without terminal result: {}",
-                    response.status
-                )),
-            })
+        "accepted" | "pending" | "running" => {
+            let ack_id = response.ack_id.ok_or_else(|| {
+                ExecutionError::Transport(
+                    "remote accepted execution omitted ack_id".into()
+                )
+            })?;
+            Ok(RemoteDispatchOutcome::Accepted { ack_id })
         }
+        "outcome_unknown" => Ok(RemoteDispatchOutcome::OutcomeUnknown {
+            ack_id: response.ack_id,
+            reason: sanitize_reason(
+                response.error.unwrap_or_else(|| "remote outcome unknown".into())
+            ),
+        }),
         other => Err(ExecutionError::Transport(format!(
             "unsupported remote execution status {other}"
         ))),
@@ -762,6 +770,22 @@ mod tests {
         assert!(request.contains("X-Fabushi-Device-Id: device-1"));
         assert!(request.contains(EXECUTE_PATH));
         assert!(!format!("{context:?}").contains("real-enough-secret-token-for-test"));
+    }
+
+    #[test]
+    fn accepted_remote_execution_is_distinct_from_outcome_unknown() {
+        let (port, captured, handle) = spawn_json_server(vec![(
+            200,
+            r#"{"ackId":"ack-async","status":"accepted"}"#,
+        )]);
+        let (mut transport, context) = context(port);
+        let outcome = transport.execute(&context, &execution_request()).unwrap();
+        assert!(matches!(
+            outcome,
+            RemoteDispatchOutcome::Accepted { ack_id } if ack_id == "ack-async"
+        ));
+        handle.join().unwrap();
+        assert_eq!(captured.lock().unwrap().len(), 1);
     }
 
     #[test]

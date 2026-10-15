@@ -316,8 +316,14 @@ impl RemoteExecutionJournal {
         {
             return Err("cannot reconcile remote rejection across account epochs".into());
         }
-        if record.state != RemoteExecutionState::OutcomeUnknown {
-            return Err("only outcome-unknown remote operations can reconcile rejection".into());
+        if !matches!(
+            record.state,
+            RemoteExecutionState::Acked | RemoteExecutionState::OutcomeUnknown
+        ) {
+            return Err(
+                "only acknowledged or outcome-unknown remote operations can reconcile rejection"
+                    .into(),
+            );
         }
         record.state = RemoteExecutionState::Rejected;
         if let Some(remote_ack_id) = remote_ack_id {
@@ -419,8 +425,11 @@ impl RemoteExecutionJournal {
         {
             return Err("cannot reconcile remote operation across account epochs".into());
         }
-        if record.state != RemoteExecutionState::OutcomeUnknown {
-            return Err("only outcome-unknown remote operations can reconcile".into());
+        if !matches!(
+            record.state,
+            RemoteExecutionState::Acked | RemoteExecutionState::OutcomeUnknown
+        ) {
+            return Err("only acknowledged or outcome-unknown remote operations can reconcile".into());
         }
         record.state = RemoteExecutionState::Completed;
         record.terminal_output_json = Some(output_json);
@@ -614,6 +623,44 @@ mod tests {
             .unwrap();
         assert_eq!(
             journal.record("op-1").unwrap().state,
+            RemoteExecutionState::Completed
+        );
+    }
+
+    #[test]
+    fn acknowledged_async_execution_can_reconcile_without_becoming_outcome_unknown() {
+        let root = tempfile::tempdir().unwrap();
+        let mut journal =
+            RemoteExecutionJournal::open(root.path().join("remote.json"), 1).unwrap();
+        journal.begin(record("op-acked", "req-acked")).unwrap();
+        journal
+            .mark_sent("op-acked", "account-a:epoch-7", 7, "grant-1", 2)
+            .unwrap();
+        journal
+            .acknowledge(
+                "op-acked",
+                "req-acked",
+                "account-a:epoch-7",
+                7,
+                "ack-async",
+                3,
+            )
+            .unwrap();
+        assert_eq!(
+            journal.record("op-acked").unwrap().state,
+            RemoteExecutionState::Acked
+        );
+        journal
+            .reconcile(
+                "op-acked",
+                "account-a:epoch-7",
+                7,
+                r#"{"status":"completed"}"#.into(),
+                4,
+            )
+            .unwrap();
+        assert_eq!(
+            journal.record("op-acked").unwrap().state,
             RemoteExecutionState::Completed
         );
     }
