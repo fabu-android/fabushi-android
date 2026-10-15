@@ -1578,6 +1578,48 @@
           "symbols": [
             "semantic source/responsibility authority reviewed at current Desktop main"
           ]
+        },
+        {
+          "path": "source/fabushi-network-worker/encrypted_store.go",
+          "blob_sha": "3451d310c77beba93a5ec83a08e624ad0a9f36a9",
+          "symbols": [
+            "tsnet network worker source/test/dependency responsibility reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "source/fabushi-network-worker/encrypted_store_test.go",
+          "blob_sha": "b3ca5bb3c50d7049529b78677bfec131f9431cfa",
+          "symbols": [
+            "tsnet network worker source/test/dependency responsibility reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "source/fabushi-network-worker/go.mod",
+          "blob_sha": "213ab58b6bc7e272c6743830ed61cfe273347da0",
+          "symbols": [
+            "tsnet network worker source/test/dependency responsibility reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "source/fabushi-network-worker/main.go",
+          "blob_sha": "744b956da6de1bbf490aebc749e04fd0fbacd4c0",
+          "symbols": [
+            "tsnet network worker source/test/dependency responsibility reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "source/fabushi-network-worker/protocol.go",
+          "blob_sha": "b7e41b1847b039cbb01f4390b41c905a72dd8cf2",
+          "symbols": [
+            "tsnet network worker source/test/dependency responsibility reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "source/fabushi-network-worker/protocol_test.go",
+          "blob_sha": "4dc4741d3c3c8d616c089c086f25e833d4e53022",
+          "symbols": [
+            "tsnet network worker source/test/dependency responsibility reviewed at current Desktop main"
+          ]
         }
       ],
       "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
@@ -1638,7 +1680,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps. Desktop 2026-10-15 rebaseline re-audited browser tools/driver at blobs 792d30fd9db1e7c97f98386ca3f1531d91c63f58 and 1f8c795800334415b63c06669373aa66470fa074: refresh/back/forward are generation-fenced; Android Remote Runner parity and real G11 acceptance remain open. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/fdn-g10-native-computer.yml at Desktop blob 9f186adcb5c2e0d19c5f36e55fa24699a03a93de as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/fdn-tsnet-worker.yml at Desktop blob 4d2e9ad1025891ef8b4a1e2870cbc3f97666e8f6 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fabushi-same-account-device-network.md at Desktop blob 67b94ad8438b4c60b00059bdb4caeae757465d3f as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-account-target-availability.md at Desktop blob 525f620a0a4f423978809f56aa69cceace296da9 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-host-network-enrollment-owner.md at Desktop blob d11fa87ad937a5decf7d4dd5089243a617f207bd as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-host-target-core-owner.md at Desktop blob dda84d379bff467b1a545ce4b1d8f5fa29fe53e6 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-target-private-listener.md at Desktop blob 4f7d9853451e446d6d9d6ea93eeb4ab2f8169758 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-tsnet-network-worker.md at Desktop blob 583c29c1190fd4d398ea039b71e2c4c27a705d87 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-native-display-coordinate-mapping.md at Desktop blob 4e36f1c349418c7c81332d22de9c024f59b63a5f as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-native-snapshot-generation-fencing.md at Desktop blob 89e45106aa9f2faecc44540c24b8443831521c27 as android-adapted; this does not promote verification."
+      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps. Desktop 2026-10-15 rebaseline re-audited browser tools/driver at blobs 792d30fd9db1e7c97f98386ca3f1531d91c63f58 and 1f8c795800334415b63c06669373aa66470fa074: refresh/back/forward are generation-fenced; Android Remote Runner parity and real G11 acceptance remain open. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/fdn-g10-native-computer.yml at Desktop blob 9f186adcb5c2e0d19c5f36e55fa24699a03a93de as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/fdn-tsnet-worker.yml at Desktop blob 4d2e9ad1025891ef8b4a1e2870cbc3f97666e8f6 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fabushi-same-account-device-network.md at Desktop blob 67b94ad8438b4c60b00059bdb4caeae757465d3f as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-account-target-availability.md at Desktop blob 525f620a0a4f423978809f56aa69cceace296da9 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-host-network-enrollment-owner.md at Desktop blob d11fa87ad937a5decf7d4dd5089243a617f207bd as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-host-target-core-owner.md at Desktop blob dda84d379bff467b1a545ce4b1d8f5fa29fe53e6 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-target-private-listener.md at Desktop blob 4f7d9853451e446d6d9d6ea93eeb4ab2f8169758 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-tsnet-network-worker.md at Desktop blob 583c29c1190fd4d398ea039b71e2c4c27a705d87 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-native-display-coordinate-mapping.md at Desktop blob 4e36f1c349418c7c81332d22de9c024f59b63a5f as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-native-snapshot-generation-fencing.md at Desktop blob 89e45106aa9f2faecc44540c24b8443831521c27 as android-adapted; this does not promote verification. 3a0b24034e715dd6b423a4bad737066813d7ff49 audited all six source/fabushi-network-worker files: Desktop local tsnet encrypted-state/peer-stream process is a desktop mechanism; Android uses the Authorized Remote Runner transport/binding replacement and still requires live remote/device acceptance. These rows are mapped, not verified."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
