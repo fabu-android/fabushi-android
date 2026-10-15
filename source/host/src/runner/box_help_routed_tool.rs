@@ -3,6 +3,7 @@ use crate::android_box_handoff::{AndroidBoxHandoffOwner, AndroidHandoffStart};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
+use url::Url;
 
 pub(crate) const REQUEST_BOX_HELP_TOOL_NAME: &str = "request_box_help";
 pub(crate) const WAITING_USER_CANCELLATION_PREFIX: &str = "waiting-user:box-help:";
@@ -101,11 +102,6 @@ struct NormalizedBoxHelpRequest {
 
 fn normalize_request(args: &Value) -> Result<NormalizedBoxHelpRequest, String> {
     let object = args.as_object().ok_or("request_box_help arguments must be an object")?;
-    for key in object.keys() {
-        if !matches!(key.as_str(), "instruction" | "reason" | "domain" | "idp_domain") {
-            return Err(format!("request_box_help contains unsupported field {key}"));
-        }
-    }
     let instruction = object
         .get("instruction")
         .and_then(Value::as_str)
@@ -115,62 +111,39 @@ fn normalize_request(args: &Value) -> Result<NormalizedBoxHelpRequest, String> {
     if instruction.chars().count() > 16_000 {
         return Err("request_box_help instruction exceeds the supported limit".into());
     }
-    let reason = optional_string(object.get("reason"), "reason")?;
-    if let Some(reason) = reason.as_deref() {
-        if !matches!(reason, "auth" | "captcha" | "payment" | "other") {
-            return Err("request_box_help reason must be auth, captcha, payment, or other".into());
-        }
-    }
+    let reason = object
+        .get("reason")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "auth" | "captcha" | "payment" | "other"))
+        .map(ToOwned::to_owned);
     Ok(NormalizedBoxHelpRequest {
         instruction: instruction.to_string(),
         reason,
-        domain: optional_domain(object.get("domain"), "domain")?,
-        idp_domain: optional_domain(object.get("idp_domain"), "idp_domain")?,
+        domain: object
+            .get("domain")
+            .and_then(Value::as_str)
+            .and_then(normalize_box_help_domain),
+        idp_domain: object
+            .get("idp_domain")
+            .and_then(Value::as_str)
+            .and_then(normalize_box_help_domain),
     })
 }
 
-fn optional_string(value: Option<&Value>, field: &str) -> Result<Option<String>, String> {
-    let Some(value) = value else { return Ok(None) };
-    if value.is_null() {
-        return Ok(None);
-    }
-    let value = value
-        .as_str()
-        .ok_or_else(|| format!("request_box_help {field} must be a string"))?
-        .trim();
+fn normalize_box_help_domain(raw: &str) -> Option<String> {
+    let value = raw.trim().to_ascii_lowercase();
     if value.is_empty() {
-        return Ok(None);
+        return None;
     }
-    if value.chars().count() > 512 {
-        return Err(format!("request_box_help {field} exceeds the supported limit"));
-    }
-    Ok(Some(value.to_string()))
-}
-
-fn optional_domain(value: Option<&Value>, field: &str) -> Result<Option<String>, String> {
-    let Some(mut value) = optional_string(value, field)? else {
-        return Ok(None);
+    let candidate = if value.contains("://") {
+        value
+    } else {
+        format!("https://{value}")
     };
-    if let Some(rest) = value.strip_prefix("https://").or_else(|| value.strip_prefix("http://")) {
-        value = rest.to_string();
-    }
-    value = value
-        .split(['/', '?', '#'])
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .trim_end_matches('.')
-        .to_ascii_lowercase();
-    if let Some(rest) = value.strip_prefix("www.") {
-        value = rest.to_string();
-    }
-    if value.is_empty()
-        || value.len() > 253
-        || value.chars().any(|ch| ch.is_control() || ch.is_whitespace())
-    {
-        return Err(format!("request_box_help {field} is invalid"));
-    }
-    Ok(Some(value))
+    let url = Url::parse(&candidate).ok()?;
+    let host = url.host_str()?;
+    let host = host.strip_prefix("www.").unwrap_or(host);
+    (!host.is_empty()).then(|| host.to_string())
 }
 
 fn now_ms() -> u64 {
@@ -252,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_reason_and_unknown_fields_before_durable_mutation() {
+    fn invalid_optional_fields_follow_desktop_fail_soft_semantics() {
         let (root, owner) = temp_owner();
         let bridge = with_box_help_routed_tool(
             Arc::new(EmptyBridge),
@@ -260,17 +233,35 @@ mod tests {
             "session:a",
             "agent-a",
         );
-        assert!(bridge.call_tool(
+        let result = bridge.call_tool(
             REQUEST_BOX_HELP_TOOL_NAME,
-            json!({"instruction":"help","reason":"sudo"}),
+            json!({
+                "instruction":"help",
+                "reason":"sudo",
+                "domain":"not a host / still invalid",
+                "idp_domain":"",
+                "extra":true
+            }),
             "call-1",
-        ).unwrap_err().contains("reason"));
-        assert!(bridge.call_tool(
-            REQUEST_BOX_HELP_TOOL_NAME,
-            json!({"instruction":"help","extra":true}),
-            "call-2",
-        ).unwrap_err().contains("unsupported"));
-        assert_eq!(owner.lock().unwrap().pending_count(), 0);
+        ).unwrap();
+        assert!(waiting_user_box_help_request_id(&result).is_some());
+        let pending = owner.lock().unwrap().pending_for("session:a", "agent-a").unwrap().unwrap();
+        assert_eq!(pending.reason, None);
+        assert_eq!(pending.domain, None);
+        assert_eq!(pending.idp_domain, None);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn normalizes_domains_with_url_host_semantics() {
+        assert_eq!(
+            normalize_box_help_domain("https://www.Example.COM/login?next=1").as_deref(),
+            Some("example.com")
+        );
+        assert_eq!(
+            normalize_box_help_domain("accounts.Example.com/path").as_deref(),
+            Some("accounts.example.com")
+        );
+        assert_eq!(normalize_box_help_domain("not a host / still invalid"), None);
     }
 }
