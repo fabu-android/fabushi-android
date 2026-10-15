@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "712b114592b21f6a8b13b9eb187fcd324505712e9cbe7fbbd4f7e0e16be8e274",
-  "closure_review": "incremental-semantic-audit-activity-media-wiring-gaps-at-205fdd9",
+  "ledger_sha256": "7f800738482f8c6669341c0f4dcb423b60c6015f4771d64a24001ff83f5a17fb",
+  "closure_review": "incremental-session-watch-gap-audit-7b1e610",
   "product_acceptance": "not-claimed"
 }
