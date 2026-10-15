@@ -354,36 +354,64 @@ fn send_message_definition() -> Value {
             "field":{"type":"string","minLength":1,"maxLength":64}
         }
     });
+    let widget_schema = json!({
+        "type":"object",
+        "required":["prompt","options"],
+        "additionalProperties":false,
+        "properties":{
+            "prompt":{"type":"string","minLength":1},
+            "helpText":{"type":"string","minLength":1},
+            "options":{
+                "type":"array",
+                "minItems":1,
+                "maxItems":6,
+                "items":{
+                    "type":"object",
+                    "required":["label"],
+                    "additionalProperties":false,
+                    "properties":{
+                        "label":{"type":"string","minLength":1},
+                        "value":{"type":"string","minLength":1},
+                        "description":{"type":"string","minLength":1},
+                        "style":{"type":"string","enum":["default","primary","danger"]}
+                    }
+                }
+            },
+            "allowCustom":{"type":"boolean"},
+            "dismissOnMoveOn":{"type":"boolean"}
+        }
+    });
+    let images_schema = json!({
+        "type":"array",
+        "items":{
+            "type":"object",
+            "required":["url"],
+            "additionalProperties":false,
+            "properties":{
+                "url":{"type":"string"},
+                "alt":{"type":"string"}
+            }
+        }
+    });
+    let mut properties = Map::new();
+    properties.insert("type".into(), json!({"type":"string","enum":["text","attachment","widget","secret-request"]}));
+    properties.insert("content".into(), json!({"type":"string"}));
+    properties.insert("url".into(), json!({"type":"string"}));
+    properties.insert("images".into(), images_schema);
+    properties.insert("alt".into(), json!({"type":"string"}));
+    properties.insert("reply_to".into(), json!({"type":"string"}));
+    properties.insert("channel".into(), json!({"type":"string"}));
+    properties.insert("secret".into(), secret_schema);
+    properties.insert("widget".into(), widget_schema);
     json!({
         "type":"function",
         "name":SEND_MESSAGE_TOOL_NAME,
-        "description":"Send a user-visible in-app message. Android currently supports text, attachment, and selectable widget messages. Channel provider delivery is fail-closed until a real provider is registered.",
+        "description":"Send a user-visible in-app message. Android supports text, attachment, widget, and secure secret-request messages. Channel provider delivery is fail-closed until a real provider is registered.",
         "parameters":{
             "type":"object",
             "required":["type"],
             "additionalProperties":false,
-            "properties":{
-                "type":{"type":"string","enum":["text","attachment","widget","secret-request"]},
-                "content":{"type":"string"},
-                "url":{"type":"string"},
-                "images":{"type":"array","items":{"type":"object","required":["url"],"additionalProperties":false,"properties":{"url":{"type":"string"},"alt":{"type":"string"}}}},
-                "alt":{"type":"string"},
-                "reply_to":{"type":"string"},
-                "channel":{"type":"string"},
-                "secret":secret_schema,
-                "widget":{
-                    "type":"object",
-                    "required":["prompt","options"],
-                    "additionalProperties":false,
-                    "properties":{
-                        "prompt":{"type":"string","minLength":1},
-                        "helpText":{"type":"string","minLength":1},
-                        "options":{"type":"array","minItems":1,"maxItems":6,"items":{"type":"object","required":["label"],"additionalProperties":false,"properties":{"label":{"type":"string","minLength":1},"value":{"type":"string","minLength":1},"description":{"type":"string","minLength":1},"style":{"type":"string","enum":["default","primary","danger"]}}}},
-                        "allowCustom":{"type":"boolean"},
-                        "dismissOnMoveOn":{"type":"boolean"}
-                    }
-                }
-            }
+            "properties":Value::Object(properties)
         }
     })
 }
