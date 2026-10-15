@@ -24,6 +24,7 @@ const APPROVAL_WAIT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const APPROVAL_POLL: Duration = Duration::from_millis(250);
 const MAX_SHELL_COMMAND: usize = 32 * 1024;
 const MAX_READ_PATH: usize = 4096;
+const MAX_BROWSER_UPLOAD_PATH: usize = 4096;
 const MAX_WRITE_CONTENT: usize = 1024 * 1024;
 const REMOTE_BROWSER_EXECUTION_TIMEOUT_MS: u64 = 90_000;
 const REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS: u64 = 120_000;
@@ -43,6 +44,8 @@ const REMOTE_BROWSER_TOOL_NAMES: &[&str] = &[
     "browser_snapshot",
     "browser_click",
     "browser_mouse_click_xy",
+    "browser_download",
+    "browser_upload_file",
     "browser_type",
     "browser_fill",
     "browser_select_option",
@@ -72,6 +75,8 @@ fn remote_browser_specs() -> Vec<RemoteBrowserToolSpec> {
         RemoteBrowserToolSpec { name: "browser_snapshot", description: "Capture a structured snapshot of the current page with ref handles for interactive elements.", required: &[] },
         RemoteBrowserToolSpec { name: "browser_click", description: "Click an element by ref from browser_snapshot.", required: &["ref"] },
         RemoteBrowserToolSpec { name: "browser_mouse_click_xy", description: "Click at viewport coordinates.", required: &["x", "y"] },
+        RemoteBrowserToolSpec { name: "browser_download", description: "Click an element and track the resulting download into the authorized Remote Runner workspace download area with bounded size and SHA-256 evidence.", required: &["ref"] },
+        RemoteBrowserToolSpec { name: "browser_upload_file", description: "Upload one explicitly authorized regular file from the Remote Runner /workspace root into a file input.", required: &["ref", "filePath"] },
         RemoteBrowserToolSpec { name: "browser_type", description: "Type text into an editable element by ref.", required: &["ref", "text"] },
         RemoteBrowserToolSpec { name: "browser_fill", description: "Set the value of an editable element by ref.", required: &["ref", "value"] },
         RemoteBrowserToolSpec { name: "browser_select_option", description: "Select one or more options in a select element by ref.", required: &["ref", "values"] },
@@ -150,12 +155,18 @@ fn remote_browser_tool_definitions() -> Vec<Value> {
                     json!({"type":"string","enum":["list","new","close","select"]}),
                 );
             }
+            if spec.name == "browser_upload_file" {
+                properties.insert(
+                    "filePath".to_string(),
+                    json!({"type":"string","minLength":1,"maxLength":MAX_BROWSER_UPLOAD_PATH}),
+                );
+            }
             let mut required = spec.required.to_vec();
             if matches!(
                 spec.name,
                 "browser_refresh" | "browser_back" | "browser_forward"
-                    | "browser_click" | "browser_mouse_click_xy" | "browser_type"
-                    | "browser_fill" | "browser_select_option" | "browser_press_key"
+                    | "browser_click" | "browser_mouse_click_xy" | "browser_download"
+                    | "browser_upload_file" | "browser_type" | "browser_fill" | "browser_select_option" | "browser_press_key"
                     | "browser_drag" | "browser_cdp"
             ) {
                 if !required.contains(&"viewId") { required.push("viewId"); }
@@ -1375,6 +1386,8 @@ fn validate_remote_browser_allowed_keys(
         "browser_snapshot" => &["interactive", "maxDepth", "selector"],
         "browser_click" => &["ref", "offsetX", "offsetY", "holdDurationMs", "doubleClick", "button", "modifiers"],
         "browser_mouse_click_xy" => &["x", "y", "button"],
+        "browser_download" => &["ref"],
+        "browser_upload_file" => &["ref", "filePath"],
         "browser_type" => &["ref", "text", "clear", "slowly", "submit"],
         "browser_fill" => &["ref", "value"],
         "browser_select_option" => &["ref", "values"],
@@ -1400,8 +1413,8 @@ fn validate_remote_browser_allowed_keys(
 fn remote_browser_requires_generation_fence(name: &str, args: &Value) -> bool {
     match name {
         "browser_refresh" | "browser_back" | "browser_forward"
-        | "browser_click" | "browser_mouse_click_xy" | "browser_type"
-        | "browser_fill" | "browser_select_option" | "browser_press_key"
+        | "browser_click" | "browser_mouse_click_xy" | "browser_download"
+        | "browser_upload_file" | "browser_type" | "browser_fill" | "browser_select_option" | "browser_press_key"
         | "browser_drag" | "browser_cdp" => true,
         "browser_tabs" => matches!(
             args.get("action").and_then(Value::as_str),
@@ -1479,6 +1492,24 @@ fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, S
                 }
             }
             validate_browser_button(object)?;
+        }
+        "browser_download" => {
+            validate_browser_required_string(object, name, "ref")?;
+        }
+        "browser_upload_file" => {
+            validate_browser_required_string(object, name, "ref")?;
+            let path = object
+                .get("filePath")
+                .and_then(Value::as_str)
+                .ok_or("Remote Browser browser_upload_file requires filePath")?;
+            if path.is_empty()
+                || path.len() > MAX_BROWSER_UPLOAD_PATH
+                || path.chars().any(char::is_control)
+                || !path.starts_with("/workspace/")
+                || path.split('/').any(|part| matches!(part, "." | ".."))
+            {
+                return Err("Remote Browser upload filePath must be a confined /workspace path of at most 4096 non-control characters".into());
+            }
         }
         "browser_type" => {
             validate_browser_required_string(object, name, "ref")?;
@@ -2427,6 +2458,33 @@ mod tests {
             .unwrap(),
             REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
         );
+
+        for name in ["browser_download", "browser_upload_file"] {
+            assert!(validate_remote_tool_input(name, &json!({"ref":"ref-1"})).is_err());
+        }
+        assert_eq!(
+            validate_remote_tool_input(
+                "browser_download",
+                &json!({"ref":"ref-1","viewId":"view-a","expectedGeneration":"generation-7"}),
+            )
+            .unwrap(),
+            REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
+        );
+        assert_eq!(
+            validate_remote_tool_input(
+                "browser_upload_file",
+                &json!({"ref":"ref-1","filePath":"/workspace/upload.txt","viewId":"view-a","expectedGeneration":"generation-7"}),
+            )
+            .unwrap(),
+            REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
+        );
+        for path in ["/tmp/outside.txt", "/workspace/../escape.txt", "/workspace/bad\nname"] {
+            assert!(validate_remote_tool_input(
+                "browser_upload_file",
+                &json!({"ref":"ref-1","filePath":path,"viewId":"view-a","expectedGeneration":"generation-7"}),
+            )
+            .is_err(), "unsafe upload path must fail closed: {path}");
+        }
 
         assert!(validate_remote_tool_input(
             "browser_cdp",
