@@ -6912,20 +6912,24 @@
         "source/packages/constants/src/structured_log.rs",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/CoordinatorTelemetry.kt",
         "source/host/src/android_structured_log_spill.rs",
-        "source/host/src/android_json_runtime.rs"
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/bot_block_detection.rs",
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/src/extensions/telemetry/bot_block_telemetry.rs",
+        "source/host/tests/android_bot_block_production_contract.rs"
       ],
       "android_owner": "Rust Host telemetry/diagnostic modules with source-neutral Coordinator transport telemetry",
       "platform_delta": "Desktop/Electron producer call sites become Android Host/Coordinator producers; OS-specific fields change, but unique ownership, producer evidence, redaction and settlement semantics remain required.",
       "implementation_status": "implemented",
-      "production_wiring": "AndroidJsonHost durably persists allowlisted/redacted events in AndroidStructuredLogSpill, immediately kicks an account-fenced single-flight shipper, submits real batches through CursorDashboardMcpAuthBackend.submit_structured_logs to AnalyticsService/SubmitLogs, validates processed+dropped receipts, retains failed batches, and performs non-blocking Host-drop handoff.",
-      "unit_test": "AndroidStructuredLogSpill durability/account-rotation/receipt tests plus dashboard structured_logs_submit_contract_tests; exact-head Actions pending.",
-      "contract_test": "required: event-by-event mapper/producer/owner/redaction contracts on the exact Android HEAD",
+      "production_wiring": "AndroidJsonHost durably persists allowlisted/redacted events in AndroidStructuredLogSpill, immediately kicks an account-fenced single-flight shipper, submits real batches through CursorDashboardMcpAuthBackend.submit_structured_logs to AnalyticsService/SubmitLogs, validates processed+dropped receipts, retains failed batches, and performs non-blocking Host-drop handoff. At b0b8fba25c385a6978039b52c8b7cc5e1812f2f9 the shipping Remote Browser path also observes only Runner-returned page identity after a successful fenced browser result, durably deduplicates replayed operation callbacks, records BrowserNavigation in the canonical SandActionAuditor first, classifies the Desktop bot-block signatures, and writes sand.bot_block plus sand.bot_block_detail through the same AndroidStructuredLogSpool/SubmitLogs owner; no Presentation/Coordinator duplicate owner is introduced.",
+      "unit_test": "AndroidStructuredLogSpill durability/account-rotation/receipt/recovery-identity tests, dashboard structured_logs_submit_contract_tests, bot_block_detection classifier tests, Remote Browser observation tests, and android_bot_block_production_contract.rs; exact-head Actions required after ledger update.",
+      "contract_test": "Bot-block producer/mapper/owner/privacy contract is source-wired at b0b8fba; remaining observability event families still require event-by-event exact-head evidence.",
       "integration_test": "required: shipping Host/Coordinator lifecycle producers write through the unique owner without a Presentation duplicate",
       "packaged_test": "required for release diagnostics/provenance where applicable",
       "device_test": "required for Android lifecycle/process-death/permission failures that only occur on device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production backend delivery is source-wired: bounded durable spill, account fencing, real AnalyticsService/SubmitLogs wire encoding, receipt validation, failed-batch retention, background-producer kick and Host-drop handoff are present. Keep not-verified until a descendant exact HEAD passes Rust/architecture/full CI plus packaged/device lifecycle evidence; telemetry failure remains diagnostic-only and never mutates canonical product state."
+      "notes": "Production backend delivery is source-wired: bounded durable spill, account fencing, real AnalyticsService/SubmitLogs wire encoding, receipt validation, failed-batch retention, background-producer kick and Host-drop handoff are present. Keep not-verified until a descendant exact HEAD passes Rust/architecture/full CI plus packaged/device lifecycle evidence; telemetry failure remains diagnostic-only and never mutates canonical product state. Bot-block correction: the prior ledger statement that only a mapper existed is obsolete after b0b8fba; production BrowserNavigation producer/classifier/summary-detail logging now exists, but this responsibility remains not-verified until the exact ledger-update HEAD passes required CI and packaged/device evidence."
     },
     {
       "responsibility_id": "OBSERVABILITY-STRUCTURED-LOG-TRANSPORT-ANDROID-001",
@@ -17856,7 +17860,7 @@
       "device_test": "pending protected account/Remote Runner device acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production source wiring is implemented. Do not mark verified until descendant exact-head Rust/Android gates plus packaged/protected external-Runner device acceptance succeed. Workspace-ignore source gap is implemented at 547d35d… but remains not-verified until a descendant exact-head Rust/architecture/package chain succeeds. Desktop source/host/src/extensions/box_store_sync/box_store_download.rs blob 717b031bd4d52d0a76893932433b4bec8e874684 was semantically audited against shipping box_copy_in::restore_manifest and implemented in Android replacement commit 642c27b01d654fad9dc6ded7189e760f84f17b00; source row is implemented, not verified, until a descendant exact-head Rust/architecture chain succeeds.",
+      "notes": "Production source wiring is implemented. Do not mark verified until descendant exact-head Rust/Android gates plus packaged/protected external-Runner device acceptance succeed. Workspace-ignore source gap is implemented at 547d35d… but remains not-verified until a descendant exact-head Rust/architecture/package chain succeeds. Desktop source/host/src/extensions/box_store_sync/box_store_download.rs blob 717b031bd4d52d0a76893932433b4bec8e874684 was semantically audited against shipping box_copy_in::restore_manifest and implemented in Android replacement commit 642c27b01d654fad9dc6ded7189e760f84f17b00; source row is implemented, not verified, until a descendant exact-head Rust/architecture chain succeeds. Current Desktop c33a9495 copy-in contract audit separates the implemented Android box.store.sync journal/backend from additional frozen copy-in semantics: legacy primary/legacy handoff and store.db identity coverage, pack-index hydration with pack-to-loose fallback, status throttle/watchdog/single download-owner, and started/watchdog/terminal sand.box_copy_in production emission remain open. Do not use this responsibility's implemented status to mark those source rows complete.",
       "android_head_at_update": "642c27b01d654fad9dc6ded7189e760f84f17b00"
     },
     {
