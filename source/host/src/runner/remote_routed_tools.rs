@@ -900,8 +900,15 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 .map_err(|_| "remote runner lock poisoned".to_string())?;
             let runner = guard.as_mut().ok_or("trusted Remote runner is unavailable")?;
             if let Some(record) = runner.journal().record(&operation_id).cloned() {
-                let existing_shell_id = background_shell
-                    .then(|| self.background_shell_work_id(&context));
+                let existing_shell_id = if background_shell {
+                    Some(self.prepare_background_shell_owner(
+                        &context,
+                        &background_shell_title(&args),
+                        &record,
+                    )?)
+                } else {
+                    None
+                };
                 let result = match record.state {
                     RemoteExecutionState::Completed => runner
                         .execute_authorized(&context, &request, now_ms())
@@ -1223,7 +1230,14 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             {
                 Err(format!("{message}; explicit reconciliation required"))
             }
-            Err(error) => Err(remote_execution_error(error)),
+            Err(error) => {
+                drop(guard);
+                self.cancel_prepared_background_shell(
+                    background_shell_work_id.as_deref(),
+                    &context,
+                );
+                Err(remote_execution_error(error))
+            }
         }
     }
 }
