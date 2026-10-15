@@ -58299,9 +58299,18 @@
             "CopyFromBox",
             "FileTransferController"
           ]
+        },
+        {
+          "path": "source/host/tests/box_file_transfer_contract.rs",
+          "blob_sha": "800bd031bf575b1121269e06a0cdf0ff61f2478b",
+          "symbols": [
+            "box_file_transfer_quotes_shell_and_classifies_transient_failures",
+            "box_file_transfer_runs_shell_through_host_shell_args_contract",
+            "box_file_upload_uses_part_write_atomic_move_and_cleanup_on_write_failure"
+          ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve shipping CopyToBox/CopyFromBox Agent tools that move bounded files between the selected user computer and Agent Box with tool-call-scoped approval, 100 MiB bounds, chunked digest verification, explicit offline/missing errors, and no blind replay of ambiguous side effects.",
       "source_owner": "Desktop ProductionFileTransferExecutor + GatewayLocalExecSandBox + Agent Box TransferBox",
       "direct_callers": [
@@ -58348,22 +58357,24 @@
         "source/host/src/runner/remote_routed_tools.rs",
         "source/host/src/host_runner_composition.rs",
         "source/host/src/remote_execution.rs",
+        "source/box-exec-daemon/src/file_transfer_backend.rs",
+        "source/box-exec-daemon/src/deployment_contract.rs",
         "source/local-exec-daemon/src/bounded_file_handlers.rs",
-        "source/box-exec-daemon"
+        "source/host/tests/box_file_transfer_contract.rs"
       ],
       "android_owner": "Rust Host + CapabilityBroker + authenticated external Runner + Agent Box service",
       "platform_delta": "Desktop co-resident local-exec becomes authorized Remote Runner for user-computer endpoint.",
-      "implementation_status": "mapped",
-      "production_wiring": "Remote shell/read/write and durable reconciliation exist. 100 MiB staged upload exists only under AndroidLocal tests with no production caller. CopyToBox/CopyFromBox and Agent-Box↔Remote composition remain missing.",
-      "unit_test": "bounded_file_handlers covers staged upload order/digest/version/overwrite only as supporting evidence",
-      "contract_test": "Open: authorized Remote transfer + CopyToBox/CopyFromBox contract",
-      "integration_test": "Open: Host→CapabilityBroker→authorized Remote user computer↔Agent Box",
+      "implementation_status": "implemented",
+      "production_wiring": "Shipping Agent tool graph now exposes CopyToBox/CopyFromBox only for protected bindings that explicitly declare the file-transfer executor. RemoteRoutedTools maps both tools to box.file.transfer and sends them through the existing CapabilityBroker one-time approval, AuthenticatedRemoteHostRunner durable journal, authenticated execute/reconcile/cancel transport, and account/device/executor fences. The authorized external Runner has a dedicated RemoteFileTransferBackend/open_remote_file_transfer_execution_service that owns bounded user-root↔Agent-box-root mutation. AndroidLocal staged upload is supporting semantics only, not the canonical production owner.",
+      "unit_test": "file_transfer_backend tests cover CopyToBox/CopyFromBox roundtrip, 100 MiB rejection, destination version conflict, traversal rejection, explicit staged start/chunk/commit order, duplicate/out-of-order chunks, digest mismatch, reconcile and staging cleanup; remote_routed_tools unit tests cover explicit file-transfer executor and argument bounds.",
+      "contract_test": "source/host/tests/box_file_transfer_contract.rs freezes shipping Host→authorized Remote wiring, 100 MiB/32 KiB staged bounds, digest result, reconciliation, and durable Remote identity; same exact-head GitHub Actions still pending.",
+      "integration_test": "Production composition exists in source and is exercised by Rust contract composition. Live enrolled external-Runner acceptance remains blocked by REMOTE-RUNNER-ENROLLMENT-001.",
       "packaged_test": "Open exact-head packaged transfer journey",
       "device_test": "Open selected-device protected-account transfer acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Created by semantic audit at Android 43d15e4d53620f972dca79fc8bd9b6149a93f552; prevents test-only AndroidLocal staged upload from being counted as Remote Box parity.",
-      "android_head_at_update": "43d15e4d53620f972dca79fc8bd9b6149a93f552"
+      "notes": "Production caller now exists, so mapped→implemented is justified. Do not promote to verified until this exact HEAD passes required Actions and packaged/device transfer evidence exists. No predecessor d06 artifact is reused.",
+      "android_head_at_update": "cba2056382e25987de5263414d713701de3d80c5"
     },
     {
       "responsibility_id": "AGENT-REMOTE-PROMPT-ANDROID-001",

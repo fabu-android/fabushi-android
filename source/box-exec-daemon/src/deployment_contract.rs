@@ -6,6 +6,7 @@
 //! explicit prevents a second hidden execution boundary from being introduced into the APK.
 
 use crate::box_store_backend::{RemoteBoxStoreBackend, RemoteBoxStoreBackendConfig};
+use crate::file_transfer_backend::{RemoteFileTransferBackend, RemoteFileTransferConfig};
 use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService};
 use fabushi_android_shared::ExecutionError;
 use std::path::PathBuf;
@@ -33,6 +34,24 @@ pub const SECURITY_BOUNDARY: &str =
     "Android Host dispatch requires a protected account/device/executor binding and one-time capability approval; the external runner independently authenticates every operation and owns side-effect execution.";
 
 /// Compose the dedicated, durable Box Store execution service for an authorized external Runner.
+/// Compose the bounded CopyToBox/CopyFromBox service for an authorized external Runner.
+///
+/// The Android APK remains only the authenticated client. The external Runner owns both configured
+/// endpoint roots and executes the staged 100 MiB transfer contract after Host authorization.
+pub fn open_remote_file_transfer_execution_service<A: RemoteExecutionAuthorizer>(
+    journal_path: impl Into<PathBuf>,
+    authorizer: A,
+    config: RemoteFileTransferConfig,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<A, RemoteFileTransferBackend>, ExecutionError> {
+    crate::file_transfer_backend::open_file_transfer_service(
+        journal_path,
+        authorizer,
+        config,
+        now_ms,
+    )
+}
+
 pub fn open_remote_box_store_execution_service<A: RemoteExecutionAuthorizer>(
     journal_path: impl Into<PathBuf>,
     authorizer: A,

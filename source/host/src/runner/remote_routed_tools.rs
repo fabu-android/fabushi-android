@@ -26,6 +26,8 @@ const MAX_SHELL_COMMAND: usize = 32 * 1024;
 const MAX_READ_PATH: usize = 4096;
 const MAX_BROWSER_UPLOAD_PATH: usize = 4096;
 const MAX_WRITE_CONTENT: usize = 1024 * 1024;
+const COPY_TO_BOX_TOOL_NAME: &str = "CopyToBox";
+const COPY_FROM_BOX_TOOL_NAME: &str = "CopyFromBox";
 const REMOTE_BROWSER_EXECUTION_TIMEOUT_MS: u64 = 90_000;
 const REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS: u64 = 120_000;
 const REMOTE_REFUSED_ACTION_MEMORY: usize = 512;
@@ -260,6 +262,7 @@ impl RemoteDispatchBinding {
             "external-read",
             "cloud-agent",
             "box-store-sync",
+            "file-transfer",
         ];
         if let Some(executor) = self.executors.iter().find(|value| !ALLOWED_EXECUTORS.contains(&value.as_str())) {
             return Err(format!("remote binding executor is unsupported: {executor}"));
@@ -550,6 +553,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             !matches!(
                 name,
                 "Shell" | "Read" | "Write" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
+                    | COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME
             ) && !is_remote_browser_tool(name)
         });
         if binding.supports("shell") {
@@ -597,6 +601,42 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     "properties":{
                         "path":{"type":"string","minLength":1,"maxLength":4096},
                         "content":{"type":"string","maxLength":1048576}
+                    }
+                }
+            }));
+        }
+        if binding.supports("file-transfer") {
+            tools.push(json!({
+                "type":"function",
+                "name":COPY_TO_BOX_TOOL_NAME,
+                "description":"Copy a file from the user's paired trusted Remote computer into the Agent box, verbatim. The transfer is bounded to 100 MiB, SHA-256 verified, account/device fenced, and approval-gated.",
+                "parameters":{
+                    "type":"object",
+                    "additionalProperties":false,
+                    "required":["computer_path"],
+                    "properties":{
+                        "computer_path":{"type":"string","minLength":1,"maxLength":4096},
+                        "box_path":{"type":"string","minLength":1,"maxLength":4096},
+                        "computer":{"type":"string","minLength":1,"maxLength":512},
+                        "expected_destination_version":{"type":"string","pattern":"^[0-9a-fA-F]{64}$"},
+                        "overwrite":{"type":"boolean"}
+                    }
+                }
+            }));
+            tools.push(json!({
+                "type":"function",
+                "name":COPY_FROM_BOX_TOOL_NAME,
+                "description":"Copy a file from the Agent box out to the user's paired trusted Remote computer, verbatim. The transfer is bounded to 100 MiB, SHA-256 verified, account/device fenced, and approval-gated.",
+                "parameters":{
+                    "type":"object",
+                    "additionalProperties":false,
+                    "required":["box_path"],
+                    "properties":{
+                        "box_path":{"type":"string","minLength":1,"maxLength":4096},
+                        "computer_path":{"type":"string","minLength":1,"maxLength":4096},
+                        "computer":{"type":"string","minLength":1,"maxLength":512},
+                        "expected_destination_version":{"type":"string","pattern":"^[0-9a-fA-F]{64}$"},
+                        "overwrite":{"type":"boolean"}
                     }
                 }
             }));
@@ -689,7 +729,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let browser_tool = is_remote_browser_tool(name);
         if !matches!(
             name,
-            "Shell" | "Read" | "Write" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead" | CLOUD_AGENT_TOOL_NAME
+            "Shell" | "Read" | "Write" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
+                | COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME | CLOUD_AGENT_TOOL_NAME
         ) && !browser_tool {
             return self.delegate.call_tool(name, args, tool_call_id);
         }
@@ -733,6 +774,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Shell" | "ExternalShell" => "remote.shell",
             "Read" | "ExternalRead" => "remote.read",
             "Write" => "remote.write",
+            COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME => "box.file.transfer",
             "Computer" | "Screenshot" => "computer.use",
             CLOUD_AGENT_TOOL_NAME => "cloud.agent",
             _ if browser_tool => "browser.use",
@@ -759,6 +801,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Shell" => "shell",
             "Read" => "read",
             "Write" => "write",
+            COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME => "file-transfer",
             "Computer" => "computer",
             "Screenshot" => "screenshot",
             CLOUD_AGENT_TOOL_NAME => "cloud-agent",
@@ -769,6 +812,13 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         };
         if !binding.supports(required_executor) {
             return Err(format!("trusted Remote binding does not declare executor {required_executor}"));
+        }
+        if matches!(name, COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME) {
+            if let Some(computer) = args.get("computer").and_then(Value::as_str) {
+                if computer != binding.device_id {
+                    return Err("file-transfer computer selector does not match the paired Remote device".into());
+                }
+            }
         }
         let auto_review = match self.auto_review_preflight.as_ref() {
             Some(preflight) => preflight(name, &args)?,
@@ -1240,6 +1290,53 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
                 return Err("Remote Write content exceeds the bounded 1 MiB limit".into());
             }
             Ok(30_000)
+        }
+        COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME => {
+            let allowed = if name == COPY_TO_BOX_TOOL_NAME {
+                ["computer_path", "box_path", "computer", "expected_destination_version", "overwrite"]
+            } else {
+                ["box_path", "computer_path", "computer", "expected_destination_version", "overwrite"]
+            };
+            if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+                return Err(format!("Remote {name} argument is unsupported: {key}"));
+            }
+            let required = if name == COPY_TO_BOX_TOOL_NAME { "computer_path" } else { "box_path" };
+            let path = object
+                .get(required)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| format!("Remote {name} requires {required}"))?;
+            if path.len() > MAX_READ_PATH || path.contains(' ') {
+                return Err(format!("Remote {name} {required} is invalid or too large"));
+            }
+            for optional in ["computer_path", "box_path"] {
+                if optional == required {
+                    continue;
+                }
+                if let Some(value) = object.get(optional) {
+                    let value = value.as_str().ok_or_else(|| format!("Remote {name} {optional} must be a string"))?;
+                    if value.trim().is_empty() || value.len() > MAX_READ_PATH || value.contains(' ') {
+                        return Err(format!("Remote {name} {optional} is invalid or too large"));
+                    }
+                }
+            }
+            if let Some(computer) = object.get("computer") {
+                let computer = computer.as_str().ok_or_else(|| format!("Remote {name} computer must be a string"))?;
+                if computer.trim().is_empty() || computer.len() > 512 || computer.chars().any(char::is_control) {
+                    return Err(format!("Remote {name} computer selector is invalid"));
+                }
+            }
+            if let Some(version) = object.get("expected_destination_version") {
+                let version = version.as_str().ok_or_else(|| format!("Remote {name} expected_destination_version must be a SHA-256 string"))?;
+                if version.len() != 64 || !version.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                    return Err(format!("Remote {name} expected_destination_version is invalid"));
+                }
+            }
+            if object.get("overwrite").is_some_and(|value| !value.is_boolean()) {
+                return Err(format!("Remote {name} overwrite must be boolean"));
+            }
+            Ok(120_000)
         }
         "Computer" => {
             validate_remote_computer_action(args, true)?;
@@ -2147,6 +2244,45 @@ mod tests {
         assert!(validate_remote_tool_input(
             "Write",
             &json!({"path":"workspace/note.txt","content":"hello","mode":"append"}),
+        ).is_err());
+    }
+
+    #[test]
+    fn file_transfer_executor_is_explicit_bounded_and_device_fenced() {
+        let binding = RemoteDispatchBinding::parse(&json!({
+            "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-transfer",
+            "issuedAtMs":1,
+            "expiresAtMs":4102444800000_u64,
+            "endpoint":"https://remote.example.com",
+            "bearerCredential":"long-enough-credential",
+            "deviceId":"device-transfer",
+            "accountFence":"session:a",
+            "accountEpoch":7,
+            "executors":["file-transfer"]
+        }).to_string()).unwrap();
+        assert!(binding.supports("file-transfer"));
+        assert_eq!(
+            validate_remote_tool_input(
+                COPY_TO_BOX_TOOL_NAME,
+                &json!({"computer_path":"docs/input.bin","box_path":"uploads/input.bin"})
+            ).unwrap(),
+            120_000,
+        );
+        assert_eq!(
+            validate_remote_tool_input(
+                COPY_FROM_BOX_TOOL_NAME,
+                &json!({"box_path":"out/report.pdf","computer_path":"report.pdf","overwrite":false})
+            ).unwrap(),
+            120_000,
+        );
+        assert!(validate_remote_tool_input(
+            COPY_TO_BOX_TOOL_NAME,
+            &json!({"computer_path":"x","expected_destination_version":"not-a-digest"})
+        ).is_err());
+        assert!(validate_remote_tool_input(
+            COPY_FROM_BOX_TOOL_NAME,
+            &json!({"box_path":"x","unexpected":true})
         ).is_err());
     }
 

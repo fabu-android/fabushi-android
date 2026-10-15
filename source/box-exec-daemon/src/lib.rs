@@ -16,6 +16,7 @@ pub mod cli;
 #[allow(special_module_name)]
 pub mod main;
 pub mod deployment_contract;
+pub mod file_transfer_backend;
 pub mod server;
 pub mod transport;
 
@@ -57,6 +58,10 @@ where
     let backend = RemoteBoxStoreBackend::open(backend_config)?;
     server::RemoteExecutionService::open(journal_path, authorizer, backend, now_ms)
 }
+pub use file_transfer_backend::{
+    open_file_transfer_service, RemoteFileTransferBackend, RemoteFileTransferConfig,
+    BOX_FILE_TRANSFER_CAPABILITY, MAX_TRANSFER_BYTES, TRANSFER_CHUNK_BYTES,
+};
 pub use transport::{
     AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteCancelOutcome,
     RemoteDispatchOutcome, RemoteExecutionContext, RemoteExecutionTransport,
