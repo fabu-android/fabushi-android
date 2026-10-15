@@ -73,6 +73,9 @@ use crate::extensions::action_audit::action_audit_service::{
 use crate::extensions::telemetry::agent_error_telemetry::{
     agent_error_telemetry, AgentErrorReport,
 };
+use crate::extensions::telemetry::bot_block_telemetry::{
+    bot_block_detail_telemetry, bot_block_telemetry, BotBlockReport,
+};
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
 use crate::extensions::telemetry::host_event_bus_telemetry::host_event_bus_telemetry;
 use crate::extensions::telemetry::memory_synthesis_telemetry::memory_synthesis_service_telemetry;
@@ -196,6 +199,7 @@ use crate::runner::{
     with_send_message_tools, with_send_message_tools_counted_to_target, with_multitask_todo_tools,
     with_box_help_routed_tool, with_generate_image_routed_tools, with_local_file_tools,
     with_remote_routed_tools, with_web_routed_tools, WAITING_USER_CANCELLATION_PREFIX,
+    RemoteBrowserNavigationObservation, RemoteBrowserNavigationObserver,
     with_reaction_routed_tool, ReactionDeliveryCounter,
     with_spotlighted_routed_tools, spotlight_prompt_section,
     with_mcp_meta_routed_tools, McpMetaCallTarget, McpMetaReviewPreflight,
@@ -13211,6 +13215,8 @@ impl AndroidJsonHost {
             subagent_review_approval_expiry_policy(request_source.as_deref());
         let turn_dispatch = Arc::clone(&self.turn_dispatch);
         let queue_structured_log_spool = Arc::clone(&self.structured_log_spool);
+    let browser_action_audit = self.action_audit.clone();
+    let browser_structured_log_spool = Arc::clone(&self.structured_log_spool);
         let queue_interruptions = Arc::clone(&self.agent_turn_interruptions);
         let queue_request_source = request_source.clone();
         let queue_ack_redrive = ack_redrive;
@@ -13861,6 +13867,73 @@ impl AndroidJsonHost {
                                     }
                                 })
                             }) as RemoteAutoReviewPreflight
+                        }),
+                        browser_action_audit.clone().map({
+                            let browser_structured_log_spool = Arc::clone(&browser_structured_log_spool);
+                            let browser_conversation_id = conversation_id_owned.clone();
+                            let browser_turn_id = operation_id_owned.clone();
+                            move |auditor| {
+                                let browser_structured_log_spool = Arc::clone(&browser_structured_log_spool);
+                                let browser_conversation_id = browser_conversation_id.clone();
+                                let browser_turn_id = browser_turn_id.clone();
+                                Arc::new(move |observation: RemoteBrowserNavigationObservation| {
+                                    let recovery_hash = crate::sha256::sha256_hex(
+                                        observation.operation_id.as_bytes(),
+                                    );
+                                    let recovery_id = format!("browser-audit:{}", &recovery_hash[..32]);
+                                    let claimed = browser_structured_log_spool
+                                        .lock()
+                                        .ok()
+                                        .and_then(|mut spool| {
+                                            spool.claim_recovery_id(&recovery_id, now_ms()).ok()
+                                        })
+                                        .unwrap_or(false);
+                                    if !claimed {
+                                        return;
+                                    }
+
+                                    auditor.record(AuditRecord {
+                                        occurred_at_ms: now_ms(),
+                                        agent_id: browser_conversation_id.clone(),
+                                        turn_id: Some(browser_turn_id.clone()),
+                                        box_id: None,
+                                        action: AuditAction::BrowserNavigation {
+                                            url: observation.url.clone(),
+                                            page_title: observation.page_title.clone(),
+                                        },
+                                    });
+
+                                    let Some(hit) = crate::runner::bot_block_detection::classify_bot_block_page(
+                                        &observation.url,
+                                        &observation.page_title,
+                                    ) else {
+                                        return;
+                                    };
+                                    let report = BotBlockReport {
+                                        conversation_id: browser_conversation_id.clone(),
+                                        family: hit.family.to_string(),
+                                        confidence: hit.confidence.as_str().to_string(),
+                                        blocked_host: hit.blocked_host,
+                                        blocked_url: hit.blocked_url,
+                                    };
+                                    for (suffix, projection) in [
+                                        ("summary", bot_block_telemetry(&report)),
+                                        ("detail", bot_block_detail_telemetry(&report)),
+                                    ] {
+                                        let Some(event) = projection.event else { continue; };
+                                        if let Ok(mut spool) = browser_structured_log_spool.lock() {
+                                            let id = format!("bot-block:{suffix}:{}", &recovery_hash[..32]);
+                                            let _ = spool.record_once(
+                                                &id,
+                                                projection.level.unwrap_or("warn"),
+                                                event,
+                                                projection.metadata,
+                                                now_ms(),
+                                            );
+                                        }
+                                    }
+                                }) as RemoteBrowserNavigationObserver
+                            }
                         }),
                     )
                 } else {

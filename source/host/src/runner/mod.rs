@@ -9,6 +9,7 @@ pub mod android_host_inference;
 pub mod box_help_routed_tool;
 pub mod android_system_prompt;
 pub mod background_work;
+pub mod bot_block_detection;
 mod checkpoint;
 pub mod clock_skew_guard;
 pub mod durable_turn_journal;
@@ -124,7 +125,8 @@ pub(crate) use mcp_meta_routed_tools::{with_mcp_meta_routed_tools, McpMetaCallTa
 
 pub(crate) use remote_routed_tools::{
     with_remote_routed_tools, RemoteApprovalRegistry, RemoteAutoReviewDecision,
-    RemoteAutoReviewPreflight, RemoteDispatchBinding,
+    RemoteAutoReviewPreflight, RemoteBrowserNavigationObservation,
+    RemoteBrowserNavigationObserver, RemoteDispatchBinding,
 };
 
 pub(crate) use local_routed_tools::{with_local_file_tools, LocalApprovalRegistry};

@@ -23,6 +23,9 @@ const ALLOWED_EVENTS: &[&str] = &[
     "sand.agents_unreachable",
     "sand.attachment.edge_failed",
     "sand.automation.lifecycle",
+    "sand.bot_block",
+    "sand.bot_block_detail",
+    "sand.box_copy_in",
     "sand.box_dns_diagnostic",
     "sand.box.log_ship",
     "sand.box_reachability",
@@ -366,6 +369,21 @@ impl FileAndroidStructuredLogSpill {
     }
 }
 
+fn validate_recovery_id(recovery_id: &str) -> io::Result<()> {
+    if recovery_id.is_empty()
+        || recovery_id.chars().count() > 128
+        || !recovery_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_' | b'.'))
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "structured telemetry recovery id is invalid",
+        ));
+    }
+    Ok(())
+}
+
 fn atomic_replace(path: &Path, encoded: &[u8]) -> io::Result<()> {
     let parent = path
         .parent()
@@ -462,6 +480,40 @@ impl AndroidStructuredLogSpool {
         Ok(())
     }
 
+    pub fn claim_recovery_id(
+        &mut self,
+        recovery_id: &str,
+        timestamp_ms: u64,
+    ) -> io::Result<bool> {
+        validate_recovery_id(recovery_id)?;
+        if self
+            .state
+            .checkpoint
+            .recovery_ids
+            .iter()
+            .any(|value| value == recovery_id)
+        {
+            return Ok(false);
+        }
+        let mut candidate = self.state.clone();
+        candidate.checkpoint.recovery_ids.push(recovery_id.to_string());
+        if candidate.checkpoint.recovery_ids.len() > ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP {
+            let drain =
+                candidate.checkpoint.recovery_ids.len() - ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP;
+            candidate.checkpoint.recovery_ids.drain(..drain);
+        }
+        self.state = self
+            .spill
+            .replace(&candidate, timestamp_ms)?
+            .unwrap_or_else(|| {
+                AndroidStructuredLogSpillState::empty(
+                    candidate.account_slot.clone(),
+                    candidate.checkpoint.counter_id.clone(),
+                )
+            });
+        Ok(true)
+    }
+
     pub fn record_once(
         &mut self,
         recovery_id: &str,
@@ -470,17 +522,7 @@ impl AndroidStructuredLogSpool {
         metadata: BTreeMap<String, String>,
         timestamp_ms: u64,
     ) -> io::Result<bool> {
-        if recovery_id.is_empty()
-            || recovery_id.chars().count() > 128
-            || !recovery_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b':' | b'-' | b'_' | b'.'))
-        {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "structured telemetry recovery id is invalid",
-            ));
-        }
+        validate_recovery_id(recovery_id)?;
         if self
             .state
             .checkpoint

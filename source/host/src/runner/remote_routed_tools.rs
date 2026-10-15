@@ -36,6 +36,16 @@ const CLOUD_AGENT_ACTIONS: &[&str] = &[
 ];
 const CLOUD_AGENT_DESTRUCTIVE_ACTIONS: &[&str] = &["cancel", "archive", "unarchive", "delete"];
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RemoteBrowserNavigationObservation {
+    pub operation_id: String,
+    pub url: String,
+    pub page_title: String,
+}
+
+pub(crate) type RemoteBrowserNavigationObserver =
+    Arc<dyn Fn(RemoteBrowserNavigationObservation) + Send + Sync + 'static>;
+
 const REMOTE_BROWSER_TOOL_NAMES: &[&str] = &[
     "browser_navigate",
     "browser_refresh",
@@ -520,6 +530,7 @@ pub(crate) struct RemoteRoutedTools {
     cancelled: Arc<AtomicBool>,
     client_paused: Arc<AtomicBool>,
     auto_review_preflight: Option<RemoteAutoReviewPreflight>,
+    browser_navigation_observer: Option<RemoteBrowserNavigationObserver>,
 }
 
 impl AndroidRoutedToolBridge for RemoteRoutedTools {
@@ -802,7 +813,9 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     RemoteExecutionState::Rejected => return Err("remote_execution_rejected".into()),
                     RemoteExecutionState::Cancelled => return Err("remote_execution_cancelled".into()),
                 };
-                return parse_remote_tool_output(name, &args, &result.output_json);
+                let parsed = parse_remote_tool_output(name, &args, &result.output_json)?;
+                self.observe_browser_navigation(name, &parsed, &operation_id);
+                return Ok(parsed);
             }
         }
 
@@ -1022,7 +1035,11 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             .map_err(|_| "remote runner lock poisoned".to_string())?;
         let runner = guard.as_mut().ok_or("trusted Remote runner is unavailable")?;
         match runner.dispatch_prepared_authorized(&context, &request, now_ms()) {
-            Ok(result) => parse_remote_tool_output(name, &args, &result.output_json),
+            Ok(result) => {
+                let parsed = parse_remote_tool_output(name, &args, &result.output_json)?;
+                self.observe_browser_navigation(name, &parsed, &operation_id);
+                Ok(parsed)
+            }
             Err(ExecutionError::Transport(message))
                 if message.contains("remote_outcome_unknown") =>
             {
@@ -1034,6 +1051,38 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
 }
 
 impl RemoteRoutedTools {
+    fn observe_browser_navigation(&self, name: &str, parsed: &Value, operation_id: &str) {
+        let Some(observer) = self.browser_navigation_observer.as_ref() else {
+            return;
+        };
+        if !is_remote_browser_tool(name)
+            || parsed.get("isError").and_then(Value::as_bool) != Some(false)
+        {
+            return;
+        }
+        let Some(url) = parsed
+            .get("url")
+            .or_else(|| parsed.get("currentUrl"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            return;
+        };
+        let page_title = parsed
+            .get("pageTitle")
+            .or_else(|| parsed.get("title"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        observer(RemoteBrowserNavigationObservation {
+            operation_id: operation_id.to_string(),
+            url: url.to_string(),
+            page_title,
+        });
+    }
+
     fn refuse_new_dispatch_if_paused(&self) -> Result<(), String> {
         if self.client_paused.load(Ordering::Acquire) {
             Err("trusted Remote client is paused by sand_client_pause".into())
@@ -1092,6 +1141,7 @@ pub(crate) fn with_remote_routed_tools(
     cancelled: Arc<AtomicBool>,
     client_paused: Arc<AtomicBool>,
     auto_review_preflight: Option<RemoteAutoReviewPreflight>,
+    browser_navigation_observer: Option<RemoteBrowserNavigationObserver>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
     Arc::new(RemoteRoutedTools {
         delegate,
@@ -1108,6 +1158,7 @@ pub(crate) fn with_remote_routed_tools(
         cancelled,
         client_paused,
         auto_review_preflight,
+        browser_navigation_observer,
     })
 }
 
@@ -1997,6 +2048,7 @@ mod tests {
             cancelled: Arc::new(AtomicBool::new(false)),
             client_paused: Arc::new(AtomicBool::new(false)),
             auto_review_preflight: None,
+            browser_navigation_observer: None,
         };
 
         let error = tools
@@ -2025,6 +2077,7 @@ mod tests {
             cancelled: Arc::new(AtomicBool::new(false)),
             client_paused: Arc::clone(&paused),
             auto_review_preflight: None,
+            browser_navigation_observer: None,
         };
 
         assert!(tools.list_tools().unwrap().is_empty());
@@ -2590,6 +2643,56 @@ mod tests {
             )
             .is_err(), "{method} must not bypass Remote Browser credential/UA fencing");
         }
+    }
+
+    #[test]
+    fn browser_navigation_observer_uses_only_runner_observed_page_identity() {
+        let observed = Arc::new(Mutex::new(Vec::<RemoteBrowserNavigationObservation>::new()));
+        let observer = {
+            let observed = Arc::clone(&observed);
+            Arc::new(move |value: RemoteBrowserNavigationObservation| {
+                observed.lock().unwrap().push(value);
+            }) as RemoteBrowserNavigationObserver
+        };
+        let root = tempfile::tempdir().unwrap();
+        let settings = AndroidUserSettings::open(root.path().join("user-settings.json")).unwrap();
+        let tools = RemoteRoutedTools {
+            delegate: Arc::new(NeverCalledDelegate),
+            broker: SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap(),
+            binding: Arc::new(Mutex::new(None)),
+            runner: Arc::new(Mutex::new(None)),
+            approvals: RemoteApprovalRegistry::default(),
+            user_settings: Arc::new(Mutex::new(settings)),
+            local_tool_permission_ceiling: None,
+            live_account_fence: Arc::new(Mutex::new(None)),
+            events: Arc::new(Mutex::new(VecDeque::new())),
+            parent_operation_id: "parent".into(),
+            parent_request_id: "request".into(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            client_paused: Arc::new(AtomicBool::new(false)),
+            auto_review_preflight: None,
+            browser_navigation_observer: Some(observer),
+        };
+        tools.observe_browser_navigation(
+            "browser_navigate",
+            &json!({"text":"ok","imageB64":null,"isError":false,"url":"https://www.google.com/sorry/index?secret=x","pageTitle":"Automated queries"}),
+            "remote-op-1",
+        );
+        tools.observe_browser_navigation(
+            "browser_navigate",
+            &json!({"text":"ok","imageB64":null,"isError":false}),
+            "remote-op-2",
+        );
+        tools.observe_browser_navigation(
+            "browser_navigate",
+            &json!({"text":"blocked","imageB64":null,"isError":true,"url":"https://example.com"}),
+            "remote-op-3",
+        );
+        let observed = observed.lock().unwrap();
+        assert_eq!(observed.len(), 1);
+        assert_eq!(observed[0].operation_id, "remote-op-1");
+        assert_eq!(observed[0].url, "https://www.google.com/sorry/index?secret=x");
+        assert_eq!(observed[0].page_title, "Automated queries");
     }
 
     #[test]
