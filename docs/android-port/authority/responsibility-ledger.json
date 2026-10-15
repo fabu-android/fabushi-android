@@ -16925,6 +16925,17 @@
             "malformed_negated_regex_class_fails_open_to_ignore_nothing",
             "load_workspace_ignore_merges_defaults_and_sandignore"
           ]
+        },
+        {
+          "path": "source/host/src/extensions/box_store_sync/workspace_ignore.rs",
+          "blob_sha": "f7996492fd7acb6df9c7fe939e9a9d293cdb96c0",
+          "symbols": [
+            "SAND_BOX_WORKSPACE_DEFAULT_IGNORE_PATTERNS",
+            "WorkspaceIgnore",
+            "parse_ignore_patterns",
+            "compile_workspace_ignore",
+            "load_workspace_ignore"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -16980,20 +16991,21 @@
         "source/box-exec-daemon/src/box_store_sync_backend.rs",
         "source/box-exec-daemon/src/box_store_backend.rs",
         "source/box-exec-daemon/src/deployment_contract.rs",
-        "source/box-exec-daemon/src/lib.rs"
+        "source/box-exec-daemon/src/lib.rs",
+        "source/box-exec-daemon/src/box_store_workspace_ignore.rs"
       ],
       "android_owner": "Rust Host durable BoxStore operation journal + existing authenticated Remote Runner transport authority + dedicated external Runner BoxStore backend",
       "platform_delta": "Desktop Host directly watches/snapshots /home/box and browser DB files. Android has no authority to mount that filesystem, so the filesystem/object-store mutation must execute on an authorized Remote Runner while Android keeps only typed durable orchestration/reconciliation state.",
       "implementation_status": "implemented",
-      "production_wiring": "Production composition is present: Host owns durable remote-box-store-sync.json; feature.remote.boxStoreSync.dispatch/status/reconcile require the live account fence, active protected Remote binding, explicit box-store-sync executor and a matching one-time box.store.sync approval. e35050db34a4300ce063ed26d7e0320c1eab9801 binds the domain journal to the existing AuthenticatedRemoteHostRunner without a second Runner; acb37fa6bc11c232cd733c08d2b625ada61eaaa7 and 339a1ec810dc0cfc14faad8e91d581e511969584 expose the protected executor/context contract; 4fdac6c4c9272f0940f37ec3dad3542d5ea8fae6 wires Host dispatch/status/reconcile. The external authorized Runner composes the dedicated box.store.sync service with RemoteBoxStoreBackend through deployment_contract.rs; the APK ships no listener.",
-      "unit_test": "Host/domain tests cover dedicated capability encoding, duplicate identities, account/device fencing, process-reopen no-blind-replay, existing-Runner completion and outcome-unknown reconciliation; RemoteBoxStoreBackend tests cover snapshot/hydrate/CAS conflict, duplicate execute, pending reopen and bounded path validation. Exact-head Actions pending.",
+      "production_wiring": "Production composition is present: Host owns durable remote-box-store-sync.json; feature.remote.boxStoreSync.dispatch/status/reconcile require the live account fence, active protected Remote binding, explicit box-store-sync executor and a matching one-time box.store.sync approval. e35050db34a4300ce063ed26d7e0320c1eab9801 binds the domain journal to the existing AuthenticatedRemoteHostRunner without a second Runner; acb37fa6bc11c232cd733c08d2b625ada61eaaa7 and 339a1ec810dc0cfc14faad8e91d581e511969584 expose the protected executor/context contract; 4fdac6c4c9272f0940f37ec3dad3542d5ea8fae6 wires Host dispatch/status/reconcile. The external authorized Runner composes the dedicated box.store.sync service with RemoteBoxStoreBackend through deployment_contract.rs; the APK ships no listener. At Android 547d35d71c60347ee37a6a029508fd189536bb84 the external Runner snapshot path also ports Desktop workspace filtering: source/box-exec-daemon/src/box_store_workspace_ignore.rs owns default ignores + .sandignore parsing/glob/negation safe-pruning, and RemoteBoxStoreBackend::snapshot applies it only to the workspace category before object capture; sand_data/cli_config/chrome_session remain unaffected.",
+      "unit_test": "Host/domain tests cover dedicated capability encoding, duplicate identities, account/device fencing, process-reopen no-blind-replay, existing-Runner completion and outcome-unknown reconciliation; RemoteBoxStoreBackend tests cover snapshot/hydrate/CAS conflict, duplicate execute, pending reopen and bounded path validation. Exact-head Actions pending. Workspace-ignore focused tests port Desktop parsing/default/glob/negation/malformed-negation/.sandignore semantics, and box_store_backend::snapshot_applies_desktop_workspace_ignore_and_negation_semantics checks the shipping manifest path. Exact-head GitHub Actions 547d35d… pending.",
       "contract_test": "Dedicated box.store.sync backend rejects generic/unknown capabilities and malformed version/store/etag; deployment contract keeps the listener outside the APK and requires independently authenticated external Runner execution. Exact-head Actions pending.",
       "integration_test": "Production modules are wired; protected external Runner hydrate -> mutate -> snapshot -> rebuild -> hydrate acceptance remains required on one exact Android HEAD.",
       "packaged_test": "pending final exact-head APK/AAB Remote Computer journey",
       "device_test": "pending protected account/Remote Runner device acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production source wiring is implemented. Do not mark verified until descendant exact-head Rust/Android gates plus packaged/protected external-Runner device acceptance succeed. Desktop b6a66fd2 workspace-ignore audit: .sandignore/default-pattern/glob-negation safe-pruning semantics are not yet present in the Android/remote BoxStore backend; keep this as an explicit sub-gap and do not infer full workspace snapshot parity from the existing journal/backend wiring."
+      "notes": "Production source wiring is implemented. Do not mark verified until descendant exact-head Rust/Android gates plus packaged/protected external-Runner device acceptance succeed. Workspace-ignore source gap is implemented at 547d35d… but remains not-verified until a descendant exact-head Rust/architecture/package chain succeeds."
     },
     {
       "responsibility_id": "REMOTE-BROWSER-UA-IDENTITY-ANDROID-001",
@@ -21544,7 +21556,7 @@
   "metadata": {
     "android_head_at_update": "dc717afdc2851bb0d5262e46c7a102fcccd1feb4",
     "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof. Audited native/mahayana-messaging/blob_store.rs is now a direct-port row to Host messaging_blob with stronger Android ownership/idempotency fences; the rest of the messaging crate remains individually open.",
-    "last_updated_android_head": "351f17be9f7cf2ffe9e92c5cfdd031e106d12e6b",
-    "last_update_note": "Linked workflow-store, workspace-ignore and xuser contract authority to existing Android owners; workspace ignore remains an explicit BoxStore sub-gap."
+    "last_updated_android_head": "547d35d71c60347ee37a6a029508fd189536bb84",
+    "last_update_note": "Implemented Desktop workspace-ignore semantics in the external Remote BoxStore snapshot owner; verification remains pending exact-head CI."
   }
 }
