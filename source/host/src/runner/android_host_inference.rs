@@ -2047,4 +2047,96 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn production_loop_non_text_send_message_does_not_satisfy_start_ack() {
+        use super::super::turn_tool_session_reminders::{
+            EARLY_RESULT_REMINDER_MESSAGE, START_OF_TURN_ACK_REMINDER_MESSAGE,
+        };
+
+        let (endpoint, requests) = spawn_recording_sse_server(vec![
+            tool_sse(
+                "SendMessage",
+                "widget-1",
+                r#"{"type":"widget","widget":{"prompt":"Choose","options":[{"label":"One"}]}}"#,
+            ),
+            tool_sse("Read", "read-2", "{}"),
+            tool_sse("Read", "read-3", "{}"),
+            tool_sse("Read", "read-4", "{}"),
+            final_sse(),
+        ]);
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::new(AtomicUsize::new(0)),
+            cancelled: None,
+        }))
+        .with_tool_call_observation_sink(sink);
+
+        provider.start_stream(&input(), 1).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 5);
+        assert!(request_contains_user_reminder(
+            &requests[2],
+            EARLY_RESULT_REMINDER_MESSAGE
+        ));
+        assert!(request_contains_user_reminder(
+            &requests[4],
+            START_OF_TURN_ACK_REMINDER_MESSAGE
+        ));
+    }
+
+    #[test]
+    fn production_loop_normal_send_message_threshold_matches_desktop_after_early_reset() {
+        use super::super::turn_tool_session_reminders::{
+            EARLY_RESULT_REMINDER_MESSAGE, SEND_MESSAGE_REMINDER_MESSAGE,
+        };
+
+        let mut responses = vec![
+            tool_sse(
+                "SendMessage",
+                "send-1",
+                r#"{"type":"text","content":"Working on it."}"#,
+            ),
+            tool_sse("Read", "read-2", "{}"),
+        ];
+        for index in 3..=8 {
+            responses.push(tool_sse("Read", &format!("read-{index}"), "{}"));
+        }
+        responses.push(tool_sse("Shell", "shell-9", "{}"));
+        responses.push(final_sse());
+
+        let (endpoint, requests) = spawn_recording_sse_server(responses);
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::new(AtomicUsize::new(0)),
+            cancelled: None,
+        }))
+        .with_tool_call_observation_sink(sink);
+
+        provider.start_stream(&input(), 1).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 10);
+        assert!(request_contains_user_reminder(
+            &requests[2],
+            EARLY_RESULT_REMINDER_MESSAGE
+        ));
+        assert!(request_contains_user_reminder(
+            &requests[9],
+            SEND_MESSAGE_REMINDER_MESSAGE
+        ));
+    }
+
+
 }
