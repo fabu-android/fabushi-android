@@ -5,7 +5,7 @@
     "desktop_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "f6664ddcfdcd35fed188c0daf016b75a2dc5951a",
+    "android_head_at_update": "f8ecc7d0b9b732a6d54072f75e29d243bc39f309",
     "status": "incomplete",
     "note": "Desktop canonical rebaselined to c33a9495fc1e640557d65f3e2daedc1449be7fcb / root tree 906b3f414b5ff343a5f0e627fa31b98778dfbf54 from GitHub Actions run 38731258547 artifact 11971095464. 13 changed/new source rows were reset for semantic re-audit; REMOTE-COMPUTER-001 was conservatively invalidated. Android migration remains incomplete pending source/responsibility closure and same-exact-head package/device/release evidence.",
     "desktop_root_tree": "906b3f414b5ff343a5f0e627fa31b98778dfbf54"
@@ -20002,6 +20002,95 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Implemented source + shipping Host wiring. Keep not-verified until descendant exact-head CI and packaged/device evidence succeeds."
+    },
+    {
+      "responsibility_id": "AGENT-BOX-HELP-REQUEST-ANDROID-001",
+      "domain": "agent-box-handoff",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/box_help_tool.rs",
+          "blob_sha": "dfeace58f0eb96efd9d8f37bcd258d766157767c",
+          "symbols": [
+            "BoxHelpToolBridge",
+            "BoxHelpRequest",
+            "BoxHelpOutcome",
+            "box_help_tool_definition",
+            "normalize_box_help_domain",
+            "WAITING_USER_CANCELLATION_PREFIX"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/turn_toolset.rs",
+          "blob_sha": "018cd2b6906c6b9b18b7912602139dbba46bdec4",
+          "symbols": [
+            "TurnToolsetDependencies",
+            "build_turn_toolset"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Expose request_box_help only to a root Agent with an available remote Box desktop, persist one account-fenced human handoff request, stop the current provider turn only after that side effect is durable, preserve duplicate/normalization semantics, recover awaiting-user state across process death, and resume exactly once after the user hands control back.",
+      "source_owner": "Desktop Runner BoxHelpToolBridge + Host send-message/box-handoff sink",
+      "direct_callers": [
+        "TurnToolset root Agent composition when remote_box_available && remote_box_has_desktop",
+        "provider routed-tool dispatch for request_box_help"
+      ],
+      "downstream_dependencies": [
+        "remote Box desktop capability projection",
+        "durable handoff owner",
+        "provider cancellation/turn settlement",
+        "durable awaiting-user lifecycle",
+        "durable turn journal and hidden handoff-resume redrive"
+      ],
+      "state_owner": "AndroidBoxHandoffOwner is the only durable pending/terminal handoff owner; ProductionTurnLifecycle owns awaiting-user projection; DurableTurnJournal owns accepted turn identity/outcome.",
+      "persistent_state": [
+        "account-fenced pending handoff request with request id, Agent id, instruction, reason/domain/idp metadata and optional snapshot",
+        "awaiting-user lifecycle record for the interrupted Agent turn",
+        "terminal resume obligation and deterministic hidden continuation request identity"
+      ],
+      "protocol_wire_contract": [
+        "root tool name request_box_help with required instruction and optional reason/domain/idp_domain",
+        "reason accepts auth/captcha/payment/other and invalid optional reason fails soft to absent",
+        "domain/idp_domain use URL-host normalization and strip leading www",
+        "provider interruption reason waiting-user:box-help:<handoffRequestId>",
+        "operation.interrupted reason=waiting-user projects the committed handoff request identity",
+        "hand-back queues deterministic box-handoff-resume:<handoffRequestId>:<agentId>:<trigger> hidden continuation"
+      ],
+      "visible_effect": "When an Agent reaches a sign-in, CAPTCHA, payment confirmation, or other manual desktop-only step, the user gets temporary Box control and the Agent visibly waits instead of continuing blindly. After hand-back the Agent resumes automatically without a fake user message or duplicate handoff.",
+      "failure_behavior": [
+        "missing/empty instruction fails before durable handoff mutation",
+        "invalid optional reason/domain/idp values are ignored rather than inventing authority",
+        "tool is absent when remote Box or desktop capability is unavailable",
+        "provider is interrupted only after durable handoff start/AlreadyPending acknowledgement",
+        "stale account/request end or snapshot cannot mutate a newer handoff",
+        "handoff-resume queue failure keeps the terminal resume obligation for bounded redrive"
+      ],
+      "cancellation_behavior": "request_box_help is a committed side effect followed by a deliberate waiting-user provider interruption, not an ordinary user cancellation. The current turn is parked/settled and hand-back starts a fresh deterministic hidden continuation under normal canonical turn cancellation.",
+      "retry_semantics": "A repeated request while the same Agent/account handoff is pending returns the same durable pending request (AlreadyPending) and must not create or resend another handoff. Terminal resume redrive is allowed only until its deterministic turn request is journaled/acknowledged.",
+      "idempotency_semantics": "AndroidBoxHandoffOwner reuses the existing pending request per account+Agent; deterministic resume identity plus DurableTurnJournal fences duplicate continuation after crash or replay.",
+      "process_death_recovery": "Pending handoff and awaiting-user state reopen durably. Reopen marks the turn recovery-required; hand-back clears awaiting-user and queues one journal-fenced hidden continuation. A journaled continuation retires the resume obligation without running it twice.",
+      "account_fencing": "Handoff state, awaiting-user state, account transition cleanup, stale snapshot/end fencing, and resume obligations are keyed by the current account fence. Old-account callbacks cannot cross into the new session.",
+      "security_boundary": "Tool exposure requires the root-turn remote Box + desktop capability. Prompt text does not grant this authority. Rust Host owns the durable handoff mutation, waiting-user settlement and resume; Compose/JNI cannot fabricate a completed handoff or replay side effects.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/box_help_routed_tool.rs",
+        "source/host/src/android_box_handoff.rs",
+        "source/host/src/runner/android_host_inference.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/production_turn_lifecycle.rs"
+      ],
+      "android_owner": "Rust Android routed-tool composition + AndroidBoxHandoffOwner + ProductionTurnLifecycle/DurableTurnJournal",
+      "platform_delta": "Desktop BoxHelpToolBridge cancels its provider through RoutedProviderCancellation after the send-message sink commits the handoff. Android adapts that boundary to the typed AndroidRoutedToolBridge, durable AndroidBoxHandoffOwner and explicit waiting-user ProductionTurnLifecycle/operation.interrupted projection while preserving root-only remote-desktop gating and automatic hand-back continuation.",
+      "implementation_status": "implemented",
+      "production_wiring": "Implemented across e7bee8e5e70b2e34873be1de10b64badda38213a, 2cf18161fb453218f98548a606fd4d288cbd8c67 and f8ecc7d0b9b732a6d54072f75e29d243bc39f309. AndroidJsonHost root-turn composition adds with_box_help_routed_tool only when remote_box_available && remote_box_has_desktop; BoxHelpRoutedTool commits through the single AndroidBoxHandoffOwner; AndroidHostInferenceProvider turns the acknowledged internal marker into waiting-user interruption; AndroidJsonHost persists awaiting-user + journal settlement and emits operation.interrupted; handoff.end clears awaiting-user and queues the existing deterministic hidden resume path.",
+      "unit_test": "Exact-head f8ecc7d0b9b732a6d54072f75e29d243bc39f309 GitHub Actions run 38756986362 / rust-runtime-foundation job 116498193192 succeeded. Focused tests: runner::box_help_routed_tool::tests::exposes_desktop_box_help_contract_and_delegates_unknown_tools; starts_one_durable_account_fenced_handoff_and_normalizes_domains; invalid_optional_fields_follow_desktop_fail_soft_semantics; normalizes_domains_with_url_host_semantics; AndroidBoxHandoffOwner duplicate/reopen/account-switch/stale-end/stale-snapshot tests.",
+      "contract_test": "Exact-head f8ecc7d0 run 38756986362 / job 116498193192 succeeded with request_box_help_is_not_exposed_without_remote_desktop_capability plus handoff process/account fencing suites. Desktop turn_toolset root/remote-desktop exposure and box_help_tool normalization/cancellation contracts were source-audited against c33a9495.",
+      "integration_test": "Exact-head f8ecc7d0 run 38756986362 / job 116498193192 succeeded for android_json_runtime::tests::request_box_help_routed_tool_parks_turn_and_resumes_once_after_handback, exercising feature.execute -> real Android provider routed tool -> durable handoff -> operation.interrupted -> process reopen/recovery-required -> handoff.end -> single deterministic hidden resume. Host main suite: 1062 passed, 0 failed.",
+      "packaged_test": "Not closed on a final exact Android HEAD; signed githubRelease APK/AAB packaged acceptance remains required.",
+      "device_test": "Not closed; protected emulator/device acceptance and authorized Remote Runner desktop handoff journey remain required.",
+      "artifact": "Exact implementation evidence: f8ecc7d0 / run 38756986362 / rust-runtime-foundation job 116498193192 success and existing-android-regression job 116498192768 success. No package/device/release artifact is claimed.",
+      "verification_status": "not-verified",
+      "notes": "Do not promote to verified until the final same Android HEAD closes strict Full CI, signed package/release checks and protected device acceptance. AGENT-BOX-HANDOFF-RESUME-ANDROID-001 remains the separate terminal-resume responsibility."
     },
     {
       "responsibility_id": "AGENT-BOX-HANDOFF-RESUME-ANDROID-001",
