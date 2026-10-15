@@ -10691,6 +10691,17 @@
           "symbols": [
             "auto_review_secret_and_reaction_delegate_to_existing_session_and_projection_owners"
           ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_reaction_tool.rs",
+          "blob_sha": "ed3800c9e65283bd5dda7606124337c49c4b0b35",
+          "symbols": [
+            "ReactionDeliveryCounter",
+            "ReactionSink",
+            "ReactionToolBridge",
+            "reaction_tool_definition",
+            "is_message_address"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
@@ -10736,20 +10747,22 @@
         "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MobileBotViewModel.kt",
         "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
-        "source/host/src/android_json_runtime.rs"
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/reaction_routed_tool.rs",
+        "source/host/src/extensions/transcript/transcript_store.rs"
       ],
       "android_owner": "Host-owned canonical Agent transcript + native presentation projection.",
       "platform_delta": "React hover/menu DOM behavior becomes native Compose interaction, but protocol, canonical reconciliation and scope fencing remain.",
       "implementation_status": "implemented",
-      "production_wiring": "Implemented at Android code HEAD dc717afdc2851bb0d5262e46c7a102fcccd1feb4: canonical transcript projection carries reactions/by=me; native Compose renders toggle/add controls; MobileBotViewModel single-flights entry+emoji mutations under accountSlot/send generation, fences stale completions, re-reads canonical transcript and never auto-retries uncertain side effects; typed Coordinator wiring reaches feature.transcript.reaction.set; AndroidJsonHost validates account/Agent/entry/generation/emoji and performs idempotent desired-state mutation. Post-commit hidden Agent feed handoff failure is surfaced as feedOutcomeUnknown without replaying the durable reaction.",
-      "unit_test": "Same-head rust-runtime-foundation and existing-android-regression passed in run 38664898915. AndroidJsonHost test agent_reaction_is_desired_state_durable_idempotent_and_account_fenced covers add/duplicate/remove, wrong-Agent rejection and process reopen durability; frontend parity tests cover canonical reaction projection.",
+      "production_wiring": "Implemented at Android code HEAD dc717afdc2851bb0d5262e46c7a102fcccd1feb4: canonical transcript projection carries reactions/by=me; native Compose renders toggle/add controls; MobileBotViewModel single-flights entry+emoji mutations under accountSlot/send generation, fences stale completions, re-reads canonical transcript and never auto-retries uncertain side effects; typed Coordinator wiring reaches feature.transcript.reaction.set; AndroidJsonHost validates account/Agent/entry/generation/emoji and performs idempotent desired-state mutation. Post-commit hidden Agent feed handoff failure is surfaced as feedOutcomeUnknown without replaying the durable reaction. Exact Android HEAD a7b035f3eae22015fd68c0898953dcf7a003253c additionally ports Desktop Agent-provider ReactToMessage into the root routed-tool composition: it validates Desktop-compatible message addresses and bounded emoji input, mutates only the canonical Host TranscriptStore, toggles the same emoji by=me, increments delivery count only after a successful canonical mutation, and fences cancellation/account/Agent scope without introducing a Compose/ViewModel owner.",
+      "unit_test": "Same-head rust-runtime-foundation and existing-android-regression passed in run 38664898915. AndroidJsonHost test agent_reaction_is_desired_state_durable_idempotent_and_account_fenced covers add/duplicate/remove, wrong-Agent rejection and process reopen durability; frontend parity tests cover canonical reaction projection. Exact-head run 38762773534 job 116518781153 passed reaction_routed_tool address validation and canonical toggle/account-fence tests.",
       "contract_test": "Production Compose->ViewModel->typed Coordinator->Host route is wired. Dedicated presentation cancellation/account-switch/feed-outcome-unknown contract remains required.",
-      "integration_test": "Partial: durable Host reopen and shipping route exist; full Agent journey/race matrix remains open.",
+      "integration_test": "Exact-head run 38762773534 job 116518781153 passed Host integration react_to_message_routed_tool_updates_canonical_transcript_once_per_call plus the broader 1073/0 Host suite. Final packaged/device reaction acceptance remains open.",
       "packaged_test": "required in final minified githubRelease package",
       "device_test": "required protected/device Agent chat acceptance",
-      "artifact": null,
+      "artifact": "GitHub Actions run 38762773534 / rust-runtime-foundation job 116518781153 on exact HEAD a7b035f3eae22015fd68c0898953dcf7a003253c; no release artifact claimed.",
       "verification_status": "not-verified",
-      "notes": "Promoted only mapped->implemented from current shipping code plus same-code-head Rust/regression evidence. Final packaged/device and complete stale/failure integration evidence remain open."
+      "notes": "Promoted only mapped->implemented from current shipping code plus same-code-head Rust/regression evidence. Final packaged/device and complete stale/failure integration evidence remain open. Desktop source/host/src/runner/tools/sand_reaction_tool.rs is now explicitly reverse-linked and implemented in the provider-facing Android routed-tool path at a7b035f3; verification remains not-verified pending strict source closure and final packaged/device acceptance."
     },
     {
       "responsibility_id": "PLUGIN-SKILLS-LIFECYCLE-ANDROID-001",
@@ -58549,7 +58562,7 @@
   "metadata": {
     "android_head_at_update": "dc717afdc2851bb0d5262e46c7a102fcccd1feb4",
     "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof. Audited native/mahayana-messaging/blob_store.rs is now a direct-port row to Host messaging_blob with stronger Android ownership/idempotency fences; the rest of the messaging crate remains individually open.",
-    "last_updated_android_head": "64dd67cfa3231dccdfbaf0e2b04489a78a39ba15",
+    "last_updated_android_head": "a7b035f3eae22015fd68c0898953dcf7a003253c",
     "last_update_note": "Implemented Desktop listener_connect_cards.rs Host responsibility with real Dashboard connectivity, durable reconnect watcher, hidden Agent resume, duplicate/stale/account/process-death fencing; exact-head Rust job 116512325830 passed. Broader cloud automation and packaged/device verification remain open."
   }
 }
