@@ -1807,6 +1807,15 @@
             "workflow_run_now_reference_plan_matches_frozen_rich_text_and_recipe_expansion",
             "workflow_run_prompt_clamps_recipe_body_and_preserves_helper_location"
           ]
+        },
+        {
+          "path": "source/host/tests/workflow_store_contract.rs",
+          "blob_sha": "18e978ad73ed3e0437c2674733c66e1418b1e2a2",
+          "symbols": [
+            "workflow_store_routes_enablement_mutations_through_agent_owner",
+            "workflow_library_watches_external_and_atomic_edits",
+            "stat_parse_cache_reuses_stable_fingerprints_and_invalidates_changes"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -8305,6 +8314,62 @@
             "mirror_room_materializes_remote_binding_filters_self_and_can_be_revoked",
             "shared_room_ingress_materializes_inline_images_on_shipping_transcript_paths"
           ]
+        },
+        {
+          "path": "source/host/tests/xuser_contract.rs",
+          "blob_sha": "cf8bec97069ae541bdc1c5fef56ac9eaad722432",
+          "symbols": [
+            "shared_room_flags_and_guardrail_match_the_frozen_contract",
+            "xuser_message_projection_clamps_and_preserves_self_identity",
+            "remote_member_prompts_reuse_group_contract_and_guest_name_rules"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_relay_runtime_contract.rs",
+          "blob_sha": "4d3918594c09f136ed57c63d8bd7a879e81a9e67",
+          "symbols": [
+            "relay_ack_lifecycle_and_notify_floor_match_frozen_contract",
+            "relay_error_backoff_matches_frozen_thirty_second_window",
+            "relay_driver_owns_polling_wakeup_and_clean_stop",
+            "relay_projects_frozen_join_and_error_responses"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_remote_turns_contract.rs",
+          "blob_sha": "cc49d36d64ed4c41b3d0bc7185b54bab9e496b39",
+          "symbols": [
+            "incoming_remote_turn_enforces_room_membership_dedupe_and_two_message_settlement",
+            "outgoing_remote_turn_uses_frozen_wire_shape_and_result_nonce_settlement",
+            "remote_turn_budget_is_windowed_and_stop_releases_pending_waiters"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_service_contract.rs",
+          "blob_sha": "51e26cda481c995357e11dd33059d5a297e071c8",
+          "symbols": [
+            "reconcile_reports_added_and_revoked_rooms",
+            "extension_tracks_multiplayer_gate_and_owns_service_lifecycle",
+            "sharing_service_exposes_frozen_room_invite_and_typing_relay_surface",
+            "sharing_service_routes_live_room_events_through_transcript_manager_seam",
+            "manager_delegate_serializes_room_publications_through_bound_publisher"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_sharing_environment_contract.rs",
+          "blob_sha": "c076b2b949e15cbdbb7d40b7cb31a6284a78c140",
+          "symbols": [
+            "packaged_host_allows_cross_user_sharing_without_dev_overrides",
+            "dev_host_requires_explicit_xuser_opt_in",
+            "production_origin_comparison_is_fail_closed"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_wire_normalization_contract.rs",
+          "blob_sha": "983004325321213e2dd4565df9d8b34c60f510f2",
+          "symbols": [
+            "images_cap_media_fallback_and_mirror_validation_match_frozen_wire",
+            "turn_messages_default_to_human_and_cap_at_24"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -8449,6 +8514,14 @@
             "SandXuserRoomTombstoneStore",
             "XuserRoomTombstone",
             "tombstone_key"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_durable_stores_contract.rs",
+          "blob_sha": "0baafd26d9a3bad83d70a1ed42d9d81edc6a68cb",
+          "symbols": [
+            "tombstones_are_owner_scoped_and_idempotent",
+            "pending_departures_use_frozen_identity_keys"
           ]
         }
       ],
@@ -10120,6 +10193,16 @@
           "symbols": [
             "Skills owner audit",
             "Canonical migration rule for kind=skill"
+          ]
+        },
+        {
+          "path": "source/host/tests/workflow_store_contract.rs",
+          "blob_sha": "18e978ad73ed3e0437c2674733c66e1418b1e2a2",
+          "symbols": [
+            "local_skill_discovery_and_port_match_frozen_sources",
+            "managed_and_plugin_skills_are_aggregated_with_frozen_precedence",
+            "only_current_user_plugin_skill_can_be_edited_and_frontmatter_is_preserved",
+            "workflow_store_watches_managed_and_plugin_skill_caches"
           ]
         }
       ],
@@ -16830,6 +16913,18 @@
           "symbols": [
             "ProductionBoxStoreSyncService"
           ]
+        },
+        {
+          "path": "source/host/tests/workspace_ignore_contract.rs",
+          "blob_sha": "c27bc2a8edd9b7542608c08f027e7554cb10a932",
+          "symbols": [
+            "parses_ignore_file_lines_like_the_frozen_host",
+            "default_workspace_patterns_ignore_nested_build_artifacts",
+            "negation_unignores_target_and_prevents_unsafe_directory_pruning",
+            "globstar_question_and_character_classes_match_frozen_rules",
+            "malformed_negated_regex_class_fails_open_to_ignore_nothing",
+            "load_workspace_ignore_merges_defaults_and_sandignore"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -16898,7 +16993,7 @@
       "device_test": "pending protected account/Remote Runner device acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production source wiring is implemented. Do not mark verified until descendant exact-head Rust/Android gates plus packaged/protected external-Runner device acceptance succeed."
+      "notes": "Production source wiring is implemented. Do not mark verified until descendant exact-head Rust/Android gates plus packaged/protected external-Runner device acceptance succeed. Desktop b6a66fd2 workspace-ignore audit: .sandignore/default-pattern/glob-negation safe-pruning semantics are not yet present in the Android/remote BoxStore backend; keep this as an explicit sub-gap and do not infer full workspace snapshot parity from the existing journal/backend wiring."
     },
     {
       "responsibility_id": "REMOTE-BROWSER-UA-IDENTITY-ANDROID-001",
@@ -17268,6 +17363,20 @@
         {
           "path": "source/host/src/extensions/cross_user_sharing/xuser_turn_dedupe_store.rs",
           "blob_sha": "939657ffa56c0198dba3867b72f959d2ccb371a5"
+        },
+        {
+          "path": "source/host/tests/xuser_durable_stores_contract.rs",
+          "blob_sha": "0baafd26d9a3bad83d70a1ed42d9d81edc6a68cb",
+          "symbols": [
+            "turn_dedupe_persists_prunes_and_reloads"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_remote_turns_contract.rs",
+          "blob_sha": "cc49d36d64ed4c41b3d0bc7185b54bab9e496b39",
+          "symbols": [
+            "incoming_remote_turn_enforces_room_membership_dedupe_and_two_message_settlement"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -18740,6 +18849,65 @@
           "symbols": [
             "NotifyDrainGate",
             "NOTIFY_DRAIN_FLOOR_MS"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_contract.rs",
+          "blob_sha": "cf8bec97069ae541bdc1c5fef56ac9eaad722432",
+          "symbols": [
+            "shared_room_flags_and_guardrail_match_the_frozen_contract",
+            "xuser_message_projection_clamps_and_preserves_self_identity",
+            "remote_member_prompts_reuse_group_contract_and_guest_name_rules"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_relay_runtime_contract.rs",
+          "blob_sha": "4d3918594c09f136ed57c63d8bd7a879e81a9e67",
+          "symbols": [
+            "relay_ack_lifecycle_and_notify_floor_match_frozen_contract",
+            "relay_error_backoff_matches_frozen_thirty_second_window",
+            "relay_uses_frozen_grok_endpoint_family",
+            "relay_driver_owns_polling_wakeup_and_clean_stop",
+            "relay_projects_frozen_join_and_error_responses"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_remote_turns_contract.rs",
+          "blob_sha": "cc49d36d64ed4c41b3d0bc7185b54bab9e496b39",
+          "symbols": [
+            "incoming_remote_turn_enforces_room_membership_dedupe_and_two_message_settlement",
+            "outgoing_remote_turn_uses_frozen_wire_shape_and_result_nonce_settlement",
+            "remote_turn_budget_is_windowed_and_stop_releases_pending_waiters"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_service_contract.rs",
+          "blob_sha": "51e26cda481c995357e11dd33059d5a297e071c8",
+          "symbols": [
+            "relay_errors_keep_frozen_user_messages",
+            "remote_ids_and_publish_payload_are_fail_closed",
+            "extension_applies_dev_environment_gate_before_feature_gate",
+            "enabled_service_reconciles_backend_state",
+            "sharing_service_create_add_remove_leave_and_deleted_agent_use_relay_owner",
+            "entry_publisher_preserves_frozen_projection_attachment_and_restamp_contract"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_sharing_environment_contract.rs",
+          "blob_sha": "c076b2b949e15cbdbb7d40b7cb31a6284a78c140",
+          "symbols": [
+            "packaged_host_allows_cross_user_sharing_without_dev_overrides",
+            "dev_host_requires_explicit_xuser_opt_in",
+            "opted_in_dev_host_allows_non_production_backend",
+            "production_origin_comparison_is_fail_closed"
+          ]
+        },
+        {
+          "path": "source/host/tests/xuser_wire_normalization_contract.rs",
+          "blob_sha": "983004325321213e2dd4565df9d8b34c60f510f2",
+          "symbols": [
+            "images_cap_media_fallback_and_mirror_validation_match_frozen_wire",
+            "turn_messages_default_to_human_and_cap_at_24"
           ]
         }
       ],
@@ -21376,7 +21544,7 @@
   "metadata": {
     "android_head_at_update": "dc717afdc2851bb0d5262e46c7a102fcccd1feb4",
     "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof. Audited native/mahayana-messaging/blob_store.rs is now a direct-port row to Host messaging_blob with stronger Android ownership/idempotency fences; the rest of the messaging crate remains individually open.",
-    "last_updated_android_head": "edcd2011925b32daca52954ac2ca247f68f68277",
-    "last_update_note": "Added reverse links for seven audited Desktop transcript/workflow contract-test authority files; no implementation or verification promotion."
+    "last_updated_android_head": "351f17be9f7cf2ffe9e92c5cfdd031e106d12e6b",
+    "last_update_note": "Linked workflow-store, workspace-ignore and xuser contract authority to existing Android owners; workspace ignore remains an explicit BoxStore sub-gap."
   }
 }
