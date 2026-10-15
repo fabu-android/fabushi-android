@@ -197,7 +197,7 @@ data class PermissionRequest(
 )
 
 enum class MobileChatRole { USER, ASSISTANT }
-enum class MobileChatEntryKind { MESSAGE, ACTION, THINKING, MINI_APP, WIDGET, SECRET_REQUEST, TOOL_RESULT }
+enum class MobileChatEntryKind { MESSAGE, ACTION, THINKING, MINI_APP, WIDGET, CURSOR_AGENT, SECRET_REQUEST, TOOL_RESULT }
 
 data class MobileWidgetOption(
     val label: String,

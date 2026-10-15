@@ -195,6 +195,23 @@ internal fun canonicalMobileTranscriptForAgent(
                     )
                     continue
                 }
+                if (message.optString("type") == "cursor-agent") {
+                    val bcId = message.optString("bcId").trim()
+                    if (bcId.isBlank()) continue
+                    val title = message.optString("title").trim().takeIf(String::isNotEmpty)
+                    projected[id] = MobileChatMessage(
+                        id = id,
+                        role = MobileChatRole.ASSISTANT,
+                        text = title ?: "Cloud agent $bcId",
+                        kind = MobileChatEntryKind.CURSOR_AGENT,
+                        actionTitle = title ?: "Cloud agent",
+                        actionDetail = bcId,
+                        hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                        transcriptReactions = canonicalTranscriptReactions(entry),
+                        hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
+                    )
+                    continue
+                }
                 if (message.optString("type") == "secret-request") {
                     val request = message.optJSONObject("secretRequest") ?: continue
                     val target = request.optJSONObject("target") ?: continue

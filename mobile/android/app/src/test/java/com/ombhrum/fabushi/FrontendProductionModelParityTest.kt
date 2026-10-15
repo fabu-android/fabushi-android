@@ -641,6 +641,29 @@ class FrontendProductionModelParityTest {
     }
 
     @Test
+    fun canonicalAgentTranscriptProjectsCursorAgentReferenceWithoutOwningCloudState() {
+        val transcript = JSONArray()
+            .put(
+                JSONObject()
+                    .put("kind", "send-message")
+                    .put("id", "cursor-card")
+                    .put("agentId", "agent-a")
+                    .put(
+                        "message",
+                        JSONObject()
+                            .put("type", "cursor-agent")
+                            .put("bcId", "bc-cloud-42"),
+                    ),
+            )
+
+        val row = canonicalMobileTranscriptForAgent(transcript, "agent-a").single()
+        assertEquals(MobileChatEntryKind.CURSOR_AGENT, row.kind)
+        assertEquals("Cloud agent", row.actionTitle)
+        assertEquals("bc-cloud-42", row.actionDetail)
+        assertEquals("Cloud agent bc-cloud-42", row.text)
+    }
+
+    @Test
     fun canonicalAgentTranscriptPreservesReadOnlyAdjacencyMetadata() {
         val transcript = JSONArray()
             .put(

@@ -394,19 +394,20 @@ fn send_message_definition() -> Value {
         }
     });
     let mut properties = Map::new();
-    properties.insert("type".into(), json!({"type":"string","enum":["text","attachment","widget","secret-request"]}));
+    properties.insert("type".into(), json!({"type":"string","enum":["text","attachment","widget","cursor-agent","secret-request"]}));
     properties.insert("content".into(), json!({"type":"string"}));
     properties.insert("url".into(), json!({"type":"string"}));
     properties.insert("images".into(), images_schema);
     properties.insert("alt".into(), json!({"type":"string"}));
     properties.insert("reply_to".into(), json!({"type":"string"}));
     properties.insert("channel".into(), json!({"type":"string"}));
+    properties.insert("bcId".into(), json!({"type":"string","minLength":1,"maxLength":240}));
     properties.insert("secret".into(), secret_schema);
     properties.insert("widget".into(), widget_schema);
     json!({
         "type":"function",
         "name":SEND_MESSAGE_TOOL_NAME,
-        "description":"Send a user-visible in-app message. Android supports text, attachment, widget, and secure secret-request messages. Channel provider delivery is fail-closed until a real provider is registered.",
+        "description":"Send a user-visible in-app message. Android supports text, attachment, widget, cursor-agent, and secure secret-request messages. Channel provider delivery is fail-closed until a real provider is registered.",
         "parameters":{
             "type":"object",
             "required":["type"],
@@ -422,20 +423,21 @@ fn normalize_message(args: &Value) -> Result<Value, String> {
         .ok_or("SendMessage arguments must be an object")?;
     reject_unknown(
         object,
-        &["type", "content", "url", "images", "alt", "reply_to", "channel", "widget", "secret"],
+        &["type", "content", "url", "images", "alt", "reply_to", "channel", "widget", "bcId", "secret"],
     )?;
     let message_type = required_field(object, "type")?;
     match message_type {
         "text" => normalize_text(object),
         "attachment" => normalize_attachment(object),
         "widget" => normalize_widget_message(object),
+        "cursor-agent" => normalize_cursor_agent(object),
         "secret-request" => normalize_secret_request(object),
-        _ => Err("SendMessage type must be text, attachment, widget, or secret-request on Android".into()),
+        _ => Err("SendMessage type must be text, attachment, widget, cursor-agent, or secret-request on Android".into()),
     }
 }
 
 fn normalize_text(object: &Map<String, Value>) -> Result<Value, String> {
-    reject_cross_type(object, &["url", "alt", "widget", "secret"])?;
+    reject_cross_type(object, &["url", "alt", "widget", "bcId", "secret"])?;
     let content = required_field(object, "content")?;
     let mut message = json!({"type":"text","content":content});
     if let Some(reply) = optional_string(object.get("reply_to"))? {
@@ -469,7 +471,7 @@ fn normalize_text(object: &Map<String, Value>) -> Result<Value, String> {
 }
 
 fn normalize_attachment(object: &Map<String, Value>) -> Result<Value, String> {
-    reject_cross_type(object, &["content", "images", "widget", "secret"])?;
+    reject_cross_type(object, &["content", "images", "widget", "bcId", "secret"])?;
     let url = required_field(object, "url")?;
     validate_attachment_identity(url)?;
     let mut message = json!({"type":"attachment","url":url});
@@ -488,7 +490,7 @@ fn normalize_attachment(object: &Map<String, Value>) -> Result<Value, String> {
 fn normalize_widget_message(object: &Map<String, Value>) -> Result<Value, String> {
     reject_cross_type(
         object,
-        &["content", "url", "images", "alt", "reply_to", "channel", "secret"],
+        &["content", "url", "images", "alt", "reply_to", "channel", "bcId", "secret"],
     )?;
     let widget = object
         .get("widget")
@@ -546,6 +548,18 @@ fn normalize_widget_message(object: &Map<String, Value>) -> Result<Value, String
         }
     }
     Ok(json!({"type":"widget","widget":normalized}))
+}
+
+fn normalize_cursor_agent(object: &Map<String, Value>) -> Result<Value, String> {
+    reject_cross_type(
+        object,
+        &["content", "url", "images", "alt", "reply_to", "channel", "widget", "secret"],
+    )?;
+    let bc_id = required_field(object, "bcId")?.trim();
+    if bc_id.is_empty() || bc_id.len() > 240 || bc_id.chars().any(char::is_control) {
+        return Err("bcId must be a non-empty canonical cloud-agent id".into());
+    }
+    Ok(json!({"type":"cursor-agent","bcId":bc_id}))
 }
 
 fn normalize_secret_request(object: &Map<String, Value>) -> Result<Value, String> {
@@ -680,7 +694,7 @@ mod tests {
         let definition = send_message_definition();
         assert_eq!(
             definition["parameters"]["properties"]["type"]["enum"],
-            json!(["text","attachment","widget","secret-request"])
+            json!(["text","attachment","widget","cursor-agent","secret-request"])
         );
     }
 
@@ -891,6 +905,39 @@ mod tests {
             AWAITING_USER_BLOCKED
         );
         assert_eq!(transcript.lock().unwrap().get_transcript().len(), 1);
+    }
+
+    #[test]
+    fn cursor_agent_reference_is_durable_and_title_fail_soft() {
+        let (tools, transcript, _lifecycle, events, _live, _root) = fixture("cursor-agent");
+        let result = tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({"type":"cursor-agent","bcId":"bc-cloud-42"}),
+                "cursor-agent-call",
+            )
+            .unwrap();
+        assert_eq!(result["sent"], true);
+        let rows = transcript.lock().unwrap().get_transcript();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["message"]["type"], "cursor-agent");
+        assert_eq!(rows[0]["message"]["bcId"], "bc-cloud-42");
+        assert!(rows[0]["message"].get("title").is_none());
+        assert_eq!(events.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn cursor_agent_validation_fails_before_transcript_side_effect() {
+        let (tools, transcript, _lifecycle, _events, _live, _root) = fixture("cursor-invalid");
+        assert!(tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({"type":"cursor-agent","bcId":"  "}),
+                "cursor-invalid",
+            )
+            .unwrap_err()
+            .contains("canonical cloud-agent id"));
+        assert!(transcript.lock().unwrap().get_transcript().is_empty());
     }
 
     #[test]

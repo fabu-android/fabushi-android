@@ -525,6 +525,7 @@ internal fun GrokBotChatAndroid(
             val roleName = when {
                 entry.role == MobileChatRole.USER -> "用户消息"
                 entry.kind == MobileChatEntryKind.ACTION -> "Bot 动作"
+                entry.kind == MobileChatEntryKind.CURSOR_AGENT -> "Cloud agent"
                 entry.kind == MobileChatEntryKind.THINKING -> "Bot 思考"
                 else -> "Bot 消息"
             }
@@ -717,6 +718,7 @@ internal fun GrokBotChatAndroid(
                             contentDescription = when {
                                 entry.kind == MobileChatEntryKind.THINKING -> "Agent thinking"
                                 entry.kind == MobileChatEntryKind.ACTION -> "Agent action"
+                                entry.kind == MobileChatEntryKind.CURSOR_AGENT -> "Cloud agent"
                                 entry.role == MobileChatRole.USER -> "User message"
                                 else -> "Agent message"
                             }
@@ -752,6 +754,19 @@ internal fun GrokBotChatAndroid(
                             onRespond = { value -> onRespondToWidget(entry.id, value) },
                             onDismiss = { onDismissWidget(entry.id) },
                         )
+                    entry.kind == MobileChatEntryKind.CURSOR_AGENT -> Column(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.testTag("mobile-bot-cursor-agent-" + entry.id),
+                    ) {
+                        Text(
+                            entry.actionTitle ?: "Cloud agent",
+                            color = GrokMobileInk,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        entry.actionDetail?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, color = GrokMobileMuted, fontSize = 12.sp)
+                        }
+                    }
                     entry.kind == MobileChatEntryKind.SECRET_REQUEST && entry.secretRequest != null ->
                         MobileSecretRequestTranscriptCard(
                             entry = entry,
