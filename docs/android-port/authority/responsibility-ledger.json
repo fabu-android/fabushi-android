@@ -5,7 +5,7 @@
     "desktop_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "11d714103a0bc78bb51c6166102bacffba2081aa",
+    "android_head_at_update": "a2fb6651d7106683b83fa4bbf8f166102da27850",
     "status": "incomplete",
     "note": "Desktop canonical rebaselined to c33a9495fc1e640557d65f3e2daedc1449be7fcb / root tree 906b3f414b5ff343a5f0e627fa31b98778dfbf54 from GitHub Actions run 38731258547 artifact 11971095464. 13 changed/new source rows were reset for semantic re-audit; REMOTE-COMPUTER-001 was conservatively invalidated. Android migration remains incomplete pending source/responsibility closure and same-exact-head package/device/release evidence.",
     "desktop_root_tree": "906b3f414b5ff343a5f0e627fa31b98778dfbf54"
@@ -669,6 +669,30 @@
             "ShellTerminalPollState",
             "find_confirmed_user_turn_watermark"
           ]
+        },
+        {
+          "path": "source/host/src/runner/agent_state.rs",
+          "blob_sha": "946a343845bbf16129347f71e6f0592d69a3db27",
+          "symbols": [
+            "StateWriteResult",
+            "state_write_ok",
+            "state_write_failed"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/clock_skew_guard.rs",
+          "blob_sha": "be366b427d31de0aa0700c804c463599e67ef2e4",
+          "symbols": [
+            "sanitize_cross_clock_duration_ms",
+            "bucket_clock_skew_delta_ms"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tool_call_identity.rs",
+          "blob_sha": "0965dcdbb40b1a38cf31e1d49177c1786a1e14ad",
+          "symbols": [
+            "ToolCallIdentity"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
@@ -1214,6 +1238,13 @@
           "symbols": [
             "request_sand_shell_approval",
             "request_sand_mcp_approval"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/coordinator_tool_relay.rs",
+          "blob_sha": "2ceac9be37d6e48f3241fe6c0882b5b70f1abaa9",
+          "symbols": [
+            "GatewayEventHub MCP tool relay (source-scoped replacement)"
           ]
         }
       ],
@@ -17232,16 +17263,16 @@
       ],
       "android_owner": "Rust Host RemoteRoutedTools + CapabilityBroker + AuthenticatedRemoteHostRunner; bounded Local Runner remains separate; Presentation owns no execution authority",
       "platform_delta": "Desktop loopback/VNC/process-spawn/window mechanisms are forbidden as the Android local product architecture. Android may execute only bounded local actions or route to an explicitly enrolled Remote Runner with separate credentials and reconciliation.",
-      "implementation_status": "mapped",
-      "production_wiring": "Shipping AndroidJsonHost routes BoxEnvironmentApply/BoxMcpLoad/BoxMcpState/BoxMcpTool through the existing RemoteRoutedTools -> one-time SharedCapabilityBroker approval -> AuthenticatedRemoteHostRunner path. The Remote Runner service now has a durable account/device/epoch/credential enrollment plus exact operation/request/capability grant authorizer, capability-to-executor fencing for box-environment/box-mcp, revocation/expiry handling, process-reopen persistence, and ProductionBoxControlBackend forwarding for environment apply, MCP LoadMcpServers, ExecService field 36 state and field 11 tool payloads. This row remains mapped until the current implementation has same-exact-head Rust/Kotlin/architecture/package/device evidence.",
-      "unit_test": "Focused Rust enrollment/grant and Box routed-tool payload tests plus JVM protected-binding executor contract; same-exact-head Actions pending.",
-      "contract_test": "Production transport and Host composition implement separate authorized Remote Runner credentials, stable operation/request/grant/device/account identity, capability consumption, exactly-once side-effect dispatch and outcome-unknown reconciliation. Same exact-head GitHub Actions plus deployed executor compatibility remain required.",
+      "implementation_status": "implemented",
+      "production_wiring": "Shipping AndroidJsonHost routes BoxEnvironmentApply/BoxMcpLoad/BoxMcpState/BoxMcpTool through the existing RemoteRoutedTools -> one-time SharedCapabilityBroker approval -> AuthenticatedRemoteHostRunner path. The external Runner service uses durable account/device/epoch/credential enrollment plus exact operation/request/capability grant authorization, capability-to-executor fencing for box-environment/box-mcp, revocation/expiry handling, process-reopen persistence, and ProductionBoxControlBackend forwarding for environment apply, MCP LoadMcpServers, ExecService field 36 state and field 11 tool payloads. Exact HEAD a2fb6651d7106683b83fa4bbf8f166102da27850 passed Grok Android Architecture run 38813077143, including cargo test --workspace --all-targets and JVM regression; Box focused production-backend tests exercised environment apply, MCP load, field 36 reconcile, field 11 first dispatch, timeout/failure, and process-reopen no-replay. Live enrolled Runner/package/device evidence remains external and open.",
+      "unit_test": "Exact HEAD a2fb6651d7106683b83fa4bbf8f166102da27850 Grok Android Architecture run 38813077143 / rust-runtime-foundation job 116690882300 passed cargo test --workspace --all-targets. Box daemon ran 90 tests including concrete ProductionBoxControlBackend environment/MCP/timeout/process-reopen/no-blind-replay contracts. JVM regression job 116690882499 also passed protected binding contracts.",
+      "contract_test": "Production transport and Host composition preserve separate authorized Remote Runner credentials, stable operation/request/grant/device/account identity, one-time capability consumption, safe reconciliation, and outcome-unknown for field 11 side effects. Exact-head architecture evidence is green; live deployed executor compatibility remains required.",
       "integration_test": "Client-side production composition is wired through AndroidJsonHost -> real turn tool graph -> RemoteRoutedTools -> AuthenticatedRemoteHostRunner -> AuthenticatedRemoteHttpTransport. Live integration still requires an externally enrolled authorized Runner and therefore remains not-verified.",
       "packaged_test": "required on final APK/AAB",
       "device_test": "required for pairing/revoke/reconnect/viewport/file-transfer/computer-use on supported Android devices",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production caller and protected enrollment code are now present, but BOX-AUTHORIZED-RUNNER-ANDROID-001 is intentionally not promoted before same-exact-head Actions and final packaged/device Remote Runner evidence.",
+      "notes": "Implementation promoted from mapped to implemented only after production caller/enrollment/backend wiring and exact-head a2fb Architecture success. verification_status intentionally remains not-verified until live enrolled Runner plus packaged/device evidence closes REMOTE-RUNNER-ENROLLMENT-001 and release gates.",
       "desktop_sources": [
         {
           "path": "source/host/src/ports/box.rs",
@@ -17257,10 +17288,17 @@
             "createDefaultProductionLocalExecExecutor",
             "shell/background-shell/read/list resource graph"
           ]
+        },
+        {
+          "path": "source/host/src/runner/box_reference_docs.rs",
+          "blob_sha": "f7514d86f1c1a4c7158e3b6b52963eae29a1355b",
+          "symbols": [
+            "Desktop Box reference-doc provisioning helper (source-scoped replacement)"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
-      "android_head_at_update": "43d15e4d53620f972dca79fc8bd9b6149a93f552"
+      "android_head_at_update": "a2fb6651d7106683b83fa4bbf8f166102da27850"
     },
     {
       "responsibility_id": "CLOUD-AGENT-RUNTIME-ANDROID-001",
@@ -22294,16 +22332,17 @@
       ],
       "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
       "platform_delta": "Android removes arbitrary process command inspection/termination and uses fail-closed stale/live PID ownership.",
-      "implementation_status": "mapped",
-      "production_wiring": "Semantic owner/target is identified, but a complete shipping caller/lifecycle proof is not yet present on 8920deab.",
-      "unit_test": "focused source-level tests exist where present; exact descendant Actions required",
-      "contract_test": "required to prove the source responsibility is composed through the canonical Android Host/Coordinator path",
+      "implementation_status": "implemented",
+      "production_wiring": "Production AndroidNativeRuntime constructs AndroidHostBootstrapGuard under the app-private host-runtime root, acquires host.lock through Rust acquire_host_lock, publishes generation-fenced JNI native-runtime discovery, and removes only owned lock/discovery state on drop. Android never kills a competing process; stale/foreign PID handling is fail-closed/reclaim-only. Process reopen increments Coordinator generation and surfaces unresolved work as outcome-unknown instead of replaying side effects.",
+      "unit_test": "Exact HEAD a2fb6651d7106683b83fa4bbf8f166102da27850 Grok Android Architecture run 38813077143 / rust-runtime-foundation job 116690882300 passed workspace/all-targets. android-host-jni production_runtime_owns_host_lock_and_generation_fenced_native_discovery and production_reopen_surfaces_coordinator_outcome_unknown_instead_of_replaying_request passed.",
+      "contract_test": "source/host/tests/android_bootstrap_shipping_contract.rs proves the production JNI owner constructs AndroidHostBootstrapGuard, uses app-private host.lock/native discovery, forbids process kill, reclaims unrelated stale PID ownership without takeover, and fences discovery clear by pid+generation.",
       "integration_test": "required on exact descendant GitHub Actions; no local validation is used",
       "packaged_test": "required where this responsibility affects final APK/AAB behavior",
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Compatibility HostMain wiring exists but final Android process owner/lifecycle proof is open. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner."
+      "notes": "Shipping lifecycle proof is present in Rust/JNI production composition. Promoted to implemented only; verification remains open for final packaged/device lifecycle acceptance on a descendant exact HEAD.",
+      "android_head_at_update": "a2fb6651d7106683b83fa4bbf8f166102da27850"
     },
     {
       "responsibility_id": "HOST-DATA-PATHS-ANDROID-001",
