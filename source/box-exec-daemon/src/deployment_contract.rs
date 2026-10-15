@@ -6,10 +6,13 @@
 //! explicit prevents a second hidden execution boundary from being introduced into the APK.
 
 use crate::box_store_backend::{RemoteBoxStoreBackend, RemoteBoxStoreBackendConfig};
+use crate::box_store_backend_policy::{
+    BoxStoreBackendKind, is_box_store_sync_enabled, resolve_box_store_backend_policy,
+};
 use crate::file_transfer_backend::{RemoteFileTransferBackend, RemoteFileTransferConfig};
 use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService};
 use fabushi_android_shared::ExecutionError;
-use std::path::PathBuf;
+use std::{collections::BTreeMap, path::PathBuf};
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,6 +53,43 @@ pub fn open_remote_file_transfer_execution_service<A: RemoteExecutionAuthorizer>
         config,
         now_ms,
     )
+}
+
+/// Resolve the Desktop Box-store backend contract at the Authorized External Runner boundary.
+///
+/// The Android APK never reads these environment variables. The external Runner owns them.
+/// The frozen V2 backend is the current production replacement; an explicit local root is also
+/// honored for managed/test deployments. Desktop AgentStore remains fail-closed until a real
+/// external Runner adapter exists, rather than silently changing persistence ownership.
+pub fn open_remote_box_store_execution_service_from_environment<A: RemoteExecutionAuthorizer>(
+    journal_path: impl Into<PathBuf>,
+    authorizer: A,
+    mut config: RemoteBoxStoreBackendConfig,
+    environment: &BTreeMap<String, String>,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<A, RemoteBoxStoreBackend>, ExecutionError> {
+    if !is_box_store_sync_enabled(environment) {
+        return Err(ExecutionError::CapabilityUnavailable(
+            "box.store.sync is disabled by SAND_BOX_STORE_SYNC".into(),
+        ));
+    }
+    let policy = resolve_box_store_backend_policy(environment);
+    match policy.kind {
+        BoxStoreBackendKind::LocalFs => {
+            config.store_root = policy.local_dir.ok_or_else(|| {
+                ExecutionError::InvalidRequest(
+                    "local Box-store backend requires an absolute store root".into(),
+                )
+            })?;
+        }
+        BoxStoreBackendKind::SandBoxStoreV2 => {}
+        BoxStoreBackendKind::AgentStore => {
+            return Err(ExecutionError::CapabilityUnavailable(
+                "Desktop AgentStore backend has no Authorized External Runner adapter yet".into(),
+            ));
+        }
+    }
+    open_remote_box_store_execution_service(journal_path, authorizer, config, now_ms)
 }
 
 pub fn open_remote_box_store_execution_service<A: RemoteExecutionAuthorizer>(
