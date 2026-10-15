@@ -1,5 +1,6 @@
 //! Remote/Box Runner boundary for work that should not execute in the Android app process.
 
+pub mod background_shell_backend;
 pub mod box_store_sync_backend;
 pub mod box_disk_pressure_backend;
 pub mod box_store_manifest_format;
@@ -27,6 +28,10 @@ pub mod server;
 pub mod transport;
 
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
+pub use background_shell_backend::{
+    open_background_shell_service, BackgroundShellConfig, BackgroundShellResult,
+    ProductionBackgroundShellBackend, BACKGROUND_SHELL_CAPABILITY,
+};
 pub use browser_ua_backend::{
     BrowserUaReconcileBackend, BrowserUaReconcileExecutor, BrowserUaReconcileRequest,
     BROWSER_UA_OWNER_STAMP_LENGTH, BROWSER_UA_RECONCILE_CAPABILITY,

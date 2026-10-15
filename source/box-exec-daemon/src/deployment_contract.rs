@@ -5,6 +5,7 @@
 //! desktop-OS work to an explicitly authorized external Remote Runner. Keeping this placement
 //! explicit prevents a second hidden execution boundary from being introduced into the APK.
 
+use crate::background_shell_backend::{BackgroundShellConfig, ProductionBackgroundShellBackend};
 use crate::box_store_backend::{RemoteBoxStoreBackend, RemoteBoxStoreBackendConfig};
 use crate::box_store_backend_policy::{
     BoxStoreBackendKind, is_box_store_sync_enabled, resolve_box_store_backend_policy,
@@ -50,6 +51,21 @@ pub const SECURITY_BOUNDARY: &str =
 /// Compose the authenticated production CloudAgent executor inside the external Runner.
 /// The service journal owns process-death/outcome-unknown state; mutation reconciliation never
 /// blindly repeats launch/reply/rename/archive/delete side effects.
+/// Compose the durable background-shell service inside the Authorized External Runner.
+///
+/// A successful spawn intentionally remains non-terminal until reconciliation observes the
+/// terminal footer. Runner restart never repeats an incomplete command: the durable Remote
+/// journal reopens it as outcome-unknown and reconciliation can only settle from the existing
+/// deterministic terminal file.
+pub fn open_remote_background_shell_execution_service<A: RemoteExecutionAuthorizer>(
+    journal_path: impl Into<PathBuf>,
+    authorizer: A,
+    config: BackgroundShellConfig,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<A, ProductionBackgroundShellBackend>, ExecutionError> {
+    crate::open_background_shell_service(journal_path, authorizer, config, now_ms)
+}
+
 pub fn open_remote_cloud_agent_execution_service<A: RemoteExecutionAuthorizer>(
     journal_path: impl Into<PathBuf>,
     authorizer: A,

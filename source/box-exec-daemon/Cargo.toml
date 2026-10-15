@@ -19,3 +19,6 @@ url = "2"
 
 [lib]
 path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = "3"
