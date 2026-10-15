@@ -1,4 +1,5 @@
 use super::AndroidRoutedToolBridge;
+use super::large_output_spill::{is_large_output_spill_enabled, maybe_spill_mcp_text_result, MCP_TEXT_FILE_THRESHOLD_BYTES};
 use super::remote_routed_tools::{RemoteAutoReviewDecision, RemoteAutoReviewPreflight};
 use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::capability_broker::{PendingCapabilityCall, SharedCapabilityBroker};
@@ -273,7 +274,23 @@ impl AndroidRoutedToolBridge for LocalRoutedTools {
         let capability = match name {
             "Read" => LOCAL_FILE_READ_CAPABILITY,
             "Write" => LOCAL_FILE_WRITE_CAPABILITY,
-            _ => return self.delegate.call_tool(name, args, tool_call_id),
+            _ => {
+                let result = self.delegate.call_tool(name, args, tool_call_id)?;
+                // A spilled result is only useful when the same account may read it back.
+                // If local files are disabled or policy lookup fails, preserve the original
+                // inline result exactly; spill failure itself is also deliberately non-fatal.
+                if !is_large_output_spill_enabled()
+                    || !matches!(self.local_tool_permission(), Ok(permission) if permission != LocalToolPermission::Never)
+                {
+                    return Ok(result);
+                }
+                return Ok(maybe_spill_mcp_text_result(
+                    self.runner.as_ref(),
+                    result,
+                    tool_call_id,
+                    MCP_TEXT_FILE_THRESHOLD_BYTES,
+                ));
+            }
         };
         validate_local_tool_input(name, &args)?;
         if self.cancelled.load(Ordering::Acquire) {
