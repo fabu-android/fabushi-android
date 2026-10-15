@@ -1,10 +1,10 @@
+# 本轮实际发现与尚未证明的内容
+
 ## 2026-10-15 Desktop authority rebaseline
 
 Desktop canonical main is now `8148bfb9e747d446dd3d97342c3cf04a0ed407a2`, root tree `daa4cfbf6851e312e280050f81ef18915bca0c0c`. Relative to the prior locked `b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d`, GitHub reports six commits and seven changed paths: three new G11 real-browser workflow/evidence files plus changed `sand_browser_driver_source.rs`, `sand_browser_tools.rs`, and their two focused contract tests. Recursive authority is 9,364 tree entries / 8,213 tracked non-tree entries, not truncated.
 
 The incremental rebaseline preserves human review state only for unchanged path+blob rows, updates their `source_commit` to the new authority, resets the four changed existing rows to `unreviewed`, and adds the three new paths as `unreviewed`. Older Desktop-SHA evidence remains predecessor evidence and cannot verify the new blobs.
-
-# 本轮实际发现与尚未证明的内容
 
 ## 2026-10-11 当前权威 rebaseline
 

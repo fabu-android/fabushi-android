@@ -825,9 +825,18 @@
             "build_subagent_revival_prompt",
             "QUIET_REVIVAL_INSTRUCTION"
           ]
+        },
+        {
+          "path": "source/host/src/runner/agent_adapters.rs",
+          "blob_sha": "1e2d03a4f21addc06cf0e3aef9d62ec416ad9d0d",
+          "symbols": [
+            "SandSubagentHostAdapter",
+            "derive_sand_subagent_request_lineage",
+            "SubagentRunDispatch"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Own generated/background subagent launch, stable lineage, control, recovery, completion revival and computer-use usage/audit without a second UI truth.",
       "source_owner": "Desktop Rust Host/Runner",
       "direct_callers": [
@@ -19885,9 +19894,19 @@
             "ExclusiveRunRequest",
             "RunStateProjection"
           ]
+        },
+        {
+          "path": "source/host/src/runner/agent_adapters.rs",
+          "blob_sha": "1e2d03a4f21addc06cf0e3aef9d62ec416ad9d0d",
+          "symbols": [
+            "AgentUpdate",
+            "ForwardedUpdate",
+            "ForwardingOutcome",
+            "forward_agent_update"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Own in-memory per-Agent run/session/provider/subagent lifecycle projection, request-id deduplication, usage settlement and composing/retrying/activity state used to derive visible running status without becoming the durable transcript owner.",
       "source_owner": "Desktop Transcript RunLifecycleState",
       "direct_callers": [
@@ -21421,9 +21440,18 @@
             "create_host_request_context",
             "resolve_time_zone"
           ]
+        },
+        {
+          "path": "source/host/src/runner/agent_adapters.rs",
+          "blob_sha": "1e2d03a4f21addc06cf0e3aef9d62ec416ad9d0d",
+          "symbols": [
+            "SandRequestContextExecutor",
+            "RequestContextInfo",
+            "RequestContextProjection"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Create a validated per-request Host context carrying request identity, account identity and effective time zone without allowing presentation to become an account/policy owner.",
       "source_owner": "Desktop Host request-context provider",
       "direct_callers": [
