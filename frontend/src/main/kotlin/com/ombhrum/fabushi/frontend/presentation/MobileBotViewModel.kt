@@ -694,7 +694,6 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         mutableState.value.copy(
                             widgetPendingEntryIds = emptySet(),
                             secretPendingEntryIds = emptySet(),
-                reactionPendingEntryIds = emptySet(),
                             reactionPendingEntryIds = emptySet(),
                             approvalCleanup = MobileApprovalCleanupState(),
                             editorSuggestions = MobileEditorSuggestionSnapshot(),
@@ -2991,7 +2990,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     error = when {
                         result.isFailure -> result.exceptionOrNull()?.message ?: "Reaction outcome is uncertain; Fabushi will not retry it automatically"
                         settled?.accepted != true -> settled?.reason ?: "Reaction was rejected"
-                        settled.feedOutcomeUnknown -> settled.reason ?: "Reaction was saved, but Agent feed delivery is uncertain; it will not be retried automatically"
+                        settled?.feedOutcomeUnknown == true -> settled.reason ?: "Reaction was saved, but Agent feed delivery is uncertain; it will not be retried automatically"
                         reconcileFailure != null -> reconcileFailure?.message ?: "Reaction reconciliation failed"
                         else -> null
                     },

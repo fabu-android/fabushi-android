@@ -73,6 +73,7 @@ import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSection
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSidebarSectionsSnapshot
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidWidgetActionResult
 import com.ombhrum.fabushi.androidpreload.runtime.AndroidSecretSubmissionResult
+import com.ombhrum.fabushi.androidpreload.runtime.AndroidTranscriptReactionResult
 import com.ombhrum.fabushi.androidmain.security.AndroidRemoteControlSessionStore
 import com.ombhrum.fabushi.androidmain.security.AndroidRemotePairingStore
 import com.ombhrum.fabushi.androidmain.security.RemoteControlSessionCredential
