@@ -238,7 +238,7 @@ impl ProductionBackgroundShellBackend {
                 if let Ok(mut writer) = writer.lock() {
                     let _ = write!(
                         writer,
-                        "\n---\nexit_code: {exit_code}\nelapsed_ms: {}\nended_at_ms: {}\n---\n",
+                        "\n---\nexit_code: {exit_code}\nelapsed_ms: {}\nended_at_ms: {}\n---",
                         now_ms().saturating_sub(started_at_ms),
                         now_ms(),
                     );
