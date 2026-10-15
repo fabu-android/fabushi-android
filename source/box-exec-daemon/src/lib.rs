@@ -9,8 +9,11 @@ pub mod box_store_hydration;
 pub mod box_store_diagnostics;
 pub mod browser_ua_backend;
 pub mod cloud_agent_backend;
+pub mod cloud_agent_generated_trace;
 pub mod cloud_agent_images;
+pub mod cloud_agent_production;
 pub mod cloud_agent_transcript_dump;
+pub mod cloud_agent_wire;
 pub mod box_control_backend;
 pub mod box_store_backend;
 pub mod box_store_backend_policy;
@@ -35,6 +38,9 @@ pub use cloud_agent_backend::{
 pub use cloud_agent_images::{
     CloudAgentImageLoadError, LoadedCloudAgentImage, ScopedCloudAgentImageLoader,
     CLOUD_AGENT_IMAGE_BYTE_LIMIT,
+};
+pub use cloud_agent_production::{
+    open_production_cloud_agent_service, ProductionCloudAgentConfig, ProductionCloudAgentExecutor,
 };
 pub use box_store_sync_backend::{
     open_box_store_sync_service, BoxStoreSyncAction, BoxStoreSyncBackend, BoxStoreSyncExecutor,

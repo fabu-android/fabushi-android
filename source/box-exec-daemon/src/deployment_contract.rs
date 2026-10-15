@@ -10,6 +10,8 @@ use crate::box_store_backend_policy::{
     BoxStoreBackendKind, is_box_store_sync_enabled, resolve_box_store_backend_policy,
 };
 use crate::box_control_backend::{ProductionBoxControlBackend, ProductionBoxControlConfig};
+use crate::cloud_agent_backend::CloudAgentBackend;
+use crate::cloud_agent_production::{ProductionCloudAgentConfig, ProductionCloudAgentExecutor};
 use crate::file_transfer_backend::{RemoteFileTransferBackend, RemoteFileTransferConfig};
 use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService};
 use fabushi_android_shared::ExecutionError;
@@ -45,6 +47,18 @@ pub const SECURITY_BOUNDARY: &str =
 /// Compose the Desktop-compatible Box control/MCP provider inside the Authorized External Runner.
 /// MCP tool execution (ExecService field 11) is never blindly replayed during reconciliation;
 /// only environment/load/state operations with idempotent semantics may be retried.
+/// Compose the authenticated production CloudAgent executor inside the external Runner.
+/// The service journal owns process-death/outcome-unknown state; mutation reconciliation never
+/// blindly repeats launch/reply/rename/archive/delete side effects.
+pub fn open_remote_cloud_agent_execution_service<A: RemoteExecutionAuthorizer>(
+    journal_path: impl Into<PathBuf>,
+    authorizer: A,
+    config: ProductionCloudAgentConfig,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<A, CloudAgentBackend<ProductionCloudAgentExecutor>>, ExecutionError> {
+    crate::open_production_cloud_agent_service(journal_path, authorizer, config, now_ms)
+}
+
 pub fn open_remote_box_control_execution_service<A: RemoteExecutionAuthorizer>(
     journal_path: impl Into<PathBuf>,
     authorizer: A,
