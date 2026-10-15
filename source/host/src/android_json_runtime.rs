@@ -166,7 +166,8 @@ use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
 use crate::runner::{
-    AndroidHostInferenceProvider, AndroidInferenceMode, AndroidSubagentReviewDecision,
+    android_root_system_instructions, AndroidHostInferenceProvider, AndroidInferenceMode,
+    AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
@@ -13258,6 +13259,7 @@ impl AndroidJsonHost {
                 let provider = match mode {
                     AndroidHostMode::Test => {
                         AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+                            .with_system_instructions(android_root_system_instructions())
                             .with_turn_tool_session_reminders(true)
                             .with_silence_allowed(false)
                             .with_routed_tools(Arc::clone(&routed_subagent_tools))
@@ -13294,6 +13296,7 @@ impl AndroidJsonHost {
                         };
                         match AndroidHostInferenceProvider::production(token, cancelled.clone()) {
                             Ok(provider) => provider
+                                .with_system_instructions(android_root_system_instructions())
                                 .with_turn_tool_session_reminders(true)
                                 .with_silence_allowed(false)
                                 .with_routed_tools(Arc::clone(&routed_subagent_tools))

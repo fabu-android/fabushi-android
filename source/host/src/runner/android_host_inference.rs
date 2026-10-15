@@ -72,6 +72,7 @@ pub struct AndroidHostInferenceProvider {
     bearer_token: Option<String>,
     base_url: String,
     default_model: String,
+    system_instructions: Option<String>,
     cancelled: Arc<AtomicBool>,
     routed_tools: Option<Arc<dyn AndroidRoutedToolBridge>>,
     tool_call_observation_sink: Option<Arc<dyn AndroidToolCallObservationSink>>,
@@ -103,6 +104,7 @@ impl AndroidHostInferenceProvider {
             bearer_token: None,
             base_url: DEFAULT_DACHENG_RESPONSES_BASE_URL.into(),
             default_model: DEFAULT_SAND_MODEL_ID.into(),
+            system_instructions: None,
             cancelled: Arc::new(AtomicBool::new(false)),
             routed_tools: None,
             tool_call_observation_sink: None,
@@ -126,6 +128,7 @@ impl AndroidHostInferenceProvider {
             bearer_token: Some(bearer_token),
             base_url: DEFAULT_DACHENG_RESPONSES_BASE_URL.into(),
             default_model: DEFAULT_SAND_MODEL_ID.into(),
+            system_instructions: None,
             cancelled,
             routed_tools: None,
             tool_call_observation_sink: None,
@@ -328,6 +331,7 @@ impl AndroidHostInferenceProvider {
             bearer_token: Some(bearer_token),
             base_url,
             default_model: DEFAULT_SAND_MODEL_ID.into(),
+            system_instructions: None,
             cancelled,
             routed_tools: None,
             tool_call_observation_sink: None,
@@ -337,6 +341,13 @@ impl AndroidHostInferenceProvider {
             latest_resume_checkpoint: None,
             silence_allowed: false,
         }
+    }
+
+    pub fn with_system_instructions(mut self, instructions: impl Into<String>) -> Self {
+        let instructions = instructions.into();
+        let trimmed = instructions.trim();
+        self.system_instructions = (!trimmed.is_empty()).then(|| trimmed.to_string());
+        self
     }
 
     pub fn with_routed_tools(mut self, bridge: Arc<dyn AndroidRoutedToolBridge>) -> Self {
@@ -483,6 +494,9 @@ impl AndroidHostInferenceProvider {
             }
             let mut body = Map::new();
             body.insert("model".into(), Value::String(model.to_string()));
+            if let Some(instructions) = self.system_instructions.as_ref() {
+                body.insert("instructions".into(), Value::String(instructions.clone()));
+            }
             body.insert("input".into(), next_input);
             body.insert("stream".into(), Value::Bool(true));
             if !tool_definitions.is_empty() {
@@ -1177,6 +1191,17 @@ mod tests {
                 reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
             }
         );
+    }
+
+    #[test]
+    fn system_instructions_are_trimmed_and_owned_by_provider() {
+        let provider = AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+            .with_system_instructions("  system contract  ");
+        assert_eq!(provider.system_instructions.as_deref(), Some("system contract"));
+
+        let provider = AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+            .with_system_instructions("   ");
+        assert!(provider.system_instructions.is_none());
     }
 
     #[test]

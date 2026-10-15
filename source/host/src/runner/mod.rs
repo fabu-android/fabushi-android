@@ -6,6 +6,7 @@ pub mod agent_management;
 pub mod agent_v1_wire;
 pub mod agent_v1_observation;
 pub mod android_host_inference;
+pub mod android_system_prompt;
 pub mod background_work;
 mod checkpoint;
 pub mod clock_skew_guard;
@@ -71,6 +72,10 @@ pub use transient_stream_error::{
     should_retry_turn_attempt, RetryPolicy, DEFAULT_AUTOMATION_STREAM_RETRY_BASE_DELAY_MS,
     DEFAULT_AUTOMATION_STREAM_RETRY_MAX_ATTEMPTS, DEFAULT_AUTOMATION_STREAM_RETRY_MAX_DELAY_MS,
     DEFAULT_FIRST_TOKEN_STALL_DEADLINE_MS,
+};
+
+pub use android_system_prompt::{
+    android_root_system_instructions, ANDROID_ROOT_SYSTEM_INSTRUCTIONS,
 };
 
 pub use android_host_inference::{
