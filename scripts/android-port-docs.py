@@ -86,6 +86,169 @@ def complete_tree(repo: str, tree_sha: str) -> tuple[list[dict], bool]:
     return sorted(entries, key=lambda item: item['path']), fallback
 
 
+def _default_source_row(repo: str, source_commit: str, item: dict) -> dict:
+    require(item['type'] in ('blob', 'commit'), 'Unexpected Git object type')
+    require(item['mode'] in ('100644', '100755', '120000', '160000'), 'Unexpected Git mode')
+    return {
+        'source_repository': repo,
+        'source_commit': source_commit,
+        'source_path': item['path'],
+        'source_blob_sha': item['sha'],
+        'source_type': item['type'],
+        'source_mode': item['mode'],
+        'responsibilities': [],
+        'android_targets': [],
+        'disposition': None,
+        'implementation_status': 'unreviewed',
+        'evidence': [],
+    }
+
+
+def rebaseline() -> None:
+    authority_dir = DOC / 'authority'
+    baseline_path = authority_dir / 'baseline.json'
+    manifest_path = authority_dir / 'source-inventory-manifest.json'
+    ledger_path = authority_dir / 'source-inventory-ledger.jsonl'
+    responsibility_path = authority_dir / 'responsibility-ledger.json'
+
+    baseline = json.loads(baseline_path.read_text(encoding='utf-8'))
+    repo = baseline['desktop_repository']
+    require(repo == 'bhrumom/fabushi-desktop', 'Unexpected source repository')
+    current = get(f'/repos/{repo}/branches/main')['commit']['sha']
+    require(SHA.fullmatch(current) is not None, 'Invalid current Desktop main SHA')
+    commit = get(f'/repos/{repo}/git/commits/{current}')
+    require(commit.get('sha') == current, 'Desktop main commit lookup mismatch')
+    tree_sha = commit['tree']['sha']
+    require(SHA.fullmatch(tree_sha) is not None, 'Invalid Desktop root tree SHA')
+    entries, fallback = complete_tree(repo, tree_sha)
+    files = [item for item in entries if item['type'] != 'tree']
+    require(files, 'Empty source inventory during rebaseline')
+
+    old_rows = []
+    if ledger_path.is_file():
+        for line in ledger_path.read_text(encoding='utf-8').splitlines():
+            if line.strip():
+                old_rows.append(json.loads(line))
+    old_by_path = {row.get('source_path'): row for row in old_rows if row.get('source_path')}
+    new_by_path = {item['path']: item for item in files}
+
+    preserved = 0
+    reset = 0
+    new_rows = []
+    changed_paths = set()
+    for item in files:
+        old = old_by_path.get(item['path'])
+        exact_same_object = (
+            old is not None
+            and old.get('source_blob_sha') == item['sha']
+            and old.get('source_type') == item['type']
+            and old.get('source_mode') == item['mode']
+        )
+        if exact_same_object:
+            row = dict(old)
+            row['source_repository'] = repo
+            row['source_commit'] = current
+            preserved += 1
+        else:
+            row = _default_source_row(repo, current, item)
+            changed_paths.add(item['path'])
+            reset += 1
+        new_rows.append(row)
+
+    deleted_paths = sorted(set(old_by_path) - set(new_by_path))
+    changed_paths.update(deleted_paths)
+    ledger_text = ''.join(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n' for row in new_rows)
+    ledger_path.write_text(ledger_text, encoding='utf-8')
+
+    top_counts = {}
+    for item in files:
+        top = item['path'].split('/')[0]
+        top_counts[top] = top_counts.get(top, 0) + 1
+    manifest = {
+        'schema_version': 1,
+        'desktop_commit': current,
+        'desktop_root_tree': tree_sha,
+        'desktop_main_before': current,
+        'desktop_main_after': current,
+        'authority_current': True,
+        'android_tested_checkout_sha': None,
+        'workflow_run_id': os.environ.get('GITHUB_RUN_ID'),
+        'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+        'tree_entries': len(entries),
+        'tracked_non_tree_entries': len(files),
+        'root_counts': top_counts,
+        'gitlinks': [item for item in files if item['type'] == 'commit'],
+        'symlinks': [item for item in files if item['mode'] == '120000'],
+        'truncation_fallback_used': fallback,
+        'initial_status': 'unreviewed',
+        'ledger_sha256': hashlib.sha256(ledger_text.encode('utf-8')).hexdigest(),
+        'closure_review': f'incremental-rebaseline-preserved-{preserved}-reset-{reset}-deleted-{len(deleted_paths)}',
+        'product_acceptance': 'not-claimed',
+    }
+    save(manifest_path, manifest)
+
+    baseline['observed_date'] = time.strftime('%Y-%m-%d', time.gmtime())
+    baseline['desktop_commit'] = current
+    baseline['desktop_root_tree'] = tree_sha
+    save(baseline_path, baseline)
+
+    touched_responsibilities = 0
+    deleted_anchor_count = 0
+    if responsibility_path.is_file():
+        responsibility_doc = json.loads(responsibility_path.read_text(encoding='utf-8'))
+        authority = responsibility_doc.setdefault('authority', {})
+        authority['desktop_commit'] = current
+        authority['desktop_root_tree'] = tree_sha
+        for responsibility in responsibility_doc.get('responsibilities', []):
+            touched = False
+            refreshed_sources = []
+            for source in responsibility.get('desktop_sources', []):
+                path = source.get('path')
+                item = new_by_path.get(path)
+                if item is None:
+                    if path in changed_paths:
+                        touched = True
+                        deleted_anchor_count += 1
+                    continue
+                refreshed = dict(source)
+                if refreshed.get('blob_sha') != item['sha']:
+                    touched = True
+                    refreshed['blob_sha'] = item['sha']
+                refreshed_sources.append(refreshed)
+            if touched:
+                responsibility['desktop_sources'] = refreshed_sources
+                responsibility['implementation_status'] = 'mapped'
+                responsibility['verification_status'] = 'not-verified'
+                note = (
+                    f"Desktop authority rebaseline to {current}: one or more source anchors changed; "
+                    "prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+                )
+                notes = responsibility.get('notes')
+                if isinstance(notes, str):
+                    if note not in notes:
+                        responsibility['notes'] = notes + ' ' + note
+                elif isinstance(notes, list):
+                    if note not in notes:
+                        notes.append(note)
+                else:
+                    responsibility['notes'] = note
+                touched_responsibilities += 1
+        save(responsibility_path, responsibility_doc)
+
+    summary = {
+        'desktop_commit': current,
+        'desktop_root_tree': tree_sha,
+        'tracked_non_tree_entries': len(files),
+        'preserved_rows': preserved,
+        'reset_rows': reset,
+        'deleted_rows': len(deleted_paths),
+        'touched_responsibilities': touched_responsibilities,
+        'deleted_responsibility_anchors': deleted_anchor_count,
+    }
+    save(OUT / 'rebaseline-summary.json', summary)
+    print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
 def inventory() -> None:
     baseline = json.loads((DOC / 'authority/baseline.json').read_text(encoding='utf-8'))
     repo, sha, tree_sha = (baseline[name] for name in ('desktop_repository', 'desktop_commit', 'desktop_root_tree'))
@@ -104,9 +267,7 @@ def inventory() -> None:
     by_path = {item['path']: item for item in files}
     rows = []
     for item in files:
-        require(item['type'] in ('blob', 'commit'), 'Unexpected Git object type')
-        require(item['mode'] in ('100644', '100755', '120000', '160000'), 'Unexpected Git mode')
-        rows.append({'source_repository': repo, 'source_commit': sha, 'source_path': item['path'], 'source_blob_sha': item['sha'], 'source_type': item['type'], 'source_mode': item['mode'], 'responsibilities': [], 'android_targets': [], 'disposition': None, 'implementation_status': 'unreviewed', 'evidence': []})
+        rows.append(_default_source_row(repo, sha, item))
     text = ''.join(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n' for row in rows)
     (OUT / 'initial-parity-ledger.jsonl').write_text(text, encoding='utf-8')
     anchor_records = []
@@ -181,11 +342,11 @@ def main() -> int:
         print('Run this validation only in GitHub Actions.', file=sys.stderr)
         return 2
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=('inventory', 'validate', 'bundle'))
+    parser.add_argument('command', choices=('rebaseline', 'inventory', 'validate', 'bundle'))
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     try:
-        {'inventory': inventory, 'validate': validate, 'bundle': bundle}[args.command]()
+        {'rebaseline': rebaseline, 'inventory': inventory, 'validate': validate, 'bundle': bundle}[args.command]()
         return 0
     except (ValueError, RuntimeError, OSError) as error:
         print(type(error).__name__ + ': ' + str(error), file=sys.stderr)
