@@ -330,7 +330,8 @@ mod forwarding_tests {
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].capability_id, REMOTE_BOX_ENVIRONMENT_CAPABILITY);
-        assert!(requests[0].input_json.contains("\\\"FOO\\\""));
+        let env_input: serde_json::Value = serde_json::from_str(&requests[0].input_json).unwrap();
+        assert_eq!(env_input["update"]["FOO"], "bar");
         assert!(remote.journal().record("env-op").is_some());
     }
 
@@ -353,7 +354,9 @@ mod forwarding_tests {
         assert_eq!(loaded, vec!["calendar"]);
         let load_requests = load_requests.lock().unwrap();
         assert_eq!(load_requests[0].capability_id, REMOTE_BOX_MCP_CAPABILITY);
-        assert!(load_requests[0].input_json.contains("\\\"removeMissing\\\":true"));
+        let load_input: serde_json::Value =
+            serde_json::from_str(&load_requests[0].input_json).unwrap();
+        assert_eq!(load_input["removeMissing"], true);
 
         let exec_requests = Arc::new(Mutex::new(Vec::new()));
         let mut exec_runner = runner(
