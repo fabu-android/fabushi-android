@@ -6,9 +6,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use fabushi_android_shared::cloud_agent_model_catalog_wire::{
-    decode_cloud_agent_available_models_response, encode_cloud_agent_available_models_request,
-};
 use fabushi_android_shared::model_catalog::{
     find_catalog_entry, validate_model_params, SandModelCatalogEntry, SandModelCatalogParameterType,
 };
