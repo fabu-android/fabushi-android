@@ -1543,7 +1543,7 @@ mod tests {
             &identity("frozen-hydrate", "frozen-request"),
             &request("frozen-hydrate", "hydrate", None),
         ).unwrap());
-        assert!(output.contains("\\\"frozenManifestVersion\\\":2"));
+        assert!(output.contains("\"frozenManifestVersion\":2"));
         assert_eq!(fs::read(config.workspace_root.join("run.sh")).unwrap(), payload);
         #[cfg(unix)] {
             use std::os::unix::fs::PermissionsExt;
