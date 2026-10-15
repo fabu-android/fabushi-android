@@ -63,7 +63,7 @@ fn automation_timeline_event_wake_is_persisted_recovered_and_deduped_before_hidd
         "recover_timeline_event_wakes",
         "drain_timeline_event_revival_once",
         "build_timeline_event_wake_prompt",
-        "requestSource\":\"timeline-event",
+        "if is_admin_broadcast { \"broadcast\" } else { \"timeline-event\" }",
         "turn_journal",
     ] {
         assert!(runtime.contains(needle), "timeline-event shipping wake must contain {needle}");
