@@ -457,6 +457,32 @@ mod tests {
     use crate::extensions::memory::memory_service::MemoryOrigin;
 
     #[test]
+    fn durable_agent_memory_is_injected_and_account_fenced() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AndroidMemoryOwner::new(root.path());
+        owner
+            .add(
+                "session:account-a",
+                "agent-a",
+                "Prefers concise status updates",
+                "profile",
+                1_700_000_000_000,
+            )
+            .unwrap();
+
+        let prompt = owner
+            .render_agent_turn_prompt("session:account-a", "agent-a")
+            .unwrap();
+        assert!(prompt.contains("Memory: durable facts"));
+        assert!(prompt.contains("Prefers concise status updates"));
+
+        let other_account_prompt = owner
+            .render_agent_turn_prompt("session:account-b", "agent-a")
+            .unwrap();
+        assert!(other_account_prompt.is_empty());
+    }
+
+    #[test]
     fn explicit_memory_is_account_fenced_and_durable() {
         let root = tempfile::tempdir().unwrap();
         let owner = AndroidMemoryOwner::new(root.path());
