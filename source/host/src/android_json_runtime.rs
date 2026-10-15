@@ -196,6 +196,7 @@ use crate::runner::{
     with_send_message_tools, with_send_message_tools_counted_to_target, with_multitask_todo_tools,
     with_box_help_routed_tool, with_generate_image_routed_tools, with_local_file_tools,
     with_remote_routed_tools, with_web_routed_tools, WAITING_USER_CANCELLATION_PREFIX,
+    with_reaction_routed_tool, ReactionDeliveryCounter,
     AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry,
     RemoteAutoReviewDecision, RemoteAutoReviewPreflight, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
@@ -13425,6 +13426,18 @@ impl AndroidJsonHost {
                         Arc::clone(&cancelled),
                     )
                 };
+                // Desktop root Agents expose ReactToMessage as a provider tool. Android adapts
+                // the sink directly onto the one canonical TranscriptStore: no ViewModel/Compose
+                // reaction owner is introduced, and account/cancellation fencing is frozen to this turn.
+                let routed_subagent_tools = with_reaction_routed_tool(
+                    routed_subagent_tools,
+                    Arc::clone(&transcript),
+                    Arc::clone(&live_account_fence),
+                    &account_fence_owned,
+                    &conversation_id_owned,
+                    Arc::clone(&cancelled),
+                    ReactionDeliveryCounter::default(),
+                );
                 // Desktop root Agents can explicitly suspend the turn for human-only box work.
                 // The routed adapter mutates only the durable AndroidBoxHandoffOwner; provider
                 // termination and durable awaiting-user settlement are handled below from its

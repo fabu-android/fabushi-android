@@ -16,6 +16,7 @@ pub mod multitask_todo;
 pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod remote_routed_tools;
+pub mod reaction_routed_tool;
 pub mod local_routed_tools;
 pub mod listener_connect_cards;
 pub mod sand_labeling;
@@ -113,6 +114,7 @@ pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTur
 
 pub(crate) use web_routed_tools::with_web_routed_tools;
 pub(crate) use generate_image_routed_tools::with_generate_image_routed_tools;
+pub(crate) use reaction_routed_tool::{with_reaction_routed_tool, ReactionDeliveryCounter};
 
 pub(crate) use remote_routed_tools::{
     with_remote_routed_tools, RemoteApprovalRegistry, RemoteAutoReviewDecision,

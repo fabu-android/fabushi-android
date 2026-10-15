@@ -58411,6 +58411,109 @@
       "artifact": "Exact-head f6664ddcfdcd35fed188c0daf016b75a2dc5951a: run 38749910719 and rust-runtime-foundation job 116473283990 succeeded; the Host suite reported 1056 passed / 0 failed. Architecture artifact 11981176416 records still-open strict full-source debt and is not package/device/release verification.",
       "verification_status": "not-verified",
       "notes": "Implemented for Desktop c33a9495 root prompt assembly and proven by exact-head Rust/production-path tests at f6664ddc. Keep not-verified until one final same Android HEAD closes strict Full CI plus signed package, protected device and release evidence. system_prompt_assembly.rs also carries AGENT-REMOTE-PROMPT-ANDROID-001, which is implemented/not-verified."
+    },
+    {
+      "responsibility_id": "AUTOMATION-LISTENER-CONNECT-RESUME-ANDROID-001",
+      "domain": "automation-listener-connect-resume",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/listener_connect_cards.rs",
+          "blob_sha": "ce9b75207459d364e5b6e68d04b5cfacb96036f9",
+          "symbols": [
+            "surface_listener_connect_cards",
+            "listener_platform_display_name"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/automations/listener_connect_watcher.rs",
+          "symbols": [
+            "ListenerConnectWatcher",
+            "watch",
+            "tick"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/automations/listener_connect_watcher_production.rs",
+          "symbols": [
+            "ProductionListenerConnectWatcher"
+          ]
+        },
+        {
+          "path": "source/host/src/extensions/automations/listener_integrations.rs",
+          "symbols": [
+            "PlatformConnectionReader",
+            "ProductionListenerIntegrations"
+          ]
+        },
+        {
+          "path": "source/host/app/src/main.rs",
+          "symbols": [
+            "routine post-write listener card wiring",
+            "resume_after_listener_connect"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "After an enabled routine create/update introduces GitHub/Slack listener triggers, query canonical backend connection state, surface only missing durable connect cards, arm a reconnect watcher only after an observed disconnected state, then on the first false-to-true transition resume the same non-group Agent once with a hidden handoff turn. Preserve lookup-failure fail-soft behavior, duplicate/stale callback fencing, account scope, and watcher recovery across Android process death.",
+      "source_owner": "Desktop Host routine post-write pipeline + ProductionListenerConnectWatcher + ProductionListenerIntegrations.",
+      "direct_callers": [
+        "routine create/update post-write callback",
+        "feature.automation.upsert Android Host path"
+      ],
+      "downstream_dependencies": [
+        "DashboardService/GetSlackUserSettings",
+        "DashboardService/GetScmConnectionStatus",
+        "canonical TranscriptStore",
+        "durable turn journal",
+        "Agent channel store test projection"
+      ],
+      "state_owner": "Android Rust Host owns watcher journal and canonical transcript/turn state. Compose/ViewModel owns no listener truth.",
+      "persistent_state": [
+        "listener-connect-watches.json",
+        "canonical TranscriptStore listener-connect card",
+        "durable turn journal hidden resume record"
+      ],
+      "protocol_wire_contract": [
+        "Slack connected iff GetSlackUserSettings.has_slack_auth",
+        "GitHub connected iff GetScmConnectionStatus.connected",
+        "watch timeout 15 minutes",
+        "watch must observe disconnected before connected transition",
+        "hidden resume requestSource=handoff-resume and appendUserMessage=false"
+      ],
+      "visible_effect": "A routine that needs a disconnected GitHub/Slack integration surfaces a durable connect card, and after the real backend connection becomes live the paused Agent continues automatically without the user sending another message.",
+      "failure_behavior": [
+        "connection lookup errors do not arm or complete a watch",
+        "malformed/unsupported platform fails closed",
+        "provider/auth failure leaves a ready durable watch for later retry",
+        "group Agent does not receive root hidden resume"
+      ],
+      "cancellation_behavior": "Expired watches are removed; account switch prevents old-fence completion; normal turn cancellation owns a queued hidden resume after acceptance.",
+      "retry_semantics": "Read-only connectivity lookup may retry; ready watch is retained until hidden turn is durably accepted; unknown side effects are not replayed.",
+      "idempotency_semantics": "Stable account/Agent/platform watch key dedupes duplicate card events; generation fences stale callbacks; deterministic hidden resume request id and turn journal prevent duplicate continuation.",
+      "process_death_recovery": "Armed/ready watcher state reopens from listener-connect-watches.json. A ready watch is acknowledged only after the hidden resume enters the canonical durable turn journal.",
+      "account_fencing": "Watcher includes full current account fence; only current-account watches are polled/resumed and stale account/generation callbacks are rejected.",
+      "security_boundary": "Production connectivity reads reuse the canonical protected Sand credential owner through an explicit two-RPC allowlist; no credential/token enters renderer/Compose state.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/listener_connect_cards.rs",
+        "source/host/src/listener_connect_watch.rs",
+        "source/host/src/listener_connectivity.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/host/src/extensions/session/channel_store.rs"
+      ],
+      "android_owner": "AndroidJsonHost + DurableListenerConnectWatchStore + AndroidListenerConnectivity over CursorDashboardMcpAuthBackend.",
+      "platform_delta": "Desktop uses an autonomous 5-second worker tied to desktop lifecycle. Android drives bounded polling from the continuously consumed Host receive loop and persists watcher state so OS process death does not lose the reconnect obligation.",
+      "implementation_status": "implemented",
+      "production_wiring": "Exact code HEAD 64dd67cfa3231dccdfbaf0e2b04489a78a39ba15 wires feature.automation.upsert -> canonical backend connectivity -> durable transcript card -> durable watcher; feature.receive restores/polls current-account watches and queues one deterministic hidden handoff-resume turn after a real false-to-true backend transition. Production uses Dashboard GetSlackUserSettings/GetScmConnectionStatus; local FileChannelStore is test-only fallback.",
+      "unit_test": "Exact-head run 38761115983 / rust-runtime-foundation job 116512325830 succeeded. Focused tests cover card filtering, durable false-to-true arming, lookup-failure non-mutation, generation/account fencing, duplicate ACK, RPC path/protobuf contract and process reopen.",
+      "contract_test": "Exact-head 64dd67cf run 38761115983 job 116512325830 succeeded and asserts the Desktop shipping Dashboard RPC paths plus hidden-resume flags/turn-journal ownership in Host tests.",
+      "integration_test": "Exact-head 64dd67cf Host suite succeeded with 1070 passed / 0 failed, including automation_upsert_persists_listener_connect_card_only_for_disconnected_platforms, reconnect_transition_queues_one_hidden_resume_and_acks_durable_watch, and process_reopen_restores_armed_watch_and_account_fences_ready_completion.",
+      "packaged_test": "Not closed on final signed githubRelease APK/AAB.",
+      "device_test": "Not closed with protected account against real GitHub/Slack OAuth reconnect on packaged Android.",
+      "artifact": "Run 38761115983 / job 116512325830 is exact-head Rust/Host evidence; no release artifact claimed.",
+      "verification_status": "not-verified",
+      "notes": "Implementation is closed at Rust Host/source responsibility level, but verification remains open until strict full-source closure plus final packaged/protected-device acceptance. This does not close the broader AUTOMATION-CLOUD-SYNC-ANDROID-001 cloud relay/fire responsibility or frontend TRANSCRIPT-LISTENER-INTEGRATIONS-ANDROID-001 presentation/connect-flow responsibility."
     }
   ],
   "traceability": {
@@ -58446,7 +58549,7 @@
   "metadata": {
     "android_head_at_update": "dc717afdc2851bb0d5262e46c7a102fcccd1feb4",
     "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof. Audited native/mahayana-messaging/blob_store.rs is now a direct-port row to Host messaging_blob with stronger Android ownership/idempotency fences; the rest of the messaging crate remains individually open.",
-    "last_updated_android_head": "97fdae593ac58fa51eede9871498e162bb971e56",
-    "last_update_note": "Reconciled TranscriptExtension/ProductionRosterEmit to current shipping Android composition; verification remains pending exact descendant CI/package/device evidence."
+    "last_updated_android_head": "64dd67cfa3231dccdfbaf0e2b04489a78a39ba15",
+    "last_update_note": "Implemented Desktop listener_connect_cards.rs Host responsibility with real Dashboard connectivity, durable reconnect watcher, hidden Agent resume, duplicate/stale/account/process-death fencing; exact-head Rust job 116512325830 passed. Broader cloud automation and packaged/device verification remain open."
   }
 }
