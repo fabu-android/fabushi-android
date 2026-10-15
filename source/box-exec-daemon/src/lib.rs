@@ -11,6 +11,7 @@ pub mod browser_ua_backend;
 pub mod cloud_agent_backend;
 pub mod cloud_agent_images;
 pub mod cloud_agent_transcript_dump;
+pub mod box_control_backend;
 pub mod box_store_backend;
 pub mod box_store_backend_policy;
 pub mod cli;
@@ -38,6 +39,10 @@ pub use cloud_agent_images::{
 pub use box_store_sync_backend::{
     open_box_store_sync_service, BoxStoreSyncAction, BoxStoreSyncBackend, BoxStoreSyncExecutor,
     BoxStoreSyncRequest, BOX_STORE_SYNC_CAPABILITY,
+};
+pub use box_control_backend::{
+    open_production_box_control_service, ProductionBoxControlBackend, ProductionBoxControlConfig,
+    BOX_ENVIRONMENT_CAPABILITY, BOX_MCP_CAPABILITY,
 };
 pub use box_store_backend::{RemoteBoxStoreBackend, RemoteBoxStoreBackendConfig};
 pub use box_disk_pressure_backend::{

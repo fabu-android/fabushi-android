@@ -9,6 +9,7 @@ use crate::box_store_backend::{RemoteBoxStoreBackend, RemoteBoxStoreBackendConfi
 use crate::box_store_backend_policy::{
     BoxStoreBackendKind, is_box_store_sync_enabled, resolve_box_store_backend_policy,
 };
+use crate::box_control_backend::{ProductionBoxControlBackend, ProductionBoxControlConfig};
 use crate::file_transfer_backend::{RemoteFileTransferBackend, RemoteFileTransferConfig};
 use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService};
 use fabushi_android_shared::ExecutionError;
@@ -41,6 +42,18 @@ pub const SECURITY_BOUNDARY: &str =
 ///
 /// The Android APK remains only the authenticated client. The external Runner owns both configured
 /// endpoint roots and executes the staged 100 MiB transfer contract after Host authorization.
+/// Compose the Desktop-compatible Box control/MCP provider inside the Authorized External Runner.
+/// MCP tool execution (ExecService field 11) is never blindly replayed during reconciliation;
+/// only environment/load/state operations with idempotent semantics may be retried.
+pub fn open_remote_box_control_execution_service<A: RemoteExecutionAuthorizer>(
+    journal_path: impl Into<PathBuf>,
+    authorizer: A,
+    config: ProductionBoxControlConfig,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<A, ProductionBoxControlBackend>, ExecutionError> {
+    crate::open_production_box_control_service(journal_path, authorizer, config, now_ms)
+}
+
 pub fn open_remote_file_transfer_execution_service<A: RemoteExecutionAuthorizer>(
     journal_path: impl Into<PathBuf>,
     authorizer: A,
