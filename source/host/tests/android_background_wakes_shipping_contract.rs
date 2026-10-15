@@ -152,3 +152,45 @@ fn cloud_agent_watcher_ships_through_same_authorized_remote_operation_and_durabl
     assert!(production.contains("Launch is intentionally asynchronous"));
     assert!(production.contains("progress_json: Some(progress_json)"));
 }
+
+#[test]
+fn inbound_and_channel_timeline_wakes_share_the_canonical_host_owner() {
+    let runtime = source("host/src/android_json_runtime.rs");
+    for needle in [
+        "feature.agent.channels.receiveInbound",
+        "channel-inbound-wake",
+        "channel-inbound-revival-claim",
+        "recover_channel_inbound_wakes",
+        "drain_channel_inbound_revival_once",
+        "requestSource\":\"channel-inbound",
+        "build_channel_inbound_wake_prompt",
+        "channel-connected",
+        "channel-disconnected",
+        "persist_timeline_event_wake",
+    ] {
+        assert!(runtime.contains(needle), "shipping inbound/timeline caller must contain {needle}");
+    }
+    assert!(runtime.contains("self.drain_channel_inbound_revival_once()?"));
+    assert!(!runtime.contains("ComposeInboundChannelWake"));
+    assert!(!runtime.contains("JniInboundChannelWake"));
+}
+
+#[test]
+fn admin_broadcast_uses_the_same_durable_timeline_owner() {
+    let runtime = source("host/src/android_json_runtime.rs");
+    let wakes = source("host/src/extensions/transcript/background_wakes.rs");
+    for needle in [
+        "\"broadcastToAgents\" => self.broadcast_to_agents(params)",
+        "fn broadcast_to_agents",
+        "stale admin broadcast account fence",
+        "\"type\":\"admin-broadcast\"",
+        "\"eventId\":broadcast_id",
+        "persist_timeline_event_wake",
+    ] {
+        assert!(runtime.contains(needle), "shipping admin-broadcast caller must contain {needle}");
+    }
+    assert!(wakes.contains("\"admin-broadcast\" => format!"));
+    assert!(wakes.contains("administrator broadcast"));
+    assert!(!runtime.contains("ComposeAdminBroadcastQueue"));
+    assert!(!runtime.contains("JniAdminBroadcastQueue"));
+}

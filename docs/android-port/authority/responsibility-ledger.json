@@ -5,7 +5,7 @@
     "desktop_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "f8ecc7d0b9b732a6d54072f75e29d243bc39f309",
+    "android_head_at_update": "3ebd350353c99df74d0839b294bde2545af361b4",
     "status": "incomplete",
     "note": "Desktop canonical rebaselined to c33a9495fc1e640557d65f3e2daedc1449be7fcb / root tree 906b3f414b5ff343a5f0e627fa31b98778dfbf54 from GitHub Actions run 38731258547 artifact 11971095464. 13 changed/new source rows were reset for semantic re-audit; REMOTE-COMPUTER-001 was conservatively invalidated. Android migration remains incomplete pending source/responsibility closure and same-exact-head package/device/release evidence.",
     "desktop_root_tree": "906b3f414b5ff343a5f0e627fa31b98778dfbf54"
@@ -17233,15 +17233,15 @@
       "android_owner": "Rust Host RemoteRoutedTools + CapabilityBroker + AuthenticatedRemoteHostRunner; bounded Local Runner remains separate; Presentation owns no execution authority",
       "platform_delta": "Desktop loopback/VNC/process-spawn/window mechanisms are forbidden as the Android local product architecture. Android may execute only bounded local actions or route to an explicitly enrolled Remote Runner with separate credentials and reconciliation.",
       "implementation_status": "mapped",
-      "production_wiring": "Shipping Rust Host already owns protected authorized-remote-runner-v1 binding, explicit executor scopes, one-time CapabilityBroker approval, durable authenticated Remote execution/reconciliation, BoxStore sync and CopyToBox/CopyFromBox. This descendant additionally maps Remote timeout/refused/no-monitor failures to the frozen Desktop readiness taxonomy and applies Host-only protected-root fencing inside the external Runner transfer backend. The aggregate stays mapped because Desktop Box MCP/environment forwarding and backend-policy subcontracts still require dedicated production parity review.",
-      "unit_test": "Focused Rust coverage includes Remote account/device/executor/approval/outcome-unknown fencing, CopyToBox/CopyFromBox bounds, readiness/no-monitor/window taxonomy, and protected-root direct/relative/symlink rejection. Exact-head Actions required.",
+      "production_wiring": "Shipping AndroidJsonHost routes BoxEnvironmentApply/BoxMcpLoad/BoxMcpState/BoxMcpTool through the existing RemoteRoutedTools -> one-time SharedCapabilityBroker approval -> AuthenticatedRemoteHostRunner path. The Remote Runner service now has a durable account/device/epoch/credential enrollment plus exact operation/request/capability grant authorizer, capability-to-executor fencing for box-environment/box-mcp, revocation/expiry handling, process-reopen persistence, and ProductionBoxControlBackend forwarding for environment apply, MCP LoadMcpServers, ExecService field 36 state and field 11 tool payloads. This row remains mapped until the current implementation has same-exact-head Rust/Kotlin/architecture/package/device evidence.",
+      "unit_test": "Focused Rust enrollment/grant and Box routed-tool payload tests plus JVM protected-binding executor contract; same-exact-head Actions pending.",
       "contract_test": "Production transport and Host composition implement separate authorized Remote Runner credentials, stable operation/request/grant/device/account identity, capability consumption, exactly-once side-effect dispatch and outcome-unknown reconciliation. Same exact-head GitHub Actions plus deployed executor compatibility remain required.",
       "integration_test": "Client-side production composition is wired through AndroidJsonHost -> real turn tool graph -> RemoteRoutedTools -> AuthenticatedRemoteHostRunner -> AuthenticatedRemoteHttpTransport. Live integration still requires an externally enrolled authorized Runner and therefore remains not-verified.",
       "packaged_test": "required on final APK/AAB",
       "device_test": "required for pairing/revoke/reconnect/viewport/file-transfer/computer-use on supported Android devices",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Readiness/no-monitor taxonomy and protected-path transfer fencing are implemented sub-responsibilities. Keep this aggregate mapped until the remaining Box MCP/environment/backend-policy responsibilities are implemented and same-final-head package/device evidence closes the full Box product surface.",
+      "notes": "Production caller and protected enrollment code are now present, but BOX-AUTHORIZED-RUNNER-ANDROID-001 is intentionally not promoted before same-exact-head Actions and final packaged/device Remote Runner evidence.",
       "desktop_sources": [
         {
           "path": "source/host/src/ports/box.rs",
@@ -17392,7 +17392,7 @@
       "device_test": "Required for final channel failure correction journey; no current canonical provider success path is claimed.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented production caller is narrower than the Desktop aggregate background-wakes contract. Inbound channel wakes, broadcast/admin/timeline event wakes and CloudAgent/background-shell watchers remain separate mapped work and are not promoted by this row."
+      "notes": "Outbound failed-delivery revival remains an implemented narrow responsibility. Inbound channel revival is tracked separately; aggregate background-wakes remains mapped/not-verified until all shipping callers have exact-head evidence."
     },
     {
       "responsibility_id": "BACKGROUND-WAKES-TIMELINE-ANDROID-001",
@@ -17412,15 +17412,44 @@
       "android_owner": "Rust AndroidJsonHost + canonical TranscriptStore/turn journal; BackgroundWakes remains an in-process coordinator only",
       "platform_delta": "Android persists the wake payload and claim in canonical Host transcript state because the app process can die between the timeline mutation and the hidden continuation. Activity/Compose owns no wake truth.",
       "implementation_status": "implemented",
-      "production_wiring": "feature.automation.upsert and feature.automation.setAgentEnabled persist automation-changed timeline-event-wake rows for the owning Agent. feature.receive reconstructs unclaimed current-account rows after reopen, defers while that Agent has an active turn, coalesces per Agent, derives a deterministic timeline-event-revival request id, checks the durable turn journal before queue admission, and writes a transcript claim only after the hidden turn is known queued/already journaled.",
-      "unit_test": "android_json_runtime::automation_event_trigger_wiring_tests::automation_timeline_wake_is_durable_account_fenced_and_recoverable; exact-head Actions pending",
-      "contract_test": "source/host/tests/android_background_wakes_shipping_contract.rs timeline-event shipping contract; exact-head Actions pending",
+      "production_wiring": "feature.automation.upsert/setAgentEnabled persist automation-changed wakes; successful Agent channel metadata write/remove now persist channel-connected/channel-disconnected wakes; broadcastToAgents persists one account-fenced admin-broadcast wake per canonical Agent with deterministic event identity. feature.receive reconstructs unclaimed current-account rows after reopen, defers while that Agent has an active turn, coalesces per Agent, derives a deterministic hidden continuation request id, consults the durable turn journal, and writes a durable claim only after queue admission or an already-owned journal entry.",
+      "unit_test": "Focused Rust Host tests cover automation, channel connect/disconnect and admin broadcast persistence/dedupe/account fencing/process reopen; exact-head Actions pending.",
+      "contract_test": "source/host/tests/android_background_wakes_shipping_contract.rs freezes the shared canonical Host owner and no Compose/JNI queue; exact-head Actions pending.",
       "integration_test": "Same-exact-head Rust Host production composition required; channel connection/disconnection timeline callers remain separate work.",
       "packaged_test": "Required on final APK/AAB for process-death/reopen timeline revival.",
       "device_test": "Required in final automation/process-death acceptance.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Narrow automation-changed timeline slice only. Inbound channel wakes, admin broadcast, channel-connected/channel-disconnected timeline callers and the aggregate background-wakes source row remain mapped/not-verified."
+      "notes": "Timeline caller implementation now includes automation-changed, channel-connected, channel-disconnected and admin-broadcast. Keep not-verified until the new exact HEAD passes Actions; aggregate source row remains mapped."
+    },
+    {
+      "responsibility_id": "BACKGROUND-WAKES-INBOUND-ANDROID-001",
+      "domain": "agent-background-wakes",
+      "desktop_path": "source/host/tests/background_wakes_production_contract.rs",
+      "desktop_symbol": "queue_channel_inbound / build_channel_inbound_wake_prompt / BackgroundWakes inbound revival",
+      "source_sha": "fccb102632895449c487ef45e9b5969de7746e91",
+      "responsibility": "Persist inbound channel deliveries before revival and recover exactly one Agent-scoped hidden continuation without losing or duplicating accepted envelopes across duplicate delivery, active turns, process death, account switch, or queue/crash races.",
+      "source_owner": "Desktop Host channel inbound sink + BackgroundWakes inbound revival worker",
+      "visible_effect": "An Agent can notice inbound channel messages after process restart while duplicate provider delivery or a crash around queue admission does not create a duplicate continuation.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/connectors/channel_delivery.rs",
+        "source/host/src/extensions/transcript/background_wakes.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/tests/android_background_wakes_shipping_contract.rs"
+      ],
+      "android_owner": "Rust AndroidJsonHost + canonical TranscriptStore/turn journal + in-process BackgroundWakes coordinator; no Compose/JNI canonical wake owner",
+      "platform_delta": "Android persists accepted inbound envelopes and durable claims in Host transcript state because the application process can die before the hidden continuation is admitted. Provider delivery remains a Host connector responsibility.",
+      "implementation_status": "implemented",
+      "production_wiring": "feature.agent.channels.receiveInbound validates an account-fenced bounded Host envelope, persists a deterministic channel-inbound-wake before queueing, deduplicates provider redelivery, reconstructs unclaimed current-account rows after process reopen, defers while the Agent is active, merges by Agent, and uses deterministic hidden request identity plus the turn journal. Claims are durable only after queue admission or an existing journal owner; queue failure requeues without claiming.",
+      "unit_test": "Focused Rust Host test covers success, duplicate, stale account and process-reopen recovery; exact-head Actions pending.",
+      "contract_test": "source/host/tests/android_background_wakes_shipping_contract.rs inbound shipping-owner contract; exact-head Actions pending.",
+      "integration_test": "Same-exact-head Rust Host composition required; real Slack/Discord provider transport remains a separate connector responsibility.",
+      "packaged_test": "Required on final APK/AAB for inbound process-death recovery.",
+      "device_test": "Required with a real shipping channel provider when that provider is enabled.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Narrow Host inbound wake owner only. This does not claim a currently non-shipping Slack/Discord provider or promote the aggregate Desktop background-wakes source row."
     },
     {
       "responsibility_id": "DURABLE-FILE-POLICY-ANDROID-001",

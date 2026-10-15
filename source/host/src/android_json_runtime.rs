@@ -57,7 +57,7 @@ use crate::remote_box_store_sync::{
     RemoteBoxStoreSyncState, REMOTE_BOX_STORE_SYNC_CAPABILITY,
 };
 use crate::messaging_service::AndroidMessagingService;
-use crate::connectors::channel_delivery::HostChannelDelivery;
+use crate::connectors::channel_delivery::{validate_channel_inbound_envelope, HostChannelDelivery};
 use crate::mcp_server_tool_settings::McpServerToolSettings;
 use crate::workflows::workflow_library::GlobalWorkflowLibrary;
 use crate::composer_draft::DurableComposerDraftOwner;
@@ -151,7 +151,8 @@ use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtens
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
 use crate::extensions::transcript::background_wakes::{
-    BackgroundWakes, build_channel_delivery_failure_wake_prompt, build_timeline_event_wake_prompt,
+    BackgroundWakes, build_channel_delivery_failure_wake_prompt, build_channel_inbound_wake_prompt,
+    build_timeline_event_wake_prompt,
 };
 use crate::extensions::transcript::completion_revivals::{
     build_shell_revival_prompt, build_subagent_revival_prompt, ShellCompletion,
@@ -5074,14 +5075,35 @@ impl AndroidJsonHost {
                     self.transcript_extension
                         .event_bridge()
                         .listener_connect_card(agent_id, platform);
+                    if result.get("written").and_then(Value::as_bool) == Some(true) {
+                        let account_fence = required_string(params, "accountFence")?;
+                        let label = result.get("label").and_then(Value::as_str).unwrap_or(platform);
+                        self.persist_timeline_event_wake(
+                            account_fence,
+                            agent_id,
+                            json!({"type":"channel-connected","label":label}),
+                        )?;
+                    }
                 }
                 Ok(result)
             }
             "feature.agent.channels.removeMetadata" => {
                 let result = self.agent_channels_remove_metadata(params)?;
                 self.transcript_extension.event_bridge().channel_config_changed();
+                if result.get("removed").and_then(Value::as_bool) == Some(true) {
+                    let account_fence = required_string(params, "accountFence")?;
+                    let agent_id = required_string(params, "agentId")?;
+                    let platform = required_string(params, "platform")?;
+                    let label = result.get("label").and_then(Value::as_str).unwrap_or(platform);
+                    self.persist_timeline_event_wake(
+                        account_fence,
+                        agent_id,
+                        json!({"type":"channel-disconnected","label":label}),
+                    )?;
+                }
                 Ok(result)
             }
+            "feature.agent.channels.receiveInbound" => self.agent_channels_receive_inbound(params),
             "feature.agent.upgradeQuiesce" => self.agent_upgrade_quiesce(params),
             "feature.call.create" => self.human_call_create(params),
             "feature.call.list" => self.human_call_list(params),
@@ -5128,6 +5150,7 @@ impl AndroidJsonHost {
                 self.trays.clear_all();
                 Ok(json!({"cleared":true}))
             }
+            "broadcastToAgents" => self.broadcast_to_agents(params),
             "listAgents" => Ok(Value::Array(self.project_agent_roster()?)),
             "countAgents" => {
                 let agents = self.agents.lock().map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?;
@@ -5971,6 +5994,46 @@ impl AndroidJsonHost {
             .list_pending_for(&account_fence, parent_agent_id);
         serde_json::to_value(merge_async_tasks(&live_tasks, &durable))
             .map_err(|error| format!("failed to serialize async task projection: {error}"))
+    }
+
+    fn broadcast_to_agents(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        if let Some(expected) = params.get("accountFence").and_then(Value::as_str) {
+            if expected != account_fence {
+                return Err("stale admin broadcast account fence".into());
+            }
+        }
+        let broadcast_id = required_string(params, "broadcastId")?;
+        if broadcast_id.len() > 512 || broadcast_id.chars().any(char::is_control) {
+            return Err("admin broadcast id is invalid".into());
+        }
+        let message = required_string(params, "message")?;
+        if message.len() > 64 * 1024 {
+            return Err("admin broadcast message exceeds 64 KiB".into());
+        }
+        let agent_ids = self.agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .list()
+            .into_iter()
+            .map(|agent| agent.id)
+            .collect::<Vec<_>>();
+        for agent_id in &agent_ids {
+            self.persist_timeline_event_wake(
+                &account_fence,
+                agent_id,
+                json!({
+                    "type":"admin-broadcast",
+                    "eventId":broadcast_id,
+                    "message":message,
+                }),
+            )?;
+        }
+        Ok(json!({
+            "accepted":true,
+            "broadcastId":broadcast_id,
+            "agentCount":agent_ids.len(),
+        }))
     }
 
     fn project_agent_roster(&self) -> Result<Vec<Value>, String> {
@@ -9520,22 +9583,61 @@ impl AndroidJsonHost {
         let agent_id = required_string(params, "agentId")?;
         let platform = required_string(params, "platform")?;
         let label = params.get("label").and_then(Value::as_str).unwrap_or("");
-        let written = self
-            .agent_channel_store(&account_fence, agent_id)?
+        let store = self.agent_channel_store(&account_fence, agent_id)?;
+        let written = store
             .write_metadata(platform, label)
             .map_err(|error| format!("failed to persist Android Agent channel metadata: {error}"))?;
-        Ok(json!({"written":written,"platform":platform}))
+        let canonical_label = store.read_label(platform).unwrap_or_else(|| platform.to_string());
+        Ok(json!({"written":written,"platform":platform,"label":canonical_label}))
     }
 
     fn agent_channels_remove_metadata(&self, params: &Value) -> Result<Value, String> {
         let account_fence = self.agent_channels_account_fence(params)?;
         let agent_id = required_string(params, "agentId")?;
         let platform = required_string(params, "platform")?;
-        let removed = self
-            .agent_channel_store(&account_fence, agent_id)?
+        let store = self.agent_channel_store(&account_fence, agent_id)?;
+        let label = store.read_label(platform).unwrap_or_else(|| platform.to_string());
+        let removed = store
             .remove(platform)
             .map_err(|error| format!("failed to remove Android Agent channel metadata: {error}"))?;
-        Ok(json!({"removed":removed,"platform":platform}))
+        Ok(json!({"removed":removed,"platform":platform,"label":label}))
+    }
+
+    fn agent_channels_receive_inbound(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.agent_channels_account_fence(params)?;
+        let agent_id = required_string(params, "agentId")?.to_string();
+        let envelopes = params
+            .get("envelopes")
+            .and_then(Value::as_array)
+            .ok_or("channel inbound envelopes must be an array")?;
+        if envelopes.is_empty() || envelopes.len() > 256 {
+            return Err("channel inbound envelopes must contain 1..256 entries".into());
+        }
+        let mut accepted = 0_u64;
+        for envelope in envelopes {
+            validate_channel_inbound_envelope(envelope)?;
+            let payload = serde_json::to_string(envelope)
+                .map_err(|error| format!("failed to encode inbound channel envelope: {error}"))?;
+            let wake_id = format!(
+                "channel-inbound-wake:{}",
+                crate::sha256::sha256_hex(format!("{account_fence}\n{agent_id}\n{payload}").as_bytes())
+            );
+            let inserted = self.transcript
+                .lock()
+                .map_err(|_| "transcript lock poisoned".to_string())?
+                .append_entry_if_absent(json!({
+                    "id":wake_id,
+                    "kind":"channel-inbound-wake",
+                    "accountFence":account_fence,
+                    "agentId":agent_id,
+                    "envelope":envelope,
+                    "timestampMs":now_ms(),
+                }))
+                .map_err(|error| format!("failed to persist inbound channel wake: {error}"))?;
+            if inserted { accepted = accepted.saturating_add(1); }
+        }
+        self.recover_channel_inbound_wakes()?;
+        Ok(json!({"accepted":accepted,"agentId":agent_id}))
     }
 
     fn contact_group_projection_inputs(
@@ -10173,6 +10275,131 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn channel_inbound_claim_id(wake_id: &str) -> String {
+        format!("channel-inbound-revival-claim:{wake_id}")
+    }
+
+    fn recover_channel_inbound_wakes(&mut self) -> Result<(), String> {
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let entries = self.transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .get_transcript();
+        let claimed = entries.iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("channel-inbound-revival-claim"))
+            .filter(|entry| entry.get("accountFence").and_then(Value::as_str) == Some(account_fence.as_str()))
+            .filter_map(|entry| entry.get("wakeId").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        let pending = entries.into_iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("channel-inbound-wake"))
+            .filter(|entry| entry.get("accountFence").and_then(Value::as_str) == Some(account_fence.as_str()))
+            .filter(|entry| entry.get("id").and_then(Value::as_str).is_some_and(|id| !claimed.contains(id)))
+            .collect::<Vec<_>>();
+        let mut wakes = self.background_wakes
+            .lock()
+            .map_err(|_| "background wake owner lock poisoned".to_string())?;
+        for wake in pending {
+            let Some(agent_id) = wake.get("agentId").and_then(Value::as_str)
+                .map(str::trim).filter(|value| !value.is_empty()).map(str::to_string) else { continue; };
+            let wake_id = wake.get("id").and_then(Value::as_str).unwrap_or_default();
+            let already_queued = wakes.pending_inbound.get(&agent_id).is_some_and(|items| {
+                items.iter().any(|item| item.get("id").and_then(Value::as_str) == Some(wake_id))
+            });
+            if !already_queued { BackgroundWakes::enqueue(&mut wakes.pending_inbound, agent_id, wake); }
+        }
+        Ok(())
+    }
+
+    fn mark_channel_inbound_wakes_claimed(&mut self, wakes: &[Value]) -> Result<(), String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let observed_at_ms = now_ms();
+        let mut transcript = self.transcript.lock().map_err(|_| "transcript lock poisoned".to_string())?;
+        for wake in wakes {
+            let Some(wake_id) = wake.get("id").and_then(Value::as_str) else { continue; };
+            transcript.append_entry_if_absent(json!({
+                "id":Self::channel_inbound_claim_id(wake_id),
+                "kind":"channel-inbound-revival-claim",
+                "wakeId":wake_id,
+                "accountFence":account_fence,
+                "agentId":wake.get("agentId").cloned().unwrap_or(Value::Null),
+                "timestampMs":observed_at_ms,
+            })).map_err(|error| format!("failed to persist channel inbound revival claim: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn drain_channel_inbound_revival_once(&mut self) -> Result<(), String> {
+        self.recover_channel_inbound_wakes()?;
+        let candidate = {
+            let wakes = self.background_wakes.lock().map_err(|_| "background wake owner lock poisoned".to_string())?;
+            wakes.pending_inbound.keys().next().cloned()
+        };
+        let Some(agent_id) = candidate else { return Ok(()); };
+        let account_fence = self.current_turn_account_fence()?;
+        if self.agent_turn_interruptions.has_active_turn(&agent_id, &account_fence) { return Ok(()); }
+        let wakes_to_run = {
+            let mut wakes = self.background_wakes.lock().map_err(|_| "background wake owner lock poisoned".to_string())?;
+            if !BackgroundWakes::<Value>::begin_revival(&mut wakes.reviving_inbound_agent_ids, &agent_id) { return Ok(()); }
+            BackgroundWakes::take_pending(&mut wakes.pending_inbound, &agent_id)
+        };
+        let finish = |owner: &Arc<Mutex<BackgroundWakes<Value>>>, agent_id: &str| {
+            if let Ok(mut wakes) = owner.lock() { BackgroundWakes::<Value>::end_revival(&mut wakes.reviving_inbound_agent_ids, agent_id); }
+        };
+        if wakes_to_run.is_empty() { finish(&self.background_wakes, &agent_id); return Ok(()); }
+        let mut wake_ids = wakes_to_run.iter().filter_map(|wake| wake.get("id").and_then(Value::as_str)).map(str::to_string).collect::<Vec<_>>();
+        wake_ids.sort(); wake_ids.dedup();
+        let request_id = format!("channel-inbound-revival:{}:{}", agent_id, crate::sha256::sha256_hex(wake_ids.join("\n").as_bytes()));
+        if self.turn_journal.lock().map_err(|_| "turn journal lock poisoned".to_string())?.record(&request_id).is_some() {
+            self.mark_channel_inbound_wakes_claimed(&wakes_to_run)?;
+            finish(&self.background_wakes, &agent_id);
+            return Ok(());
+        }
+        let envelopes = wakes_to_run.iter().filter_map(|wake| wake.get("envelope").cloned()).collect::<Vec<_>>();
+        if envelopes.is_empty() {
+            self.mark_channel_inbound_wakes_claimed(&wakes_to_run)?;
+            finish(&self.background_wakes, &agent_id);
+            return Ok(());
+        }
+        let (bearer_token, _session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(_) => {
+                let mut owner = self.background_wakes.lock().map_err(|_| "background wake owner lock poisoned".to_string())?;
+                for wake in wakes_to_run { BackgroundWakes::enqueue(&mut owner.pending_inbound, agent_id.clone(), wake); }
+                BackgroundWakes::<Value>::end_revival(&mut owner.reviving_inbound_agent_ids, &agent_id);
+                return Ok(());
+            }
+        };
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":build_channel_inbound_wake_prompt(&envelopes),
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"channel-inbound",
+            "skipAckObligation":true,
+            "directAddressedAcceptance":true,
+        });
+        match self.queue_chat_turn(&operation_id, command.get("requestId").and_then(Value::as_str).unwrap_or_default(), &command, bearer_token) {
+            Ok(()) => self.mark_channel_inbound_wakes_claimed(&wakes_to_run)?,
+            Err(_) => {
+                self.active_operations.remove(&operation_id);
+                self.agent_turn_interruptions.unregister_operation(&operation_id);
+                let mut owner = self.background_wakes.lock().map_err(|_| "background wake owner lock poisoned".to_string())?;
+                for wake in wakes_to_run { BackgroundWakes::enqueue(&mut owner.pending_inbound, agent_id.clone(), wake); }
+            }
+        }
+        finish(&self.background_wakes, &agent_id);
+        Ok(())
+    }
+
     fn timeline_event_claim_id(wake_id: &str) -> String {
         format!("timeline-event-revival-claim:{wake_id}")
     }
@@ -10186,9 +10413,11 @@ impl AndroidJsonHost {
         let observed_at_ms = now_ms();
         let event_json = serde_json::to_string(&event)
             .map_err(|error| format!("failed to encode timeline wake event: {error}"))?;
-        let material = format!(
-            "{account_fence}\n{agent_id}\n{observed_at_ms}\n{event_json}"
-        );
+        let material = if let Some(event_id) = event.get("eventId").and_then(Value::as_str) {
+            format!("{account_fence}\n{agent_id}\nevent:{event_id}")
+        } else {
+            format!("{account_fence}\n{agent_id}\n{observed_at_ms}\n{event_json}")
+        };
         let wake_id = format!(
             "timeline-event-wake:{}",
             crate::sha256::sha256_hex(material.as_bytes())
@@ -16953,6 +17182,7 @@ impl AndroidJsonHost {
         self.drain_mcp_auth_owner_events()?;
         self.drain_listener_connect_resume_once()?;
         self.drain_box_handoff_resume_once()?;
+        self.drain_channel_inbound_revival_once()?;
         self.drain_channel_failure_revival_once()?;
         self.drain_timeline_event_revival_once()?;
         self.drain_subagent_completion_revival_once()?;
@@ -26057,6 +26287,140 @@ mod automation_event_trigger_wiring_tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0]["accountFence"], account_fence);
         assert_eq!(pending[0]["event"]["type"], "automation-changed");
+    }
+
+    #[test]
+    fn channel_timeline_callers_and_inbound_wakes_are_durable_account_fenced_and_deduped() {
+        let root = tempfile::tempdir().unwrap();
+        let agent_id;
+        let account_fence;
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
+            let created = host.dispatch(
+                "createAgent",
+                &json!({"name":"Channel Wake Agent","isIntroductionSuppressed":true}),
+            ).unwrap();
+            agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+            account_fence = host.current_turn_account_fence().unwrap();
+
+            host.dispatch(
+                "feature.agent.channels.writeMetadata",
+                &json!({
+                    "accountFence":account_fence,
+                    "agentId":agent_id,
+                    "platform":"slack",
+                    "label":"Operations"
+                }),
+            ).unwrap();
+            host.dispatch(
+                "feature.agent.channels.removeMetadata",
+                &json!({
+                    "accountFence":account_fence,
+                    "agentId":agent_id,
+                    "platform":"slack"
+                }),
+            ).unwrap();
+
+            let inbound = json!({
+                "accountFence":account_fence,
+                "agentId":agent_id,
+                "envelopes":[{
+                    "address":{"platform":"slack","chat":"C123"},
+                    "sender":"alice",
+                    "text":"status?",
+                    "messageId":"m-1"
+                }]
+            });
+            let first = host.dispatch("feature.agent.channels.receiveInbound", &inbound).unwrap();
+            assert_eq!(first["accepted"], 1);
+            let duplicate = host.dispatch("feature.agent.channels.receiveInbound", &inbound).unwrap();
+            assert_eq!(duplicate["accepted"], 0);
+
+            let stale = json!({
+                "accountFence":"session:stale",
+                "agentId":agent_id,
+                "envelopes":[{"address":{"platform":"slack","chat":"C123"},"sender":"mallory","text":"stale"}]
+            });
+            assert!(host.dispatch("feature.agent.channels.receiveInbound", &stale).unwrap_err().contains("stale Agent channel account fence"));
+
+            let transcript = host.transcript.lock().unwrap().get_transcript();
+            let timeline = transcript.iter()
+                .filter(|entry| entry["kind"] == "timeline-event-wake")
+                .collect::<Vec<_>>();
+            assert!(timeline.iter().any(|entry| entry["event"]["type"] == "channel-connected" && entry["event"]["label"] == "Operations"));
+            assert!(timeline.iter().any(|entry| entry["event"]["type"] == "channel-disconnected" && entry["event"]["label"] == "Operations"));
+            assert_eq!(transcript.iter().filter(|entry| entry["kind"] == "channel-inbound-wake").count(), 1);
+            assert_eq!(transcript.iter().filter(|entry| entry["kind"] == "channel-inbound-revival-claim").count(), 0);
+        }
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        assert_eq!(reopened.current_turn_account_fence().unwrap(), account_fence);
+        reopened.recover_channel_inbound_wakes().unwrap();
+        reopened.recover_timeline_event_wakes().unwrap();
+        let wakes = reopened.background_wakes.lock().unwrap();
+        assert_eq!(wakes.pending_inbound.get(&agent_id).map(Vec::len), Some(1));
+        let timeline = wakes.pending_event_wakes.get(&agent_id).unwrap();
+        assert!(timeline.iter().any(|entry| entry["event"]["type"] == "channel-connected"));
+        assert!(timeline.iter().any(|entry| entry["event"]["type"] == "channel-disconnected"));
+    }
+
+    #[test]
+    fn admin_broadcast_is_account_fenced_deduped_and_recoverable_per_agent() {
+        let root = tempfile::tempdir().unwrap();
+        let first_agent;
+        let second_agent;
+        let account_fence;
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
+            first_agent = host.dispatch(
+                "createAgent",
+                &json!({"name":"Broadcast One","isIntroductionSuppressed":true}),
+            ).unwrap()["agent"]["id"].as_str().unwrap().to_string();
+            second_agent = host.dispatch(
+                "createAgent",
+                &json!({"name":"Broadcast Two","isIntroductionSuppressed":true}),
+            ).unwrap()["agent"]["id"].as_str().unwrap().to_string();
+            account_fence = host.current_turn_account_fence().unwrap();
+
+            let payload = json!({
+                "accountFence":account_fence,
+                "broadcastId":"admin-policy-42",
+                "message":"A maintenance window starts soon."
+            });
+            let first = host.dispatch("broadcastToAgents", &payload).unwrap();
+            assert_eq!(first["accepted"], true);
+            assert_eq!(first["agentCount"], 2);
+            let duplicate = host.dispatch("broadcastToAgents", &payload).unwrap();
+            assert_eq!(duplicate["agentCount"], 2);
+
+            assert!(host.dispatch(
+                "broadcastToAgents",
+                &json!({
+                    "accountFence":"session:stale",
+                    "broadcastId":"admin-policy-stale",
+                    "message":"must not cross account fence"
+                }),
+            ).unwrap_err().contains("stale admin broadcast account fence"));
+
+            let transcript = host.transcript.lock().unwrap().get_transcript();
+            let wakes = transcript.iter()
+                .filter(|entry| entry["kind"] == "timeline-event-wake")
+                .filter(|entry| entry["event"]["type"] == "admin-broadcast")
+                .collect::<Vec<_>>();
+            assert_eq!(wakes.len(), 2, "same broadcast id must dedupe one wake per Agent");
+            assert!(wakes.iter().all(|entry| entry["accountFence"] == account_fence));
+            assert!(wakes.iter().all(|entry| entry["event"]["eventId"] == "admin-policy-42"));
+        }
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        reopened.recover_timeline_event_wakes().unwrap();
+        let wakes = reopened.background_wakes.lock().unwrap();
+        assert_eq!(wakes.pending_event_wakes.get(&first_agent).map(Vec::len), Some(1));
+        assert_eq!(wakes.pending_event_wakes.get(&second_agent).map(Vec::len), Some(1));
     }
 
     #[test]

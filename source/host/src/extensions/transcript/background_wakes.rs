@@ -282,6 +282,10 @@ pub fn describe_timeline_event(event: &Value) -> String {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
         ),
+        "admin-broadcast" => format!(
+            "Administrator notice: {}",
+            event.get("message").and_then(Value::as_str).unwrap_or_default()
+        ),
         "automation-changed" => {
             let action = match event
                 .get("action")
@@ -314,7 +318,7 @@ pub fn build_timeline_event_wake_prompt(events: &[Value]) -> String {
             "{} Something about this conversation just changed.",
             TIMELINE_EVENT_WAKE_CUE
         ),
-        "This is a system event recorded in your timeline, not the user typing in this app, and possibly something you did yourself.".to_string(),
+        "This is a system event recorded in your timeline, not the user typing in this app. It may be an administrator broadcast or a change caused by your own account.".to_string(),
     ];
     lines.extend(
         events
