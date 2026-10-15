@@ -241,11 +241,11 @@ mod tests {
     fn reconcile_and_cancel_reuse_exact_typed_contract() {
         let mut backend = BrowserUaReconcileBackend::new(RecordingExecutor::default());
         assert!(matches!(
-            backend.reconcile(&identity(), &request()).unwrap(),
+            backend.reconcile(&identity(), &request(), None).unwrap(),
             RemoteBackendReconcileOutcome::Pending
         ));
         assert!(matches!(
-            backend.cancel(&identity(), &request()).unwrap(),
+            backend.cancel(&identity(), &request(), None).unwrap(),
             RemoteBackendCancelOutcome::Confirmed
         ));
         assert_eq!(backend.executor.reconciles.len(), 1);

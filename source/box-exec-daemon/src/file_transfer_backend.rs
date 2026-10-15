@@ -719,6 +719,7 @@ mod tests {
                 .cancel(
                     &identity("op-to"),
                     &request("op-to", "CopyToBox", json!({"computer_path":"report.bin"})),
+                    None,
                 )
                 .unwrap(),
             RemoteBackendCancelOutcome::OutcomeUnknown { .. }
@@ -836,7 +837,7 @@ mod tests {
         })
         .unwrap();
         assert!(matches!(
-            reopened.reconcile(&identity("op-reopen"), &req).unwrap(),
+            reopened.reconcile(&identity("op-reopen"), &req, None).unwrap(),
             RemoteBackendReconcileOutcome::Completed { .. }
         ));
         assert_eq!(
@@ -884,7 +885,7 @@ mod tests {
         fs::write(root.join("box/uploads/source"), b"stable").unwrap();
         let req = request("op-r", "CopyToBox", json!({"computer_path":"source"}));
         assert!(matches!(
-            backend.reconcile(&identity("op-r"), &req).unwrap(),
+            backend.reconcile(&identity("op-r"), &req, None).unwrap(),
             RemoteBackendReconcileOutcome::Completed { .. }
         ));
 
@@ -898,7 +899,7 @@ mod tests {
         ));
         fs::write(&staging, b"partial").unwrap();
         assert_eq!(
-            backend.cancel(&identity("op-r"), &req).unwrap(),
+            backend.cancel(&identity("op-r"), &req, None).unwrap(),
             RemoteBackendCancelOutcome::Confirmed
         );
         assert!(!staging.exists());

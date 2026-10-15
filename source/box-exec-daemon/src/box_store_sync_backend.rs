@@ -277,11 +277,11 @@ mod tests {
     fn reconcile_and_cancel_use_the_same_typed_request_contract() {
         let mut backend = BoxStoreSyncBackend::new(RecordingExecutor::default());
         assert!(matches!(
-            backend.reconcile(&identity(), &request("hydrate")).unwrap(),
+            backend.reconcile(&identity(), &request("hydrate"), None).unwrap(),
             RemoteBackendReconcileOutcome::Pending
         ));
         assert!(matches!(
-            backend.cancel(&identity(), &request("hydrate")).unwrap(),
+            backend.cancel(&identity(), &request("hydrate"), None).unwrap(),
             RemoteBackendCancelOutcome::Confirmed
         ));
         assert_eq!(backend.executor.reconciles.len(), 1);

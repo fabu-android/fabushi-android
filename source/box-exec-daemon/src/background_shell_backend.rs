@@ -526,7 +526,7 @@ mod tests {
         );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
-            match backend.reconcile(&identity, &request).unwrap() {
+            match backend.reconcile(&identity, &request, None).unwrap() {
                 RemoteBackendReconcileOutcome::Completed { output_json } => {
                     let result: BackgroundShellResult =
                         serde_json::from_str(&output_json).unwrap();
@@ -560,7 +560,7 @@ mod tests {
             RemoteBackendStartOutcome::Accepted { progress_json: None }
         );
         assert_eq!(
-            reopened.cancel(&identity, &request).unwrap(),
+            reopened.cancel(&identity, &request, None).unwrap(),
             RemoteBackendCancelOutcome::OutcomeUnknown {
                 reason:
                     "background-shell live process owner was lost; terminal has no footer".into()

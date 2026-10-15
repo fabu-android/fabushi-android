@@ -1810,7 +1810,7 @@ mod tests {
             RemoteBackendStartOutcome::OutcomeUnknown { .. }
         ));
         assert!(matches!(
-            reopened.reconcile(&identity, &request).unwrap(),
+            reopened.reconcile(&identity, &request, None).unwrap(),
             RemoteBackendReconcileOutcome::Pending
         ));
         let _ = fs::remove_dir_all(root);
