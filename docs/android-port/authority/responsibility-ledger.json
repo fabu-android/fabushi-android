@@ -22497,9 +22497,9 @@
       ],
       "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Preserve native Fabushi account login/session expiry/refresh/logout capability without shipping Codex's desktop CLI callback server, device-code/API-key/keyring login stack on Android.",
-      "source_owner": "MahayanaProduct minimal codex-login token_data dependency; Codex full login stack is an optional desktop/CLI compatibility mechanism.",
+      "source_owner": "Legacy/upstream Codex login crate retained in source authority but no longer selected by current MahayanaProduct; current Desktop owner is Mahayana-native mahayana-auth.",
       "direct_callers": [
-        "mahayana-product (codex-login default-features=false)",
+        "Current MahayanaProduct source alias codex-login -> package mahayana-auth",
         "AndroidJsonHost/Fabushi account commands",
         "AndroidAccountOAuthAdapter"
       ],
@@ -22541,9 +22541,9 @@
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidAccountSessionStore.kt"
       ],
       "android_owner": "Rust AndroidAccountService + storage-only AndroidAccountSessionStore + system Custom Tabs adapter",
-      "platform_delta": "Codex feature=full login is a desktop/CLI mechanism. Android replaces it with server-origin browser auth and durable Rust account attempts. MahayanaProduct's actual default-features=false JWT-expiry dependency is replaced by server-normalized expiry fields in the canonical account session.",
+      "platform_delta": "The current Desktop product has already severed runtime dependence on codex-rs/login by aliasing source name codex-login to Mahayana-native mahayana-auth. Android independently replaces the user account effect with server-origin Custom Tabs plus durable Rust account/session ownership.",
       "implementation_status": "implemented",
-      "production_wiring": "AndroidJsonHost constructs/uses AndroidAccountService; typed account commands launch only validated same-origin Custom Tabs URLs; native session adapter persists the Rust-owned normalized session in Android Keystore storage and revocation fence.",
+      "production_wiring": "Current Desktop product auth is Mahayana-native. AndroidJsonHost constructs/uses AndroidAccountService; typed account commands launch only validated same-origin Custom Tabs URLs; AndroidAccountSessionStore persists only the canonical Rust-owned normalized session.",
       "unit_test": "source/host/src/account_service.rs focused tests cover expired pending attempt cold start, refresh expiry, terminal failures and normalization.",
       "contract_test": "Existing account/session/Custom Tabs architecture contracts; current exact-head CI required.",
       "integration_test": "Protected account login/process-death/account-switch acceptance required on latest exact head.",
@@ -22551,7 +22551,7 @@
       "device_test": "Blocked until protected test-account secrets are configured; must run on latest head.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "9bdffa00ee96bbc9f62bee7e56794c44bca4534b audited all 42 codex-login inventory rows by Cargo feature reachability. Full CLI login files are Android N/A-with-replacement; minimal JWT expiry responsibility is Android-adapted. No row is verified from predecessor CI."
+      "notes": "b1c3c14ab2ca995b6b0a46bc56825c881960e2ad correction: all 42 codex-rs/login rows are current-product unreachable and are now N/A-with-replacement. Exact Desktop Cargo confirms MahayanaProduct alias codex-login -> mahayana-auth; repository-wide 201-manifest audit found no external current consumer, and 65 workflow/script/desktop build files contained no codex-compat enablement. Predecessor 2bde69c shipping interpretation is superseded."
     },
     {
       "responsibility_id": "CODEX-SECRETS-ANDROID-REPLACEMENT-001",
@@ -22595,11 +22595,10 @@
       ],
       "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Preserve MahayanaProduct protected account/managed-secret storage and redaction without importing desktop keyring/cwd filesystem assumptions into Android or exposing plaintext to Presentation.",
-      "source_owner": "Codex SecretsManager LocalSecretsBackend + sanitizer, consumed by MahayanaProduct.",
+      "source_owner": "Legacy/upstream Codex secrets crate retained in source authority but no longer selected by current MahayanaProduct; current Desktop owner is Mahayana-native mahayana-secrets.",
       "direct_callers": [
-        "MahayanaProduct account session secret",
-        "MahayanaProduct managed secret requests",
-        "Android credential/plugin/account storage boundaries"
+        "Current MahayanaProduct source alias codex-secrets -> package mahayana-secrets",
+        "Android owner-scoped Keystore storage boundaries"
       ],
       "downstream_dependencies": [
         "account session restore",
@@ -22631,7 +22630,7 @@
       "process_death_recovery": "protected ciphertext + Rust metadata reconcile after cold start; revoked session cannot resurrect",
       "account_fencing": "all account-scoped secret operations validate live account fence before storage access",
       "security_boundary": "no Compose/ViewModel plaintext reveal route; origin-bound secret resolution exists only at execution boundary",
-      "android_disposition": "android-adapted",
+      "android_disposition": "not-applicable-with-replacement",
       "android_target": [
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidAccountSessionStore.kt",
         "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidCredentialVaultStore.kt",
@@ -22641,9 +22640,9 @@
         "source/host/src/android_json_runtime.rs"
       ],
       "android_owner": "Scoped Android Keystore storage resources beneath canonical Rust Host owners",
-      "platform_delta": "Android Keystore + app-private no-backup storage replaces desktop keyring/encrypted cwd namespaces. Product secret classes are split by canonical owner instead of sharing one global Codex SecretsManager.",
+      "platform_delta": "Current Desktop product already replaced codex-rs/secrets with Mahayana-native mahayana-secrets. Android further adapts protected storage to scoped Android Keystore resources beneath canonical Rust Host owners.",
       "implementation_status": "implemented",
-      "production_wiring": "Account session, Agent connector/requested-secret and plugin-variable paths are wired through Keystore-backed storage; credential vault exposes metadata only and an internal origin-authorized resolver. Rust Host remains business-state owner.",
+      "production_wiring": "No current Desktop product caller reaches codex-rs/secrets. Android account, Agent connector/requested-secret and plugin-variable paths use Keystore-backed storage and Rust redaction; no Codex keyring/cwd store is shipped.",
       "unit_test": "Keystore/storage policy and Rust secret-handoff/redaction focused tests exist; exact-head CI required.",
       "contract_test": "No-reveal/account-fence/rollback contracts exist; final same-head architecture and protected-session gates required.",
       "integration_test": "Real authorized credential-vault consumer acceptance remains a broader SECURITY-CREDENTIAL-VAULT-001 gap and does not invalidate the narrower MahayanaProduct secrets replacement.",
@@ -22651,7 +22650,7 @@
       "device_test": "Required on final protected account/credential acceptance.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "9bdffa00ee96bbc9f62bee7e56794c44bca4534b audited all 5 codex-secrets rows. BUILD.bazel is Android N/A-with-replacement; runtime secret backend/redaction responsibilities map to scoped Keystore/Rust owners. This responsibility is implemented but not verified."
+      "notes": "b1c3c14ab2ca995b6b0a46bc56825c881960e2ad correction: all 5 codex-rs/secrets rows are current-product unreachable and N/A-with-replacement. Exact Desktop Cargo confirms MahayanaProduct alias codex-secrets -> mahayana-secrets. Predecessor 2bde69c direct-shipping interpretation is superseded."
     }
   ],
   "traceability": {
