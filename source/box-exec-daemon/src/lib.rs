@@ -3,6 +3,7 @@
 pub mod box_store_sync_backend;
 pub mod box_disk_pressure_backend;
 pub mod box_store_manifest_format;
+pub mod box_store_workspace_ignore;
 pub mod box_store_hydration;
 pub mod box_store_diagnostics;
 pub mod browser_ua_backend;
