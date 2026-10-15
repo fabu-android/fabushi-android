@@ -1367,7 +1367,7 @@ mod tests {
                     call.result.unwrap().result.unwrap(),
                     send_message_result::Result::Success(result)
                         if result.message_id == "msg-9"
-                            && result.timestamp == observation.completed_at_ms
+                            && Some(result.timestamp) == observation.completed_at_ms
                 ));
             }
             _ => panic!("expected canonical field 55 SendMessageToolCall"),
