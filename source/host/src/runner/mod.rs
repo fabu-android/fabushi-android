@@ -1,5 +1,6 @@
 pub mod sand_prompt_markers;
 pub mod agent_state;
+pub mod conversation_state;
 pub mod conversation_outline;
 pub mod agent_management;
 pub mod agent_v1_wire;
@@ -44,6 +45,15 @@ pub use production_turn_agent_owner::{
 };
 pub use production_turn_lifecycle::{
     ProductionAwaitingUserProjection, ProductionDiskPressureLevel, ProductionTurnLifecycleStore,
+};
+pub use conversation_state::{
+    CompletedAwaitOutcome, ContextWindowTracker, FullStreamSanitizer, HIDDEN_PROMPT_MARKER,
+    ModelResolutionTicket, RecentUserMessage, RecoveryUserMessage, ResolvedModelTracker,
+    SUMMARIZATION_MAX_OUTPUT_TOKENS, SUMMARIZATION_MAX_PROMPT_CHARS, SanitizedExtendedUsage,
+    SanitizedUsage, StreamSanitizerItem, SummarizationPolicy, await_block_until_ms,
+    build_unanswered_questions_note, classify_completed_await_outcome, sanitize_usage,
+    select_unconfirmed_user_messages, should_use_self_summary, summarization_policy,
+    to_safe_usage_count, would_recover_via_prepend,
 };
 pub use checkpoint::AttemptCheckpoint;
 pub use stream_attempt::{
