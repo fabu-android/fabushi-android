@@ -46,6 +46,7 @@ pub mod transient_stream_error;
 pub mod turn_settle;
 pub mod turn_run_shell;
 pub mod turn_tool_session_reminders;
+pub mod turn_usage;
 
 pub use production_turn_agent_owner::{
     ProductionTurnAgentBuildBindings, ProductionTurnAgentBuildInput,
@@ -58,6 +59,7 @@ pub use production_turn_agent_owner::{
 pub use production_turn_lifecycle::{
     ProductionAwaitingUserProjection, ProductionDiskPressureLevel, ProductionTurnLifecycleStore,
 };
+pub use turn_usage::{MAX_SAFE_TOKEN_COUNT, TurnEndedUsage, TurnUsage, add_token_counts, merge_turn_usage, safe_token_count_from_f64, to_safe_token_count, total_input_tokens, turn_usage_from_turn_ended};
 pub use conversation_state::{
     CompletedAwaitOutcome, ContextWindowTracker, FullStreamSanitizer, HIDDEN_PROMPT_MARKER,
     ModelResolutionTicket, RecentUserMessage, RecoveryUserMessage, ResolvedModelTracker,

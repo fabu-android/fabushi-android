@@ -58679,6 +58679,243 @@
       "verification_status": "not-verified",
       "notes": "Production implementation is present; exact-head CI/package/device evidence is still required.",
       "android_head_at_update": "09ab9cca4a1dd8e170274d9acf247b2cdbaece4f"
+    },
+    {
+      "responsibility_id": "TOOLS-WEB-SEARCH-FETCH-ANDROID-001",
+      "domain": "tools",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/sand_web_tools.rs",
+          "blob_sha": "93818181532db4e6be68b465e8ae0a4da2d74bc1",
+          "symbols": [
+            "SandWebToolBridge",
+            "WebSearch",
+            "WebFetch"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Expose bounded web search/fetch tools with public-URL validation and account/cancellation fencing.",
+      "source_owner": "Desktop Runner web tool bridge",
+      "direct_callers": [
+        "root turn toolset"
+      ],
+      "downstream_dependencies": [
+        "authenticated Dashboard web backend"
+      ],
+      "state_owner": "Rust Host",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "WebSearch",
+        "WebFetch"
+      ],
+      "visible_effect": "Agent can search/fetch public web content.",
+      "failure_behavior": [
+        "reject invalid/private URLs",
+        "surface backend failures"
+      ],
+      "cancellation_behavior": "fail on cancellation before/after backend work",
+      "retry_semantics": "read-only calls may be retried after a definite failure",
+      "idempotency_semantics": "read-only",
+      "process_death_recovery": "no side effect to recover",
+      "account_fencing": "frozen live account fence before and after backend work",
+      "security_boundary": "credentials stay in Rust backend; URL credentials are stripped",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/runner/web_routed_tools.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Dashboard RPC backend replaces Desktop executor adapter.",
+      "implementation_status": "implemented",
+      "production_wiring": "Root routed-tool composition wraps with_web_routed_tools when authenticated backend exists.",
+      "unit_test": "web_routed_tools focused tests; exact-head Actions pending",
+      "contract_test": "Desktop names/schema/result bounds and URL hardening retained",
+      "integration_test": "required on exact-head authenticated web journey",
+      "packaged_test": "required",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented; exact-head CI/package/device evidence pending.",
+      "android_head_at_update": "efbf0cf52f3d765c9d7dc79463d2b115ff53ecbd"
+    },
+    {
+      "responsibility_id": "TOOLS-INPUT-VALIDATION-ANDROID-001",
+      "domain": "tools",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/tool_input_error.rs",
+          "blob_sha": "120c4bd574da7448a486598e820c9eb4e6a875a8",
+          "symbols": [
+            "SandToolInputError"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Preserve fail-closed user-visible tool argument validation without carrying an unused Desktop-only error wrapper.",
+      "source_owner": "Desktop unused SandToolInputError helper",
+      "direct_callers": [],
+      "downstream_dependencies": [
+        "per-tool validators"
+      ],
+      "state_owner": "none",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "tool validation error text"
+      ],
+      "visible_effect": "Invalid tool arguments fail before side effects.",
+      "failure_behavior": [
+        "fail closed"
+      ],
+      "cancellation_behavior": "not applicable",
+      "retry_semantics": "caller may correct input and retry",
+      "idempotency_semantics": "validation has no side effect",
+      "process_death_recovery": "not applicable",
+      "account_fencing": "provided by each production routed tool",
+      "security_boundary": "validation executes inside Rust Host before resource execution",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/host/src/runner/web_routed_tools.rs",
+        "source/host/src/runner/mcp_meta_routed_tools.rs",
+        "source/host/src/runner/reaction_routed_tool.rs"
+      ],
+      "android_owner": "Per-tool Rust validation",
+      "platform_delta": "AndroidRoutedToolBridge returns String errors rather than an unused named error type.",
+      "implementation_status": "implemented",
+      "production_wiring": "Each routed tool validates its own bounded schema before execution.",
+      "unit_test": "per-tool invalid-input tests",
+      "contract_test": "no Desktop production caller exists for SandToolInputError itself",
+      "integration_test": "covered by tool integrations",
+      "packaged_test": "not separately applicable",
+      "device_test": "not separately applicable",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Replacement preserves the capability; named Desktop wrapper is dead at current authority.",
+      "android_head_at_update": "efbf0cf52f3d765c9d7dc79463d2b115ff53ecbd"
+    },
+    {
+      "responsibility_id": "AGENT-TURN-USAGE-ANDROID-001",
+      "domain": "agent-runtime",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/turn_usage.rs",
+          "blob_sha": "f53608773496ec0c6677f88ae5970e4a7c45ff0a",
+          "symbols": [
+            "TurnUsage",
+            "turn_usage_from_turn_ended",
+            "merge_turn_usage",
+            "MAX_SAFE_TOKEN_COUNT"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Normalize provider token usage to a JSON-safe range and merge multi-turn usage without overflow.",
+      "source_owner": "Desktop Runner turn usage owner",
+      "direct_callers": [
+        "agent adapters",
+        "computer-use usage aggregation",
+        "Host runner composition"
+      ],
+      "downstream_dependencies": [
+        "provider turn-ended usage",
+        "computer-use/subagent telemetry"
+      ],
+      "state_owner": "Rust Host usage aggregation",
+      "persistent_state": [
+        "durable subagent usage snapshots where applicable"
+      ],
+      "protocol_wire_contract": [
+        "input/output/cache read/cache write/reasoning token counts"
+      ],
+      "visible_effect": "Usage and context accounting remain numerically stable across providers and long runs.",
+      "failure_behavior": [
+        "negative/non-finite counts normalize to zero",
+        "oversized counts clamp to JS safe integer maximum"
+      ],
+      "cancellation_behavior": "settled usage only; cancellation does not fabricate usage",
+      "retry_semantics": "usage reports merge by completed turn rather than replaying work",
+      "idempotency_semantics": "aggregation must consume each settled turn once",
+      "process_death_recovery": "durable subagent snapshots retain already-settled usage",
+      "account_fencing": "inherits the owning turn/subagent account fence",
+      "security_boundary": "usage contains counts only, not prompt content",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/runner/turn_usage.rs",
+        "source/host/src/runner/conversation_state.rs",
+        "source/host/src/runner/subagent_runtime.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "None for numeric contract; Android still needs to converge computer-use snapshot aggregation onto the shared helper.",
+      "implementation_status": "mapped",
+      "production_wiring": "JS-safe clamping is wired through conversation_state; shared merge helper is ported but computer-use/subagent aggregation is not yet wired to it.",
+      "unit_test": "turn_usage focused clamp/merge tests added; GitHub Actions pending on next exact HEAD",
+      "contract_test": "Desktop JS-safe max and field semantics preserved",
+      "integration_test": "required after computer-use/subagent aggregation wiring",
+      "packaged_test": "not separately required after Host integration",
+      "device_test": "covered by Agent/computer-use acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Partial implementation only; deliberately remains mapped.",
+      "android_head_at_update": "efbf0cf52f3d765c9d7dc79463d2b115ff53ecbd"
+    },
+    {
+      "responsibility_id": "AGENT-VIDEO-ATTACHMENT-MATERIALIZATION-ANDROID-001",
+      "domain": "media-agent",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/video_container.rs",
+          "blob_sha": "3c5c756cfe3d6146245b058d3f7ab4856e65634a",
+          "symbols": [
+            "bytes_look_like_video_container"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Validate actual video container bytes before exposing a user video attachment to inference, rather than trusting only names or MIME metadata.",
+      "source_owner": "Desktop prompt collector video materialization",
+      "direct_callers": [
+        "prompt_collector_glue"
+      ],
+      "downstream_dependencies": [
+        "attachment byte loader",
+        "provider multimodal prompt materialization"
+      ],
+      "state_owner": "canonical attachment byte owner",
+      "persistent_state": [
+        "app-private completed attachment bytes"
+      ],
+      "protocol_wire_contract": [
+        "MP4/Ogg/FLV/AVI/Matroska/MPEG container markers"
+      ],
+      "visible_effect": "User video attachments can be consumed by the Agent without mislabeled files being treated as valid video.",
+      "failure_behavior": [
+        "invalid container fails video materialization rather than silently trusting metadata"
+      ],
+      "cancellation_behavior": "inherits turn cancellation",
+      "retry_semantics": "read-only byte inspection is retryable",
+      "idempotency_semantics": "pure byte classification",
+      "process_death_recovery": "completed attachment bytes are durable and scoped",
+      "account_fencing": "attachment bytes are fenced to account/Agent/turn scope",
+      "security_boundary": "bytes remain in Host-owned app-private storage and only granted attachments are readable",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/agent_attachment.rs",
+        "source/host/src/runner/android_host_inference.rs"
+      ],
+      "android_owner": "Rust Host attachment owner",
+      "platform_delta": "Android currently exposes bounded FabushiAttachmentRead instead of Desktop provider video materialization; equivalent byte sniff/materialization remains open.",
+      "implementation_status": "mapped",
+      "production_wiring": "Durable scoped byte access exists, but no equivalent byte-level video validation/provider materialization path exists yet.",
+      "unit_test": "attachment byte range/scope tests exist; video-container parity test still required",
+      "contract_test": "required when byte sniff helper is ported",
+      "integration_test": "required with actual MP4/WebM and mislabeled payloads",
+      "packaged_test": "required",
+      "device_test": "required with video attachment journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Real capability gap retained; extension/MIME classification is not counted as parity.",
+      "android_head_at_update": "efbf0cf52f3d765c9d7dc79463d2b115ff53ecbd"
     }
   ],
   "traceability": {

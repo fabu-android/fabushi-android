@@ -119,11 +119,7 @@ pub fn build_unanswered_questions_note(skipped: &[String], dismissed: &[String])
 }
 
 pub fn to_safe_usage_count(value: f64) -> u64 {
-    if !value.is_finite() || value <= 0.0 {
-        0
-    } else {
-        value.floor().min(u64::MAX as f64) as u64
-    }
+    super::turn_usage::safe_token_count_from_f64(value)
 }
 
 pub fn await_block_until_ms(value: Option<&Value>) -> f64 {
