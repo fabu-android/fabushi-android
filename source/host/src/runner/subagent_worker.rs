@@ -203,6 +203,7 @@ pub fn spawn_generated_subagent(
 
                 let provider = match mode {
                     AndroidHostMode::Test => AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+                        .with_turn_tool_session_reminders(false)
                         .with_routed_tools(Arc::clone(&routed_tools)),
                     AndroidHostMode::Production => {
                         let Some(token) = bearer_token.clone() else {
@@ -218,7 +219,9 @@ pub fn spawn_generated_subagent(
                             return;
                         };
                         match AndroidHostInferenceProvider::production(token, Arc::clone(&cancelled)) {
-                            Ok(provider) => provider.with_routed_tools(Arc::clone(&routed_tools)),
+                            Ok(provider) => provider
+                                .with_turn_tool_session_reminders(false)
+                                .with_routed_tools(Arc::clone(&routed_tools)),
                             Err(error) => {
                                 settle_and_publish(
                                     &owner,
