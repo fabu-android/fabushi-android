@@ -1,3 +1,8 @@
+pub use fabushi_android_shared::cloud_agent_model_catalog_wire::{
+    decode_cloud_agent_available_models_response, encode_cloud_agent_available_models_request,
+    AVAILABLE_MODELS_SCOPE_USER_AVAILABLE,
+};
+
 use std::collections::HashMap;
 
 use prost::Message;
