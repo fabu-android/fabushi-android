@@ -29,6 +29,7 @@ pub mod subagent_worker;
 pub mod transient_stream_error;
 pub mod turn_settle;
 pub mod turn_run_shell;
+pub mod turn_tool_session_reminders;
 
 pub use production_turn_agent_owner::{
     ProductionTurnAgentBuildBindings, ProductionTurnAgentBuildInput,
