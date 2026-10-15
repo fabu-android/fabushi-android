@@ -101,7 +101,9 @@ pub use android_host_inference::{
 pub use agent_v1_observation::DurableAgentV1ObservationOwner;
 
 pub use send_message::{
-    with_send_message_tools, with_send_message_tools_counted_to_target, SEND_MESSAGE_TOOL_NAME,
+    with_send_message_tools, with_send_message_tools_counted_to_target,
+    with_send_message_tools_counted_to_target_with_channel_delivery,
+    ChannelDeliveryFailureSink, SEND_MESSAGE_TOOL_NAME,
 };
 
 pub use agent_management::{

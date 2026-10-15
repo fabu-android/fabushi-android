@@ -51,6 +51,7 @@ use crate::remote_box_store_sync::{
     RemoteBoxStoreSyncState, REMOTE_BOX_STORE_SYNC_CAPABILITY,
 };
 use crate::messaging_service::AndroidMessagingService;
+use crate::connectors::channel_delivery::HostChannelDelivery;
 use crate::mcp_server_tool_settings::McpServerToolSettings;
 use crate::workflows::workflow_library::GlobalWorkflowLibrary;
 use crate::composer_draft::DurableComposerDraftOwner;
@@ -143,6 +144,7 @@ use crate::extensions::teach_recording::{DurableTeachRecordingOwner, TeachRecord
 use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtension};
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
+use crate::extensions::transcript::background_wakes::{BackgroundWakes, build_channel_delivery_failure_wake_prompt};
 use crate::extensions::transcript::completion_revivals::{
     build_subagent_revival_prompt, SubagentCompletion,
 };
@@ -197,7 +199,8 @@ use crate::runner::{
     SubagentSteerReviewCallback, SubagentToolBridge, SubagentToolContext,
     build_parent_subagent_routed_tools, spawn_generated_subagent, SubagentCompletionWakeSink,
     with_agent_management_tools_and_transcript,
-    with_send_message_tools, with_send_message_tools_counted_to_target, with_multitask_todo_tools,
+    with_send_message_tools_counted_to_target_with_channel_delivery,
+    ChannelDeliveryFailureSink, with_multitask_todo_tools,
     with_box_help_routed_tool, with_generate_image_routed_tools, with_local_file_tools,
     with_remote_routed_tools, with_web_routed_tools, WAITING_USER_CANCELLATION_PREFIX,
     RemoteBrowserNavigationObservation, RemoteBrowserNavigationObserver,
@@ -230,7 +233,7 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc, Arc, Condvar, Mutex,
 };
 use std::thread;
@@ -1547,6 +1550,8 @@ pub struct AndroidJsonHost {
     multitask_todos: Arc<Mutex<DurableMultitaskTodoStore>>,
     subagent_owner: Arc<Mutex<DurableSubagentOwner>>,
     pending_wake_store: SandPendingWakeStore,
+    channel_delivery: HostChannelDelivery,
+    background_wakes: Arc<Mutex<BackgroundWakes<Value>>>,
     subagent_tools: SubagentToolBridge,
     subagent_events: Arc<Mutex<VecDeque<Value>>>,
     subagent_review_approvals: Arc<SubagentReviewApprovalRegistry>,
@@ -2180,6 +2185,8 @@ impl AndroidJsonHost {
                 .unwrap_or_else(|error| panic!("failed to open durable generated-subagent owner: {error}")),
         ));
         let pending_wake_store = SandPendingWakeStore::new(&app_data_dir);
+        let channel_delivery = HostChannelDelivery::default();
+        let background_wakes = Arc::new(Mutex::new(BackgroundWakes::default()));
         let subagent_tools = SubagentToolBridge::new(Arc::clone(&subagent_owner));
         let subagent_events = Arc::new(Mutex::new(VecDeque::new()));
         let subagent_review_approvals = Arc::new(SubagentReviewApprovalRegistry::default());
@@ -2450,6 +2457,8 @@ impl AndroidJsonHost {
             multitask_todos,
             subagent_owner,
             pending_wake_store,
+            channel_delivery,
+            background_wakes,
             subagent_tools,
             subagent_events,
             subagent_review_approvals,
@@ -9183,6 +9192,223 @@ impl AndroidJsonHost {
         Ok(session_mutation)
     }
 
+    fn channel_failure_claim_id(failure_id: &str) -> String {
+        format!("channel-failure-revival-claim:{failure_id}")
+    }
+
+    fn recover_channel_failure_wakes(&mut self) -> Result<(), String> {
+        let entries = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .get_transcript();
+        let claimed = entries
+            .iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("channel-failure-revival-claim"))
+            .filter_map(|entry| entry.get("failureId").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<BTreeSet<_>>();
+        let failures = entries
+            .into_iter()
+            .filter(|entry| entry.get("kind").and_then(Value::as_str) == Some("channel-send-failure"))
+            .filter(|entry| {
+                entry
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !claimed.contains(id))
+            })
+            .collect::<Vec<_>>();
+        let mut wakes = self
+            .background_wakes
+            .lock()
+            .map_err(|_| "background wake owner lock poisoned".to_string())?;
+        for failure in failures {
+            let Some(agent_id) = failure
+                .get("agentId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let failure_id = failure.get("id").and_then(Value::as_str).unwrap_or_default();
+            let already_queued = wakes
+                .pending_channel_failures
+                .get(agent_id)
+                .is_some_and(|pending| {
+                    pending.iter().any(|item| item.get("id").and_then(Value::as_str) == Some(failure_id))
+                });
+            if !already_queued {
+                BackgroundWakes::enqueue(
+                    &mut wakes.pending_channel_failures,
+                    agent_id.to_string(),
+                    failure,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn mark_channel_failure_revival_claimed(&mut self, failures: &[Value]) -> Result<(), String> {
+        let observed_at_ms = now_ms();
+        let mut transcript = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?;
+        for failure in failures {
+            let Some(failure_id) = failure.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            transcript
+                .append_entry_if_absent(json!({
+                    "id":Self::channel_failure_claim_id(failure_id),
+                    "kind":"channel-failure-revival-claim",
+                    "failureId":failure_id,
+                    "agentId":failure.get("agentId").cloned().unwrap_or(Value::Null),
+                    "timestampMs":observed_at_ms,
+                }))
+                .map_err(|error| format!("failed to persist channel failure revival claim: {error}"))?;
+        }
+        Ok(())
+    }
+
+    fn drain_channel_failure_revival_once(&mut self) -> Result<(), String> {
+        self.recover_channel_failure_wakes()?;
+        let (agent_id, failures) = {
+            let mut wakes = self
+                .background_wakes
+                .lock()
+                .map_err(|_| "background wake owner lock poisoned".to_string())?;
+            let Some(agent_id) = wakes.pending_channel_failures.keys().next().cloned() else {
+                return Ok(());
+            };
+            if !BackgroundWakes::<Value>::begin_revival(
+                &mut wakes.reviving_channel_failure_agent_ids,
+                &agent_id,
+            ) {
+                return Ok(());
+            }
+            let failures = BackgroundWakes::take_pending(
+                &mut wakes.pending_channel_failures,
+                &agent_id,
+            );
+            (agent_id, failures)
+        };
+        if failures.is_empty() {
+            if let Ok(mut wakes) = self.background_wakes.lock() {
+                BackgroundWakes::<Value>::end_revival(
+                    &mut wakes.reviving_channel_failure_agent_ids,
+                    &agent_id,
+                );
+            }
+            return Ok(());
+        }
+
+        let finish = |wakes: &Arc<Mutex<BackgroundWakes<Value>>>, agent_id: &str| {
+            if let Ok(mut wakes) = wakes.lock() {
+                BackgroundWakes::<Value>::end_revival(
+                    &mut wakes.reviving_channel_failure_agent_ids,
+                    agent_id,
+                );
+            }
+        };
+        let mut failure_ids = failures
+            .iter()
+            .filter_map(|failure| failure.get("id").and_then(Value::as_str))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        failure_ids.sort();
+        failure_ids.dedup();
+        let request_id = format!(
+            "channel-failure-revival:{}:{}",
+            agent_id,
+            crate::sha256::sha256_hex(failure_ids.join("\n").as_bytes())
+        );
+        if self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record(&request_id)
+            .is_some()
+        {
+            self.mark_channel_failure_revival_claimed(&failures)?;
+            finish(&self.background_wakes, &agent_id);
+            return Ok(());
+        }
+
+        let prompt_failures = failures
+            .iter()
+            .map(|failure| {
+                json!({
+                    "addressToken":failure.get("channel").cloned().unwrap_or(Value::Null),
+                    "reason":failure.get("reason").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect::<Vec<_>>();
+        let (bearer_token, _session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(_) => {
+                let mut wakes = self
+                    .background_wakes
+                    .lock()
+                    .map_err(|_| "background wake owner lock poisoned".to_string())?;
+                for failure in failures {
+                    BackgroundWakes::enqueue(
+                        &mut wakes.pending_channel_failures,
+                        agent_id.clone(),
+                        failure,
+                    );
+                }
+                BackgroundWakes::<Value>::end_revival(
+                    &mut wakes.reviving_channel_failure_agent_ids,
+                    &agent_id,
+                );
+                return Ok(());
+            }
+        };
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":build_channel_delivery_failure_wake_prompt(&prompt_failures),
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"channel-failure",
+            "skipAckObligation":true,
+            "directAddressedAcceptance":true,
+        });
+        match self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            Ok(()) => {
+                self.mark_channel_failure_revival_claimed(&failures)?;
+            }
+            Err(_) => {
+                self.active_operations.remove(&operation_id);
+                self.agent_turn_interruptions.unregister_operation(&operation_id);
+                let mut wakes = self
+                    .background_wakes
+                    .lock()
+                    .map_err(|_| "background wake owner lock poisoned".to_string())?;
+                for failure in failures {
+                    BackgroundWakes::enqueue(
+                        &mut wakes.pending_channel_failures,
+                        agent_id.clone(),
+                        failure,
+                    );
+                }
+            }
+        }
+        finish(&self.background_wakes, &agent_id);
+        Ok(())
+    }
+
     fn drain_subagent_completion_revival_once(&mut self) -> Result<(), String> {
         self.sync_subagent_completion_wakes()?;
         let account_fence = match self.current_turn_account_fence() {
@@ -13170,6 +13396,22 @@ impl AndroidJsonHost {
             .completed_root();
         let turn_journal = self.turn_journal.clone();
         let turn_lifecycle = self.turn_lifecycle.clone();
+        let channel_delivery = self.channel_delivery.clone();
+        let background_wakes = Arc::clone(&self.background_wakes);
+        let channel_failure_sink: ChannelDeliveryFailureSink = Arc::new(move |failure: Value| {
+            let agent_id = failure
+                .get("agentId")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .ok_or("channel delivery failure omitted agent identity")?
+                .to_string();
+            let mut wakes = background_wakes
+                .lock()
+                .map_err(|_| "background wake owner lock poisoned".to_string())?;
+            BackgroundWakes::enqueue(&mut wakes.pending_channel_failures, agent_id, failure);
+            Ok(())
+        });
         let turn_upgrade_quiescing = Arc::clone(&self.turn_upgrade_quiescing);
         let account_fence_owned = account_fence.clone();
         let operation_id_owned = operation_id.to_string();
@@ -13707,7 +13949,7 @@ impl AndroidJsonHost {
                     Arc::clone(&agent_turn_interruptions),
                 );
                 let routed_subagent_tools = if let Some(group_context) = group_context_owned.as_ref() {
-                    with_send_message_tools_counted_to_target(
+                    with_send_message_tools_counted_to_target_with_channel_delivery(
                         routed_subagent_tools,
                         Arc::clone(&transcript),
                         Arc::clone(&turn_lifecycle),
@@ -13722,9 +13964,11 @@ impl AndroidJsonHost {
                         turn_lifecycle_process_epoch,
                         Arc::clone(&cancelled),
                         Arc::clone(&group_send_count),
+                        channel_delivery.clone(),
+                        channel_failure_sink.clone(),
                     )
                 } else {
-                    with_send_message_tools(
+                    with_send_message_tools_counted_to_target_with_channel_delivery(
                         routed_subagent_tools,
                         Arc::clone(&transcript),
                         Arc::clone(&turn_lifecycle),
@@ -13732,11 +13976,15 @@ impl AndroidJsonHost {
                         Arc::clone(&live_account_fence),
                         &account_fence_owned,
                         &conversation_id_owned,
+                        &conversation_id_owned,
                         &request_id_owned,
                         &operation_id_owned,
                         turn_generation,
                         turn_lifecycle_process_epoch,
                         Arc::clone(&cancelled),
+                        Arc::new(AtomicUsize::new(0)),
+                        channel_delivery.clone(),
+                        channel_failure_sink.clone(),
                     )
                 };
                 // Desktop root Agents expose ReactToMessage as a provider tool. Android adapts
@@ -15503,6 +15751,7 @@ impl AndroidJsonHost {
         self.drain_mcp_auth_owner_events()?;
         self.drain_listener_connect_resume_once()?;
         self.drain_box_handoff_resume_once()?;
+        self.drain_channel_failure_revival_once()?;
         self.drain_subagent_completion_revival_once()?;
         self.drain_agent_wake_once()?;
         self.drain_visible_ack_redrive_once()?;
