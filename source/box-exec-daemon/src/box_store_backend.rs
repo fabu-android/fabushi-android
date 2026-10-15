@@ -1,7 +1,9 @@
-use crate::box_store_manifest_format::BOX_STORE_BLOBS_PREFIX;
+use crate::box_store_manifest_format::{
+    BOX_STORE_BLOBS_PREFIX, BoxStoreManifest, BoxStoreManifestEntry, parse_box_store_manifest,
+};
 use crate::box_store_hydration::{
     remove_hydration_handoff_marker, write_hydration_handoff_marker,
-    BOX_STORE_HYDRATION_HANDOFF_FILE_NAME,
+    BOX_STORE_HYDRATION_HANDOFF_FILE_NAME, INCOMPLETE_LEGACY_HYDRATE_REASON,
 };
 use crate::box_store_workspace_ignore::{load_workspace_ignore, WorkspaceIgnore};
 use crate::server::{
@@ -409,11 +411,149 @@ impl RemoteBoxStoreBackend {
         .to_string())
     }
 
+    fn frozen_destination<'a>(&'a self, rel_path: &str) -> Result<(&'a Path, PathBuf), ActionError> {
+        const SAND_DATA: &str = "home/box/sand-data/";
+        const CLI_CONFIG: &str = "home/box/cli-config/";
+        const CHROME_SESSION: &str = "home/box/chrome-session/";
+        if let Some(relative) = rel_path.strip_prefix("workspace/") {
+            return Ok((&self.config.workspace_root, rel_path_to_path(relative)?));
+        }
+        if let Some(relative) = rel_path.strip_prefix(SAND_DATA) {
+            return Ok((&self.config.sand_data_root, rel_path_to_path(relative)?));
+        }
+        if let Some(relative) = rel_path.strip_prefix(CLI_CONFIG) {
+            return Ok((&self.config.cli_config_root, rel_path_to_path(relative)?));
+        }
+        if let Some(relative) = rel_path.strip_prefix(CHROME_SESSION) {
+            return Ok((&self.config.chrome_session_root, rel_path_to_path(relative)?));
+        }
+        Err(ActionError::SafeReject(format!(
+            "unsupported frozen BoxStore manifest path {rel_path}"
+        )))
+    }
+
+    fn try_hydrate_frozen_manifest(
+        &self,
+        identity: &RemoteRequestIdentity,
+        input: &Input,
+    ) -> Result<Option<String>, ActionError> {
+        let manifest_path = self.manifest_path(&input.store_id);
+        if !manifest_path.exists() {
+            return Ok(None);
+        }
+        let bytes = fs::read(&manifest_path)
+            .map_err(|error| ActionError::SafeReject(format!("read manifest: {error}")))?;
+        let value: serde_json::Value = match serde_json::from_slice(&bytes) {
+            Ok(value) => value,
+            Err(_) => return Ok(None),
+        };
+        let Some(manifest): Option<BoxStoreManifest> = parse_box_store_manifest(&value) else {
+            return Ok(None);
+        };
+        let current_etag = sha256_bytes(&bytes);
+        if let Some(requested) = input.base_manifest_etag.as_deref() {
+            if requested != current_etag {
+                return Err(ActionError::SafeReject(
+                    "box-store hydrate manifest ETag changed".into(),
+                ));
+            }
+        }
+        if manifest.fully_hydrated == Some(false) {
+            return Err(ActionError::SafeReject(format!(
+                "{INCOMPLETE_LEGACY_HYDRATE_REASON}: frozen V2 manifest requires legacy source reconciliation before restore"
+            )));
+        }
+
+        let handoff_marker = self
+            .config
+            .sand_data_root
+            .join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME);
+        remove_hydration_handoff_marker(&handoff_marker).map_err(|error| {
+            ActionError::SafeReject(format!("clear hydration handoff marker: {error}"))
+        })?;
+
+        let objects = self.objects_dir(&input.store_id);
+        let mut restored = 0usize;
+        let mut restored_bytes = 0u64;
+        for (rel_path, entry) in &manifest.entries {
+            let (root, relative) = self.frozen_destination(rel_path)?;
+            let destination = root.join(relative);
+            ensure_restore_parent(root, &destination)?;
+            match entry {
+                BoxStoreManifestEntry::Symlink { target } => {
+                    if !symlink_target_stays_within_root(root, &destination, Path::new(target)) {
+                        return Err(ActionError::SafeReject(format!(
+                            "box-store symlink target escapes category root for {rel_path}"
+                        )));
+                    }
+                    restore_symlink(root, &destination, target).map_err(|error| {
+                        ActionError::OutcomeUnknown(format!("hydrate symlink {rel_path}: {error}"))
+                    })?;
+                }
+                BoxStoreManifestEntry::LegacyFile { sha, size }
+                | BoxStoreManifestEntry::File { sha, size, .. } => {
+                    if !is_sha256(sha) {
+                        return Err(ActionError::SafeReject(format!(
+                            "box-store object digest is invalid for {rel_path}"
+                        )));
+                    }
+                    let object = objects.join(sha);
+                    let payload = read_bounded_file(&object)?;
+                    if payload.len() as u64 != *size || sha256_bytes(&payload) != *sha {
+                        return Err(ActionError::SafeReject(format!(
+                            "box-store object integrity mismatch for {rel_path}"
+                        )));
+                    }
+                    atomic_write(&destination, &payload).map_err(|error| {
+                        ActionError::OutcomeUnknown(format!("hydrate {rel_path}: {error}"))
+                    })?;
+                    #[cfg(unix)]
+                    if let BoxStoreManifestEntry::File { mode, .. } = entry {
+                        use std::os::unix::fs::PermissionsExt;
+                        fs::set_permissions(&destination, fs::Permissions::from_mode(*mode))
+                            .map_err(|error| ActionError::OutcomeUnknown(format!(
+                                "set frozen manifest mode for {rel_path}: {error}"
+                            )))?;
+                    }
+                    restored_bytes = restored_bytes.saturating_add(*size);
+                }
+            }
+            restored += 1;
+        }
+
+        let marker = self
+            .store_dir(&input.store_id)
+            .join("hydration")
+            .join(format!("{}.json", sha256_bytes(identity.operation_id.as_bytes())));
+        let marker_bytes = serde_json::to_vec(&serde_json::json!({
+            "operationId": identity.operation_id,
+            "manifestEtag": current_etag,
+            "entries": restored,
+            "frozenManifestVersion": manifest.version,
+        }))
+        .map_err(|error| ActionError::OutcomeUnknown(format!("encode hydration marker: {error}")))?;
+        atomic_write(&marker, &marker_bytes).map_err(|error| {
+            ActionError::OutcomeUnknown(format!("write hydration completion marker: {error}"))
+        })?;
+
+        Ok(Some(serde_json::json!({
+            "storeId": input.store_id,
+            "action": "hydrate",
+            "manifestEtag": current_etag,
+            "entries": restored,
+            "bytes": restored_bytes,
+            "frozenManifestVersion": manifest.version,
+        }).to_string()))
+    }
+
     fn hydrate(
         &self,
         identity: &RemoteRequestIdentity,
         input: &Input,
     ) -> Result<String, ActionError> {
+        if let Some(output) = self.try_hydrate_frozen_manifest(identity, input)? {
+            return Ok(output);
+        }
         let (manifest, current_etag) = self.load_manifest(&input.store_id)?;
         let manifest = manifest.ok_or_else(|| {
             ActionError::SafeReject("box-store hydrate requires an existing manifest".into())
@@ -1373,4 +1513,72 @@ mod tests {
         assert!(rel_path_to_path("/absolute").is_err());
         let _ = fs::remove_dir_all(root);
     }
+    #[test]
+    fn hydrate_accepts_frozen_desktop_v2_manifest_on_shipping_backend() {
+        let config = config("frozen-v2");
+        let store = config.store_root.join("store-a");
+        fs::create_dir_all(store.join("blobs")).unwrap();
+        let payload = b"desktop-v2-copy-in\n";
+        let digest = sha256_bytes(payload);
+        fs::write(store.join("blobs").join(&digest), payload).unwrap();
+        fs::write(
+            store.join("manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 2,
+                "updatedAtMs": 1,
+                "writerWindowId": "desktop-copy-in",
+                "fullyHydrated": true,
+                "entries": {
+                    "workspace/run.sh": {
+                        "kind": "file", "sha": digest, "size": payload.len(), "mode": 384
+                    },
+                    "workspace/current": {
+                        "kind": "symlink", "target": "run.sh"
+                    }
+                }
+            })).unwrap(),
+        ).unwrap();
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        let output = completed(backend.start(
+            &identity("frozen-hydrate", "frozen-request"),
+            &request("frozen-hydrate", "hydrate", None),
+        ).unwrap());
+        assert!(output.contains("\\\"frozenManifestVersion\\\":2"));
+        assert_eq!(fs::read(config.workspace_root.join("run.sh")).unwrap(), payload);
+        #[cfg(unix)] {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(fs::metadata(config.workspace_root.join("run.sh")).unwrap().permissions().mode() & 0o777, 0o600);
+            assert_eq!(fs::read_link(config.workspace_root.join("current")).unwrap(), PathBuf::from("run.sh"));
+        }
+    }
+
+    #[test]
+    fn incomplete_frozen_v2_manifest_fails_closed_until_legacy_reconciliation_exists() {
+        let config = config("frozen-incomplete");
+        let store = config.store_root.join("store-a");
+        fs::create_dir_all(&store).unwrap();
+        fs::write(
+            store.join("manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 2,
+                "updatedAtMs": 1,
+                "writerWindowId": "desktop-copy-in",
+                "fullyHydrated": false,
+                "entries": {}
+            })).unwrap(),
+        ).unwrap();
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        let outcome = backend.start(
+            &identity("frozen-incomplete", "frozen-incomplete-request"),
+            &request("frozen-incomplete", "hydrate", None),
+        ).unwrap();
+        match outcome {
+            RemoteBackendStartOutcome::Rejected { reason } => {
+                assert!(reason.contains(INCOMPLETE_LEGACY_HYDRATE_REASON));
+            }
+            other => panic!("expected fail-closed rejection, got {other:?}"),
+        }
+        assert!(!config.sand_data_root.join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME).exists());
+    }
+
 }
