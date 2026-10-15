@@ -13370,12 +13370,18 @@ impl AndroidJsonHost {
                 // The routed adapter mutates only the durable AndroidBoxHandoffOwner; provider
                 // termination and durable awaiting-user settlement are handled below from its
                 // acknowledged request identity, avoiding a second handoff owner.
-                let routed_subagent_tools = with_box_help_routed_tool(
-                    routed_subagent_tools,
-                    Arc::clone(&box_handoff),
-                    &account_fence_owned,
-                    &conversation_id_owned,
-                );
+                let routed_subagent_tools = if subagent_capabilities.remote_box_available
+                    && subagent_capabilities.remote_box_has_desktop
+                {
+                    with_box_help_routed_tool(
+                        routed_subagent_tools,
+                        Arc::clone(&box_handoff),
+                        &account_fence_owned,
+                        &conversation_id_owned,
+                    )
+                } else {
+                    routed_subagent_tools
+                };
                 // Desktop exposes TodoWrite only on a root non-subagent turn when
                 // multitask is enabled. Keep it outside GeneratedChildToolRegistry
                 // so no generated child can inherit root bookkeeping authority.
@@ -19778,23 +19784,74 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn request_box_help_is_not_exposed_without_remote_desktop_capability() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let mut command = json!({
+            "type":"chat.send",
+            "requestId":"box-help-no-desktop",
+            "agentId":"mahayana-assistant",
+            "model":"default",
+            "text":"[[tool:request_box_help]] {\"instruction\":\"Complete sign-in\"}"
+        });
+        command[COORDINATOR_SUBAGENT_CAPABILITIES_FIELD] = json!({
+            "multitaskEnabled":false,
+            "remoteBoxAvailable":true,
+            "remoteBoxHasDesktop":false,
+            "browserUseEnabled":false
+        });
+        let accepted = host
+            .dispatch("feature.execute", &json!({"command":command}))
+            .unwrap();
+        let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "operation.failed" && event["operationId"] == operation_id {
+                break;
+            }
+            assert!(
+                !(event["type"] == "operation.interrupted" && event["operationId"] == operation_id),
+                "box help must not park when remote desktop capability is absent"
+            );
+            assert!(std::time::Instant::now() < deadline, "turn must settle");
+            if event.as_object().is_some_and(|object| object.is_empty()) {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let fence = host.current_turn_account_fence().unwrap();
+        assert!(host
+            .box_handoff
+            .lock()
+            .unwrap()
+            .pending_for(&fence, "mahayana-assistant")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn request_box_help_routed_tool_parks_turn_and_resumes_once_after_handback() {
         let root_owner = tempfile::tempdir().unwrap();
         let root = root_owner.path();
         let mut host = AndroidJsonHost::new(root, AndroidHostMode::Test);
         sign_in_test_account(&mut host);
         let account_fence = host.current_turn_account_fence().unwrap();
+        let mut command = json!({
+            "type":"chat.send",
+            "requestId":"box-help-root-request",
+            "agentId":"mahayana-assistant",
+            "model":"default",
+            "text":"[[tool:request_box_help]] {\"instruction\":\"Complete account sign-in\",\"reason\":\"auth\",\"domain\":\"https://www.example.com/login\",\"idp_domain\":\"accounts.example.com\"}"
+        });
+        command[COORDINATOR_SUBAGENT_CAPABILITIES_FIELD] = json!({
+            "multitaskEnabled":false,
+            "remoteBoxAvailable":true,
+            "remoteBoxHasDesktop":true,
+            "browserUseEnabled":false
+        });
         let accepted = host
-            .dispatch(
-                "feature.execute",
-                &json!({"command":{
-                    "type":"chat.send",
-                    "requestId":"box-help-root-request",
-                    "agentId":"mahayana-assistant",
-                    "model":"default",
-                    "text":"[[tool:request_box_help]] {\"instruction\":\"Complete account sign-in\",\"reason\":\"auth\",\"domain\":\"https://www.example.com/login\",\"idp_domain\":\"accounts.example.com\"}"
-                }}),
-            )
+            .dispatch("feature.execute", &json!({"command":command}))
             .unwrap();
         let operation_id = accepted["operationId"].as_str().unwrap().to_string();
 
