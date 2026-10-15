@@ -1796,6 +1796,17 @@
             "expand_workflow_references",
             "dispatch_workflow_command_with_runtime"
           ]
+        },
+        {
+          "path": "source/host/tests/workflow_commands_contract.rs",
+          "blob_sha": "3b0ef29df8a0e46a39bd1fc3d5aa1bc9b656106a",
+          "symbols": [
+            "shipping_workflow_commands_delegate_crud_and_imports_to_session_store",
+            "automation_backed_workflow_creation_is_owned_by_rust_session_store",
+            "normal_send_expands_enabled_rich_text_workflow_reference",
+            "workflow_run_now_reference_plan_matches_frozen_rich_text_and_recipe_expansion",
+            "workflow_run_prompt_clamps_recipe_body_and_preserves_helper_location"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -2759,6 +2770,15 @@
             "shape_closing_send_nudge_turn_input",
             "should_supersede_stale_turn"
           ]
+        },
+        {
+          "path": "source/host/tests/turn_runtime_recovery_contract.rs",
+          "blob_sha": "49778612dfe89fd6247d5461e2b8b5c944a4306a",
+          "symbols": [
+            "turn_runtime_applies_all_frozen_stale_recovery_guards",
+            "frozen_terminal_projection_keeps_delivery_and_reply_nudge_semantics_together",
+            "ordinary_turn_empty_delivery_report_requires_a_settled_same_epoch_delivery_debt"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -3003,6 +3023,13 @@
             "computeNextRunAt",
             "automationAnchor"
           ]
+        },
+        {
+          "path": "source/host/tests/workflow_commands_contract.rs",
+          "blob_sha": "3b0ef29df8a0e46a39bd1fc3d5aa1bc9b656106a",
+          "symbols": [
+            "automation_backed_workflow_creation_is_owned_by_rust_session_store"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -3125,6 +3152,13 @@
           "symbols": [
             "ClientSideToolV2TransportEvent",
             "client-side-tool-v2 transport contract"
+          ]
+        },
+        {
+          "path": "source/host/tests/transcript_manager_contract.rs",
+          "blob_sha": "7097f86175e506bc16b2b6de9b29269e44faf6c3",
+          "symbols": [
+            "manager_is_the_single_production_composition_owner"
           ]
         }
       ],
@@ -8262,6 +8296,15 @@
             "remote_room_store",
             "xuser"
           ]
+        },
+        {
+          "path": "source/host/tests/shared_rooms_production_contract.rs",
+          "blob_sha": "2753f49a439b864b1cb54fbf4bcc3f687678529b",
+          "symbols": [
+            "hosted_room_materializes_filters_members_persists_notice_and_restamps_content",
+            "mirror_room_materializes_remote_binding_filters_self_and_can_be_revoked",
+            "shared_room_ingress_materializes_inline_images_on_shipping_transcript_paths"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -9397,6 +9440,13 @@
             "apply_reaction",
             "react_to_message"
           ]
+        },
+        {
+          "path": "source/host/tests/widget_responses_full_contract.rs",
+          "blob_sha": "5da37252899000c22f939207c9c93198890f2698",
+          "symbols": [
+            "auto_review_secret_and_reaction_delegate_to_existing_session_and_projection_owners"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -9960,6 +10010,13 @@
             "apply_reaction",
             "react_to_message"
           ]
+        },
+        {
+          "path": "source/host/tests/widget_responses_full_contract.rs",
+          "blob_sha": "5da37252899000c22f939207c9c93198890f2698",
+          "symbols": [
+            "auto_review_secret_and_reaction_delegate_to_existing_session_and_projection_owners"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
@@ -10151,6 +10208,14 @@
             "submit_secret",
             "apply_reaction",
             "react_to_message"
+          ]
+        },
+        {
+          "path": "source/host/tests/widget_responses_full_contract.rs",
+          "blob_sha": "5da37252899000c22f939207c9c93198890f2698",
+          "symbols": [
+            "auto_review_secret_and_reaction_delegate_to_existing_session_and_projection_owners",
+            "dismiss_on_move_on_blocks_stale_main_surface_response_and_secret_emits_channel_config_change"
           ]
         }
       ],
@@ -10479,6 +10544,21 @@
             "submit_secret",
             "apply_reaction",
             "react_to_message"
+          ]
+        },
+        {
+          "path": "source/host/tests/widget_responses_full_contract.rs",
+          "blob_sha": "5da37252899000c22f939207c9c93198890f2698",
+          "symbols": [
+            "generic_widget_answer_and_dismissal_are_durable_and_project_updated_entries",
+            "failed_generic_send_rolls_back_but_spend_guard_rejection_never_leaves_a_response_stamp"
+          ]
+        },
+        {
+          "path": "source/host/tests/widget_responses_local_tool_permission_contract.rs",
+          "blob_sha": "0a6b6d0853f054cbd906f55dd1b12fa33fd7b47d",
+          "symbols": [
+            "unanswered_widget_prompts_are_classified_and_marked_skipped_durably"
           ]
         }
       ],
@@ -13449,6 +13529,14 @@
             "submit_secret",
             "apply_reaction",
             "react_to_message"
+          ]
+        },
+        {
+          "path": "source/host/tests/widget_responses_local_tool_permission_contract.rs",
+          "blob_sha": "0a6b6d0853f054cbd906f55dd1b12fa33fd7b47d",
+          "symbols": [
+            "stale_permission_card_is_retired_durably_and_second_resolution_is_idempotent",
+            "boot_sweep_expires_only_cards_pending_before_cutoff_across_agents"
           ]
         }
       ],
@@ -17533,6 +17621,13 @@
           "symbols": [
             "AgentProjectMembership"
           ]
+        },
+        {
+          "path": "source/host/tests/transcript_manager_contract.rs",
+          "blob_sha": "7097f86175e506bc16b2b6de9b29269e44faf6c3",
+          "symbols": [
+            "manager_owns_memory_gateway_and_invalidates_prompt_snapshot_after_mutation"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -18340,6 +18435,16 @@
             "shape_closing_send_nudge_turn_input",
             "should_supersede_stale_turn"
           ]
+        },
+        {
+          "path": "source/host/tests/turn_runtime_recovery_contract.rs",
+          "blob_sha": "49778612dfe89fd6247d5461e2b8b5c944a4306a",
+          "symbols": [
+            "frozen_terminal_projection_keeps_delivery_and_reply_nudge_semantics_together",
+            "frozen_reply_nudge_retries_are_epoch_fenced_and_bounded",
+            "reply_nudge_checkpoint_input_is_hidden_from_the_original_user_identity",
+            "closing_send_nudge_uses_the_same_hidden_checkpoint_identity_rules"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -18961,6 +19066,13 @@
             "settle_box_handoff_state",
             "AwaitingStateSink"
           ]
+        },
+        {
+          "path": "source/host/tests/transcript_manager_contract.rs",
+          "blob_sha": "7097f86175e506bc16b2b6de9b29269e44faf6c3",
+          "symbols": [
+            "manager_owns_box_handoff_state_and_handback_settlement"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -19354,6 +19466,19 @@
             "bind_roster_emit",
             "emit_agent_update"
           ]
+        },
+        {
+          "path": "source/host/tests/transcript_manager_contract.rs",
+          "blob_sha": "7097f86175e506bc16b2b6de9b29269e44faf6c3",
+          "symbols": [
+            "manager_is_the_single_production_composition_owner",
+            "manager_owns_memory_gateway_and_invalidates_prompt_snapshot_after_mutation",
+            "runner_registry_owns_turn_execution_and_manager_delegates_to_the_same_owner",
+            "manager_owns_pending_wake_rearm_and_replays_durable_wakes",
+            "manager_is_the_upgrade_resume_facade_for_shipping_host_lifecycle",
+            "manager_emits_active_session_automations_through_the_roster_surface",
+            "manager_owns_box_handoff_state_and_handback_settlement"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -19574,6 +19699,14 @@
             "RUN_WATCHDOG_INTERRUPT_REASON",
             "RUN_DIRECT_USER_INTERRUPT_REASON"
           ]
+        },
+        {
+          "path": "source/host/tests/transcript_manager_contract.rs",
+          "blob_sha": "7097f86175e506bc16b2b6de9b29269e44faf6c3",
+          "symbols": [
+            "runner_registry_owns_turn_execution_and_manager_delegates_to_the_same_owner",
+            "manager_owns_pending_wake_rearm_and_replays_durable_wakes"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -19718,6 +19851,21 @@
             "quiesce_for_upgrade",
             "resume_after_recreate",
             "build_upgrade_resume_prompt"
+          ]
+        },
+        {
+          "path": "source/host/tests/transcript_manager_contract.rs",
+          "blob_sha": "7097f86175e506bc16b2b6de9b29269e44faf6c3",
+          "symbols": [
+            "manager_is_the_upgrade_resume_facade_for_shipping_host_lifecycle"
+          ]
+        },
+        {
+          "path": "source/host/tests/upgrade_recreate_resume_contract.rs",
+          "blob_sha": "a2b69e040851119a288c93df3d21324ddd5b4cc0",
+          "symbols": [
+            "upgrade_quiesce_state_matches_frozen_lifecycle_toggle",
+            "upgrade_resume_prompts_preserve_source_specific_silence_semantics"
           ]
         }
       ],
@@ -19908,6 +20056,16 @@
             "group_store",
             "remote_room_store",
             "xuser"
+          ]
+        },
+        {
+          "path": "source/host/tests/shared_rooms_production_contract.rs",
+          "blob_sha": "2753f49a439b864b1cb54fbf4bcc3f687678529b",
+          "symbols": [
+            "transcript_manager_owns_one_shared_rooms_service",
+            "hosted_room_materializes_filters_members_persists_notice_and_restamps_content",
+            "mirror_room_materializes_remote_binding_filters_self_and_can_be_revoked",
+            "shared_room_ingress_materializes_inline_images_on_shipping_transcript_paths"
           ]
         }
       ],
@@ -21218,7 +21376,7 @@
   "metadata": {
     "android_head_at_update": "dc717afdc2851bb0d5262e46c7a102fcccd1feb4",
     "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof. Audited native/mahayana-messaging/blob_store.rs is now a direct-port row to Host messaging_blob with stronger Android ownership/idempotency fences; the rest of the messaging crate remains individually open.",
-    "last_updated_android_head": "dc717afdc2851bb0d5262e46c7a102fcccd1feb4",
-    "last_update_note": "Reconciled transcript secret/reaction shipping implementations at dc717af without verification inflation."
+    "last_updated_android_head": "edcd2011925b32daca52954ac2ca247f68f68277",
+    "last_update_note": "Added reverse links for seven audited Desktop transcript/workflow contract-test authority files; no implementation or verification promotion."
   }
 }
