@@ -16,7 +16,10 @@ use crate::{
         },
         project_membership::{is_safe_project_slug, AgentProjectMembership},
     },
-    runner::{AndroidHostInferenceProvider, AndroidInferenceMode},
+    runner::{
+        sand_memory::{render_memory_system_prompt, MEMORY_RECENT_PROMPT_LIMIT},
+        AndroidHostInferenceProvider, AndroidInferenceMode,
+    },
     sha256::sha256_hex,
 };
 
@@ -78,6 +81,19 @@ impl AndroidMemoryOwner {
         recent_limit: Option<u64>,
     ) -> Result<Value, String> {
         self.recall_scoped(account_fence, agent_id, AndroidMemoryScope::Agent, recent_limit)
+    }
+
+    pub fn render_agent_turn_prompt(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<String, String> {
+        let store = self.store(account_fence, agent_id)?;
+        let recall = store.recall(MEMORY_RECENT_PROMPT_LIMIT);
+        // Android memory is app-private and is not directly addressable by the
+        // bounded Local Runner. Do not advertise a filesystem location the Agent
+        // cannot actually read; inject the canonical recalled facts themselves.
+        Ok(render_memory_system_prompt(&recall, None))
     }
 
     pub fn recall_scoped(
