@@ -1274,6 +1274,56 @@ mod tests {
 
 
 
+    fn read_complete_http_request(stream: &mut std::net::TcpStream) -> Vec<u8> {
+        use std::io::Read as _;
+
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+            .unwrap();
+        let mut raw = Vec::new();
+        let mut buffer = [0_u8; 4096];
+        loop {
+            let read = match stream.read(&mut buffer) {
+                Ok(read) => read,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("failed to read mock account request: {error}"),
+            };
+            if read == 0 {
+                break;
+            }
+            raw.extend_from_slice(&buffer[..read]);
+            let Some(header_end) = raw
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|index| index + 4)
+            else {
+                continue;
+            };
+            let headers = String::from_utf8_lossy(&raw[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if !name.eq_ignore_ascii_case("content-length") {
+                        return None;
+                    }
+                    value.trim().parse::<usize>().ok()
+                })
+                .unwrap_or_default();
+            if raw.len() >= header_end.saturating_add(content_length) {
+                break;
+            }
+        }
+        raw
+    }
+
     #[test]
     fn device_bound_authenticated_request_uses_single_account_token_and_machine_identity() {
         use std::io::{Read, Write};
@@ -1572,16 +1622,15 @@ mod tests {
 
     #[test]
     fn transient_refresh_failure_preserves_durable_session_and_avoids_clear_mutation() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         use std::net::TcpListener;
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut bytes = [0_u8; 4096];
-            let read = stream.read(&mut bytes).unwrap();
-            let request = String::from_utf8_lossy(&bytes[..read]);
+            let raw = read_complete_http_request(&mut stream);
+            let request = String::from_utf8_lossy(&raw);
             assert!(request.starts_with("POST /api/auth/refresh "));
             let body = r#"{"error":"temporarily unavailable"}"#;
             write!(
@@ -1619,16 +1668,15 @@ mod tests {
 
     #[test]
     fn terminal_refresh_rejection_keeps_clear_pending_for_failed_bearer_request() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         use std::net::TcpListener;
 
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut bytes = [0_u8; 4096];
-            let read = stream.read(&mut bytes).unwrap();
-            let request = String::from_utf8_lossy(&bytes[..read]);
+            let raw = read_complete_http_request(&mut stream);
+            let request = String::from_utf8_lossy(&raw);
             assert!(request.starts_with("POST /api/auth/refresh "));
             let body = r#"{"error":"refresh credential revoked"}"#;
             write!(
