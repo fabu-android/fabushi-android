@@ -576,6 +576,14 @@
             "R7 Agent collaboration",
             "AC-3"
           ]
+        },
+        {
+          "path": "source/host/src/runner/checkpoint.rs",
+          "blob_sha": "c5346a7c14dd7ad3ee5fb8c889f2909bbd25c685",
+          "symbols": [
+            "AttemptCheckpoint",
+            "AttemptCheckpoint::is_resumable"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
@@ -630,7 +638,8 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Umbrella remains mapped/not-verified. Current slice now includes frozen child identity, pre-mutation review ordering, type scoping, same-provider summarization, and a bounded provider tool/result loop; full Desktop tool graph breadth, auto-review classifier/approval parity, source closure, final APK/AAB provenance and protected device acceptance remain open. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/lib.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop crate root composes Host/Runner plus current network enrollment/worker, native remote target and sensitive challenge modules. Android crate root composes Android Host production modules but does not yet export equivalent latest network/sensitive modules, so this row is mapped with an explicit production gap. The routed-provider canonical observation gap identified at a7beb878 is implemented on 8e60857a; umbrella remains mapped/not-verified because full Desktop tool graph breadth and strict source closure are still open."
+      "notes": "Umbrella remains mapped/not-verified. Current slice now includes frozen child identity, pre-mutation review ordering, type scoping, same-provider summarization, and a bounded provider tool/result loop; full Desktop tool graph breadth, auto-review classifier/approval parity, source closure, final APK/AAB provenance and protected device acceptance remain open. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/lib.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop crate root composes Host/Runner plus current network enrollment/worker, native remote target and sensitive challenge modules. Android crate root composes Android Host production modules but does not yet export equivalent latest network/sensitive modules, so this row is mapped with an explicit production gap. The routed-provider canonical observation gap identified at a7beb878 is implemented on 8e60857a; umbrella remains mapped/not-verified because full Desktop tool graph breadth and strict source closure are still open. Checkpoint slice re-audited at Android af55852216e636cc3920609992fe3e5fe0d76812: the opaque provider cursor/visible-output/tool-call boundary is now a real production contract in stream_attempt + AndroidHostInferenceProvider, and boolean resume hints cannot authorize replay. This narrows an older stale checkpoint-gap note but does not promote the broad lifecycle responsibility; explicit Desktop generation/deadline fencing and remaining provider/tool/package/device closure stay open.",
+      "android_head_at_update": "af55852216e636cc3920609992fe3e5fe0d76812"
     },
     {
       "responsibility_id": "AGENT-VISIBLE-ACK-ANDROID-001",
