@@ -2009,6 +2009,7 @@ mod tests {
             tool_sse("Read", "read-4", "{}"),
             final_sse(),
         ]);
+        let sink = Arc::new(RecordingObservationSink::default());
         let mut provider = AndroidHostInferenceProvider::with_endpoint(
             "a".repeat(32),
             endpoint,
@@ -2018,7 +2019,8 @@ mod tests {
         .with_routed_tools(Arc::new(ReminderTools {
             calls: Arc::new(AtomicUsize::new(0)),
             cancelled: None,
-        }));
+        }))
+        .with_tool_call_observation_sink(sink);
 
         provider.start_stream(&input(), 1).unwrap();
         let requests = requests.lock().unwrap();
@@ -2052,6 +2054,7 @@ mod tests {
         }
         responses.push(final_sse());
         let (endpoint, requests) = spawn_recording_sse_server(responses);
+        let sink = Arc::new(RecordingObservationSink::default());
         let mut provider = AndroidHostInferenceProvider::with_endpoint(
             "a".repeat(32),
             endpoint,
@@ -2061,7 +2064,8 @@ mod tests {
         .with_routed_tools(Arc::new(ReminderTools {
             calls: Arc::new(AtomicUsize::new(0)),
             cancelled: None,
-        }));
+        }))
+        .with_tool_call_observation_sink(sink);
 
         provider.start_stream(&input(), 1).unwrap();
         let requests = requests.lock().unwrap();
@@ -2097,6 +2101,7 @@ mod tests {
             tool_sse("Read", "read-6", "{}"),
             final_sse(),
         ]);
+        let sink = Arc::new(RecordingObservationSink::default());
         let mut provider = AndroidHostInferenceProvider::with_endpoint(
             "a".repeat(32),
             endpoint,
@@ -2106,7 +2111,8 @@ mod tests {
         .with_routed_tools(Arc::new(ReminderTools {
             calls: Arc::new(AtomicUsize::new(0)),
             cancelled: None,
-        }));
+        }))
+        .with_tool_call_observation_sink(sink);
 
         provider.start_stream(&input(), 1).unwrap();
         let requests = requests.lock().unwrap();
