@@ -139,9 +139,13 @@ impl AndroidRoutedToolBridge for GenerateImageRoutedTools {
         let description = object.get("description").and_then(Value::as_str).map(str::trim)
             .filter(|value| !value.is_empty()).ok_or("GenerateImage requires description")?;
         validate_prompt(description)?;
-        if let Some(ratio) = object.get("aspect_ratio").and_then(Value::as_str)
-            && !SUPPORTED_ASPECT_RATIOS.contains(&ratio) {
-            return Err(format!("GenerateImage aspect_ratio must be one of {}", SUPPORTED_ASPECT_RATIOS.join(", ")));
+        if let Some(ratio) = object.get("aspect_ratio").and_then(Value::as_str) {
+            if !SUPPORTED_ASPECT_RATIOS.contains(&ratio) {
+                return Err(format!(
+                    "GenerateImage aspect_ratio must be one of {}",
+                    SUPPORTED_ASPECT_RATIOS.join(", ")
+                ));
+            }
         }
         let references = self.reference_images(&args)?;
         self.assert_live()?;
