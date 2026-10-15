@@ -60,7 +60,7 @@ impl AndroidHostBootstrapGuard {
         )
         .unwrap_or_else(|error| panic!("failed to write Android Host native discovery: {error}"));
         Self {
-            _lock: lock,
+            _lock: lock.lock,
             discovery_path,
             pid,
             generation,
