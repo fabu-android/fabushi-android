@@ -18406,6 +18406,16 @@
           "symbols": [
             "manager_owns_memory_gateway_and_invalidates_prompt_snapshot_after_mutation"
           ]
+        },
+        {
+          "path": "source/host/src/runner/sand_memory.rs",
+          "blob_sha": "996257a915eddf3fe40494e85f84c40ba18114e3",
+          "symbols": [
+            "resolve_frozen_memory_prompt",
+            "render_memory_system_prompt",
+            "render_user_memory_system_prompt",
+            "render_project_memory_system_prompt"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -18419,12 +18429,13 @@
         "source/host/src/extensions/memory/memory_service.rs",
         "source/host/src/extensions/memory/memory_synthesis_service.rs",
         "source/host/src/extensions/memory/project_membership.rs",
-        "source/host/src/extensions/telemetry/memory_synthesis_telemetry.rs"
+        "source/host/src/extensions/telemetry/memory_synthesis_telemetry.rs",
+        "source/host/src/runner/sand_memory.rs"
       ],
       "android_owner": "AndroidMemoryOwner in Rust Host; MemorySynthesisService remains the only synthesis state machine; AndroidJsonHost only schedules settled visible-turn evidence and drains bounded telemetry.",
       "platform_delta": "Platform-independent memory/store/synthesis semantics remain Rust. Android uses app-private account/Agent/project-fenced paths and AndroidHostInferenceProvider instead of Desktop extension process wiring. Synthesis is scheduled after durable visible-turn settlement so its failure cannot replay or change the canonical turn outcome.",
-      "implementation_status": "implemented",
-      "production_wiring": "Production chat completion persists assistant transcript and DurableTurnJournal Completed first, emits operation.completed, then starts a bounded memory synthesis worker for non-hidden turns. The worker uses the original account fence and request ID evidence; service reports are mapped to Desktop sand.memory.synthesis semantics and passed back as internal Host events. Host drops stale-account telemetry and writes matching reports through the existing AndroidStructuredLogSpool.",
+      "implementation_status": "mapped",
+      "production_wiring": "Account-fenced AndroidMemoryOwner, FileMemoryStore and verified MemorySynthesisService are production-wired after durable visible-turn settlement. Current production turn also injects Agent-scope recall through AndroidMemoryOwner::render_agent_turn_prompt. However shared user/project recall and Desktop-equivalent compaction-epoch FrozenMemorySnapshot/resolve_frozen_memory_prompt are not yet joined into the production provider prompt, so the holistic responsibility remains mapped rather than implemented.",
       "unit_test": "Existing memory owner/service tests cover account fencing, explicit-memory protection, project membership, synthesis rejection/failure; memory_synthesis_telemetry service tests cover Desktop SAND-E0409..SAND-E0413 mapping and ok settlement. Fresh GitHub Actions on a descendant exact head required.",
       "contract_test": "Desktop production.rs telemetry mapping re-read and preserved: Dropped E0412, InvalidOutput E0409, Rejected E0410, Stale E0411, Failed E0413; Committed/NoWork => ok. Hidden/internal turns do not seed memory.",
       "integration_test": "Production wiring is present from durable visible-turn settlement -> account-fenced AndroidMemoryOwner -> verified MemorySynthesisService -> internal telemetry projection. Fresh exact-head CI plus process-death/account-switch integration evidence still required.",
@@ -18432,7 +18443,8 @@
       "device_test": "required: process death/restart, account switch, offline durable recall on supported Android device/API",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source and shipping Host wiring implemented. Do not mark verified until the same final Android HEAD has Rust/Android/package/device evidence; release signing/protected-account blockers are separate."
+      "notes": "Source and shipping Host wiring implemented. Do not mark verified until the same final Android HEAD has Rust/Android/package/device evidence; release signing/protected-account blockers are separate. Sand memory source re-audit at Android 079bb112da3aa0442d0f0eee8f0ef36f413e9834: durable store/synthesis and Agent-scope prompt injection are implemented, but shared user/project prompt projection plus compaction-epoch frozen recall remain open. Do not mark implemented/verified until those semantics are production-wired and same-exact-head CI/package/device process-death/account-switch evidence exists.",
+      "android_head_at_update": "079bb112da3aa0442d0f0eee8f0ef36f413e9834"
     },
     {
       "responsibility_id": "MANAGED-SKILLS-CORE-ANDROID-001",
