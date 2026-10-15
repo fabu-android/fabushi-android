@@ -21981,6 +21981,132 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Created from Desktop b6a66fd2 source audit. This is a semantic policy responsibility, not a requirement to ship Node timers in the APK."
+    },
+    {
+      "responsibility_id": "TRANSCRIPT-MIRROR-REPLACEMENT-ANDROID-001",
+      "domain": "canonical-transcript-storage",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/transcript_mirror/conversation_state_binary.rs",
+          "blob_sha": "d0cd9c66557514073bdc0e6ada670e52038df70b",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/transcript_mirror/generated_occurrence_codec.rs",
+          "blob_sha": "94b30e7dd5d09a6857151bd162c4fda338fd7f14",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/transcript_mirror/legacy_transcript_mirror.rs",
+          "blob_sha": "0f7dde22781fc0925a7c98f2470f45c83a65c09b",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/transcript_mirror/mod.rs",
+          "blob_sha": "c660ac78649d9d3af102eb578cb4eae03d00b5ae",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/transcript_mirror/production_provider.rs",
+          "blob_sha": "50634d124d62af2a1b54e269330189aa80f5de27",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/transcript_mirror/transcript_journal_codec.rs",
+          "blob_sha": "a869af65ef4992bfeac21b6915dda6f9d482d1ff",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/transcript_mirror/transcript_mirror.rs",
+          "blob_sha": "49228f41095077bad1b28a64cf9f0fbda0e369d7",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/transcript_mirror/transcript_mirror_router.rs",
+          "blob_sha": "418be73c77f2b2a1d793def4d674299740fa18b4",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/transcript_mirror/transcript_occurrence_deriver.rs",
+          "blob_sha": "dc14ee0ef5377530b1e64eb6354e05439871522e",
+          "symbols": [
+            "Desktop transcript mirror journal/legacy compatibility responsibility"
+          ]
+        }
+      ],
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "responsibility": "Preserve the durable user-visible Agent transcript and recovery semantics represented by Desktop's journal-first transcript mirror without creating a second canonical transcript owner on Android.",
+      "source_owner": "Desktop ProductionTranscriptMirrorProvider + RoutedTranscriptMirror + FileTranscriptMirror/LegacyFileTranscriptMirror",
+      "direct_callers": [
+        "Desktop HostRunnerComposition::compose_production_checkpoint_sink",
+        "Desktop ProductionAgentStateCheckpointSink",
+        "Android AndroidJsonHost canonical transcript commands and session recovery"
+      ],
+      "downstream_dependencies": [
+        "ConversationState protobuf decoding",
+        "Agent blob/session storage",
+        "canonical transcript mutation/page/search",
+        "process-death and corrupt-write recovery"
+      ],
+      "state_owner": "Desktop derives a mirror from Agent checkpoint state. Android instead has one Rust TranscriptStore as canonical transcript truth; mirror compatibility code must never become a second Android owner.",
+      "persistent_state": [
+        "Desktop transcripts/*.jsonl plus pending/checkpoint metadata",
+        "Android canonical transcript.json with temp/backup/quarantine recovery files"
+      ],
+      "protocol_wire_contract": [
+        "stable transcript entry identity",
+        "ordered visible user/assistant/tool projection",
+        "duplicate-safe persistence",
+        "checkpoint/process-death recovery without replaying side effects"
+      ],
+      "visible_effect": "Agent history remains durable, ordered, pageable/searchable and recoverable after app/process death without duplicate visible messages or a divergent mirror becoming canonical.",
+      "failure_behavior": [
+        "Desktop journal corruption/write failures are explicit and can route/fallback only under its journal ownership rules",
+        "Android persist failure rolls back the in-memory canonical mutation",
+        "Android corrupt/interrupted store is quarantined/recovered/salvaged or explicitly reset"
+      ],
+      "cancellation_behavior": "Transcript persistence is not undone by later turn cancellation; already accepted durable transcript entries remain canonical.",
+      "retry_semantics": "Retries use stable message/request identity and canonical reconciliation; persistence or outcome uncertainty never authorizes blind side-effect replay.",
+      "idempotency_semantics": "Android append-if-absent/entry identity replaces Desktop mirror occurrence/checkpoint deduplication for the mobile canonical store.",
+      "process_death_recovery": "AndroidJsonHost opens TranscriptStore::open_recovering on cold start and session recovery decodes durable ConversationState fields; recovery does not recreate settled turns.",
+      "account_fencing": "Canonical Host/runtime access is scoped by the live account/session owners; presentation never selects an independent transcript store.",
+      "security_boundary": "Rust Host owns transcript persistence. Compose/JNI receive projections only; Desktop filesystem mirror files are not exposed as an Android write surface.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/host/src/extensions/transcript/transcript_store.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/transcript_mirror/conversation_state_binary.rs",
+        "source/host/src/extensions/session/conversation_recovery.rs",
+        "source/host/src/extensions/session/production_agent_store.rs"
+      ],
+      "android_owner": "Rust canonical TranscriptStore + Android Session recovery owner",
+      "platform_delta": "Android deliberately replaces Desktop's derived journal/legacy transcript-file compatibility layer with a single crash-safe canonical Host transcript store. ConversationState decoding is retained where needed for session recovery. Same-path legacy mirror code present in Android is not considered shipping evidence because it has no production constructor/caller.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost::new opens TranscriptStore::open_recovering(app_data_dir/transcript.json), retains it as Host state, and chat/send/search/page/recovery paths use that store. Session recovery and ProductionAgentStore call the adapted conversation_state_binary decoder. Exact-branch grep found no production OffloadingTranscriptMirror constructor, so legacy mirror code is not a second owner.",
+      "unit_test": "TranscriptStore reopen/duplicate/mutation/corruption/page/search tests plus conversation-state/session recovery focused Rust tests.",
+      "contract_test": "Current exact-head Rust runtime/architecture jobs must pass after this ledger change; no predecessor green result is promoted.",
+      "integration_test": "Required: send/reopen/page/search/process-death and account-switch journey on same exact head.",
+      "packaged_test": "Required on final minified githubRelease APK/AAB.",
+      "device_test": "Required for process-death/offline/upgrade transcript recovery without duplicates.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "1438b495440c82473f88b1187b05794155e27eba source audit established Desktop journal-first mirror is shipping, while Android's shipping replacement is the canonical durable TranscriptStore. This closes the source responsibility as implemented, not verified; final exact-head package/device evidence remains required."
     }
   ],
   "traceability": {
