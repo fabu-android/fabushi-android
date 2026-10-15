@@ -156,8 +156,18 @@ impl ProductionCloudAgentExecutor {
             .set("x-ghost-mode", "off")
             .set("x-request-id", &identity.request_id)
             .send_bytes(body)
-            .map_err(|error| {
-                ExecutionError::Transport(format!("CloudAgent RPC failed: {error}"))
+            .map_err(|error| match error {
+                ureq::Error::Status(429, response) => {
+                    let retry_after_ms = response
+                        .header("retry-after")
+                        .and_then(|value| value.trim().parse::<u64>().ok())
+                        .and_then(|seconds| seconds.checked_mul(1_000))
+                        .unwrap_or(60_000);
+                    ExecutionError::Transport(format!(
+                        "cloud_agent_rate_limited retry_after_ms={retry_after_ms}"
+                    ))
+                }
+                other => ExecutionError::Transport(format!("CloudAgent RPC failed: {other}")),
             })?;
         let mut output = Vec::new();
         response
