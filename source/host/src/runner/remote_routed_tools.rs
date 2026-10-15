@@ -2553,6 +2553,7 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runner::background_work::CloudAgentWatchOutcome;
 
     struct NeverCalledDelegate;
 
