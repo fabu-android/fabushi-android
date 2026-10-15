@@ -17,7 +17,8 @@ use crate::automation_runtime::{
 use crate::automation_trigger::trigger_listener_platforms;
 use crate::runner::listener_connect_cards::surface_listener_connect_cards;
 use crate::runner::background_work::{
-    BackgroundShellWatchOptions, BackgroundShellWatchOutcome, RunnerBackgroundShellWatches,
+    BackgroundShellWatchOptions, BackgroundShellWatchOutcome, CloudAgentWatchOptions,
+    CloudAgentWatchOutcome, RunnerBackgroundShellWatches, RunnerCloudAgentWatches,
     SHELL_REWATCH_MAX_WAIT_MS, SHELL_REWATCH_POLL_DEFAULT_MS,
 };
 use crate::listener_connect_watch::{DurableListenerConnectWatchStore, PendingListenerConnectWatch};
@@ -1579,6 +1580,7 @@ pub struct AndroidJsonHost {
     remote_runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     remote_background_work: Arc<Mutex<crate::remote_background_work::DurableRemoteBackgroundWorkOwner>>,
     remote_background_shell_watches: RunnerBackgroundShellWatches,
+    remote_cloud_agent_watches: RunnerCloudAgentWatches,
     remote_journal_path: PathBuf,
     remote_box_store_sync: Mutex<RemoteBoxStoreSyncJournal>,
     automation_runtime: AutomationRuntime,
@@ -2536,6 +2538,157 @@ impl AndroidJsonHost {
             Some(shell_on_settled),
             None,
         );
+
+        let cloud_await_binding = Arc::clone(&remote_binding);
+        let cloud_await_runner = Arc::clone(&remote_runner);
+        let cloud_await_work = Arc::clone(&remote_background_work);
+        let cloud_await = Arc::new(move |work_id: &str, _after_followup: bool| -> CloudAgentWatchOutcome {
+            loop {
+                let Some(record) = cloud_await_work
+                    .lock()
+                    .ok()
+                    .and_then(|owner| owner.get(work_id).cloned())
+                else {
+                    return CloudAgentWatchOutcome {
+                        status: "error".into(),
+                        text: "CloudAgent durable work identity disappeared before completion.".into(),
+                    };
+                };
+                if record.kind != crate::remote_background_work::RemoteBackgroundWorkKind::CloudAgent {
+                    return CloudAgentWatchOutcome {
+                        status: "error".into(),
+                        text: "CloudAgent durable work identity has the wrong kind.".into(),
+                    };
+                }
+                if record.state == crate::remote_background_work::RemoteBackgroundWorkState::Cancelled {
+                    return CloudAgentWatchOutcome {
+                        status: "error".into(),
+                        text: "CloudAgent watch was cancelled by the current account/device owner.".into(),
+                    };
+                }
+                let binding = cloud_await_binding.lock().ok().and_then(|value| value.clone());
+                let Some(binding) = binding else {
+                    std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                    continue;
+                };
+                if binding.account_fence != record.account_fence
+                    || binding.account_epoch != record.account_epoch
+                    || binding.device_id != record.device_id
+                    || !binding.supports("cloud-agent")
+                    || binding.active_at(now_ms()).is_err()
+                {
+                    std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                    continue;
+                }
+                let context = match binding.context(
+                    &record.operation_id,
+                    &record.request_id,
+                    &record.permission_grant_id,
+                ) {
+                    Ok(context) => context,
+                    Err(_) => {
+                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                        continue;
+                    }
+                };
+                let result = {
+                    let mut guard = match cloud_await_runner.lock() {
+                        Ok(guard) => guard,
+                        Err(_) => {
+                            std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                            continue;
+                        }
+                    };
+                    let Some(runner) = guard.as_mut() else {
+                        drop(guard);
+                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                        continue;
+                    };
+                    runner.reconcile_authorized(&context, now_ms())
+                };
+                match result {
+                    Ok(result) => {
+                        let parsed = serde_json::from_str::<Value>(&result.output_json)
+                            .unwrap_or_else(|_| json!({
+                                "status":"error",
+                                "text":"CloudAgent completion returned malformed JSON."
+                            }));
+                        return CloudAgentWatchOutcome {
+                            status: parsed.get("status").and_then(Value::as_str).unwrap_or("error").to_string(),
+                            text: parsed.get("text").and_then(Value::as_str).unwrap_or("CloudAgent finished without a textual result.").to_string(),
+                        };
+                    }
+                    Err(ExecutionError::Transport(message))
+                        if message.contains("remote_execution_accepted_pending")
+                            || message.contains("remote_outcome_unknown_reconcile_pending") =>
+                    {
+                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                    }
+                    Err(ExecutionError::Transport(message))
+                        if message.contains("remote_execution_rejected")
+                            || message.contains("remote_execution_cancelled") =>
+                    {
+                        return CloudAgentWatchOutcome { status: "error".into(), text: message };
+                    }
+                    Err(_) => {
+                        // Transient observation failure does not prove the launched CloudAgent
+                        // failed; keep reconciling the exact authorized operation.
+                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                    }
+                }
+            }
+        });
+        let cloud_pending_store = pending_wake_store.clone();
+        let cloud_pending_work = Arc::clone(&remote_background_work);
+        let cloud_on_pending = Arc::new(move |pending: &crate::runner::background_work::CloudAgentPendingWatch| {
+            let Some(record) = cloud_pending_work
+                .lock()
+                .ok()
+                .and_then(|owner| owner.get(&pending.work_id).cloned())
+            else {
+                return;
+            };
+            let _ = cloud_pending_store.mark_pending(DurablePendingWakeMarker {
+                account_fence: record.account_fence,
+                agent_id: pending.parent_agent_id.clone(),
+                kind: PendingWakeKind::CloudAgent,
+                work_id: pending.work_id.clone(),
+                marked_at_ms: now_ms(),
+                quiet_origin: pending.quiet_origin.as_ref().and_then(
+                    crate::extensions::transcript::sand_pending_wake_store::coerce_quiet_origin
+                ),
+                title: Some(pending.title.clone()),
+                subagent_type: Some("cursor-agent".into()),
+                interrupted_by_recreate: record.interrupted_by_recreate,
+            });
+        });
+        let cloud_settled_work = Arc::clone(&remote_background_work);
+        let cloud_on_settled = Arc::new(move |completion: crate::runner::background_work::CloudAgentBackgroundCompletion| {
+            let Some(record) = cloud_settled_work
+                .lock()
+                .ok()
+                .and_then(|owner| owner.get(&completion.work_id).cloned())
+            else {
+                return;
+            };
+            if let Ok(mut owner) = cloud_settled_work.lock() {
+                let _ = owner.settle(
+                    &completion.work_id,
+                    &record.account_fence,
+                    record.account_epoch,
+                    &completion.status,
+                    Some(completion.result),
+                    None,
+                    now_ms(),
+                );
+            }
+        });
+        let remote_cloud_agent_watches = RunnerCloudAgentWatches::new(
+            cloud_await,
+            Some(cloud_on_pending),
+            Some(cloud_on_settled),
+            None,
+        );
         Self {
             mode,
             device_id: device_id.clone(),
@@ -2669,6 +2822,7 @@ impl AndroidJsonHost {
             remote_runner,
             remote_background_work,
             remote_background_shell_watches,
+            remote_cloud_agent_watches,
             remote_journal_path: app_data_dir.join("remote-execution-journal.json"),
             remote_box_store_sync: Mutex::new(
                 RemoteBoxStoreSyncJournal::open(
@@ -2726,6 +2880,7 @@ impl AndroidJsonHost {
         *self.remote_binding.lock().map_err(|_| "remote binding lock poisoned".to_string())? = Some(binding);
         *self.remote_runner.lock().map_err(|_| "remote runner lock poisoned".to_string())? = Some(runner);
         let _ = self.rearm_remote_background_shell_watches()?;
+        let _ = self.rearm_remote_cloud_agent_watches()?;
         Ok(())
     }
 
@@ -2882,6 +3037,127 @@ impl AndroidJsonHost {
                     (!record.title.trim().is_empty()).then(|| record.title.clone()),
                     None,
                 ),
+            ) {
+                armed += 1;
+            }
+        }
+        Ok(armed)
+    }
+
+    fn rearm_remote_cloud_agent_watches(&mut self) -> Result<usize, String> {
+        let Some(binding) = self
+            .remote_binding
+            .lock()
+            .map_err(|_| "remote binding lock poisoned".to_string())?
+            .clone()
+        else {
+            return Ok(0);
+        };
+        if !binding.supports("cloud-agent") {
+            return Ok(0);
+        }
+        let current_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(0),
+        };
+        if binding.account_fence != current_fence {
+            return Ok(0);
+        }
+
+        let prepared = self
+            .remote_background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .prepared_for_account(&binding.account_fence, binding.account_epoch);
+        for provisional in prepared {
+            if provisional.kind != crate::remote_background_work::RemoteBackgroundWorkKind::CloudAgent
+                || provisional.device_id != binding.device_id
+            {
+                continue;
+            }
+            let journal = self
+                .remote_runner
+                .lock()
+                .map_err(|_| "remote runner lock poisoned".to_string())?
+                .as_ref()
+                .and_then(|runner| runner.journal().record(&provisional.operation_id))
+                .cloned();
+            let Some(journal) = journal else {
+                let _ = self.remote_background_work.lock()
+                    .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+                    .cancel(&provisional.work_id, &provisional.account_fence, provisional.account_epoch, now_ms());
+                continue;
+            };
+            if matches!(journal.state, RemoteExecutionState::Pending | RemoteExecutionState::Rejected | RemoteExecutionState::Cancelled) {
+                let _ = self.remote_background_work.lock()
+                    .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+                    .cancel(&provisional.work_id, &provisional.account_fence, provisional.account_epoch, now_ms());
+                continue;
+            }
+            let Some(progress) = journal.progress_json.as_deref() else {
+                // The launch may have crossed the external boundary, but without the durable
+                // continuation identity it cannot be safely replayed or guessed.
+                continue;
+            };
+            let progress: Value = match serde_json::from_str(progress) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let Some(work_id) = progress.get("agentId").and_then(Value::as_str).map(str::trim).filter(|v| !v.is_empty()) else {
+                continue;
+            };
+            {
+                let mut owner = self.remote_background_work.lock()
+                    .map_err(|_| "remote background-work owner lock poisoned".to_string())?;
+                let _ = owner.rekey_prepared(
+                    &provisional.work_id,
+                    work_id,
+                    &provisional.account_fence,
+                    provisional.account_epoch,
+                    now_ms(),
+                )?;
+                let _ = owner.mark_watching(
+                    work_id,
+                    &provisional.account_fence,
+                    provisional.account_epoch,
+                    now_ms(),
+                )?;
+                if journal.state == RemoteExecutionState::Completed {
+                    if let Some(output) = journal.terminal_output_json.as_deref() {
+                        if let Ok(value) = serde_json::from_str::<Value>(output) {
+                            let status = value.get("status").and_then(Value::as_str).unwrap_or("error");
+                            let text = value.get("text").and_then(Value::as_str).map(str::to_string);
+                            let _ = owner.settle(
+                                work_id,
+                                &provisional.account_fence,
+                                provisional.account_epoch,
+                                status,
+                                text,
+                                None,
+                                now_ms(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        let watching = self
+            .remote_background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .watching_for_account(&binding.account_fence, binding.account_epoch);
+        let mut armed = 0;
+        for record in watching {
+            if record.kind != crate::remote_background_work::RemoteBackgroundWorkKind::CloudAgent
+                || record.device_id != binding.device_id
+            {
+                continue;
+            }
+            if self.remote_cloud_agent_watches.watch_cloud_agent(
+                &record.parent_agent_id,
+                &record.work_id,
+                CloudAgentWatchOptions::new(None, false),
             ) {
                 armed += 1;
             }
@@ -9705,6 +9981,171 @@ impl AndroidJsonHost {
         Ok(())
     }
 
+    fn cloud_agent_revival_request_id(agent_id: &str, work_ids: &[String]) -> String {
+        let mut work_ids = work_ids.to_vec();
+        work_ids.sort();
+        work_ids.dedup();
+        let material = format!("{agent_id}\n{}", work_ids.join("\n"));
+        format!(
+            "cloud-agent-revival:{}:{}",
+            agent_id,
+            crate::sha256::sha256_hex(material.as_bytes())
+        )
+    }
+
+    fn cleanup_cloud_agent_completion_obligations(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        work_ids: &[String],
+    ) {
+        for work_id in work_ids {
+            self.pending_wake_store.clear_one(
+                account_fence,
+                agent_id,
+                PendingWakeKind::CloudAgent,
+                work_id,
+            );
+            if let Ok(mut owner) = self.remote_background_work.lock() {
+                let epoch = owner.get(work_id).map(|record| record.account_epoch);
+                if let Some(epoch) = epoch {
+                    let _ = owner.remove_settled(work_id, account_fence, epoch);
+                }
+            }
+        }
+    }
+
+    fn queue_cloud_agent_completion_revival(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        completions: &[SubagentCompletion],
+        work_ids: &[String],
+    ) -> Result<Option<AccountSessionMutation>, String> {
+        if completions.is_empty() || work_ids.is_empty() {
+            return Ok(None);
+        }
+        let request_id = Self::cloud_agent_revival_request_id(agent_id, work_ids);
+        if self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record(&request_id)
+            .is_some()
+        {
+            self.cleanup_cloud_agent_completion_obligations(account_fence, agent_id, work_ids);
+            return Ok(None);
+        }
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let (bearer_token, session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(error) => {
+                self.active_operations.remove(&operation_id);
+                return Err(error);
+            }
+        };
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":build_subagent_revival_prompt(completions),
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"cloud-agent-revival",
+            "skipAckObligation":true,
+            "directAddressedAcceptance":true,
+        });
+        if let Err(error) = self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            self.active_operations.remove(&operation_id);
+            self.agent_turn_interruptions.unregister_operation(&operation_id);
+            return Err(error);
+        }
+        self.cleanup_cloud_agent_completion_obligations(account_fence, agent_id, work_ids);
+        Ok(session_mutation)
+    }
+
+    fn drain_remote_cloud_agent_completion_revival_once(&mut self) -> Result<(), String> {
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let settled = self
+            .remote_background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .settled_for_fence(&account_fence);
+        for record in &settled {
+            if record.kind != crate::remote_background_work::RemoteBackgroundWorkKind::CloudAgent {
+                continue;
+            }
+            let _ = self.pending_wake_store.mark_pending(DurablePendingWakeMarker {
+                account_fence: record.account_fence.clone(),
+                agent_id: record.parent_agent_id.clone(),
+                kind: PendingWakeKind::CloudAgent,
+                work_id: record.work_id.clone(),
+                marked_at_ms: record.updated_at_ms,
+                quiet_origin: None,
+                title: Some(record.title.clone()),
+                subagent_type: Some("cursor-agent".into()),
+                interrupted_by_recreate: record.interrupted_by_recreate,
+            });
+        }
+        let markers = self.pending_wake_store.list_pending_for_account(&account_fence);
+        let Some(first) = markers
+            .iter()
+            .find(|marker| marker.kind == PendingWakeKind::CloudAgent)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let agent_id = first.agent_id.clone();
+        let marker_ids = markers
+            .iter()
+            .filter(|marker| marker.kind == PendingWakeKind::CloudAgent && marker.agent_id == agent_id)
+            .map(|marker| marker.work_id.clone())
+            .collect::<BTreeSet<_>>();
+        let mut completions = Vec::new();
+        let mut work_ids = Vec::new();
+        for record in settled {
+            if record.parent_agent_id != agent_id
+                || record.kind != crate::remote_background_work::RemoteBackgroundWorkKind::CloudAgent
+                || !marker_ids.contains(&record.work_id)
+            {
+                continue;
+            }
+            completions.push(SubagentCompletion {
+                parent_agent_id: agent_id.clone(),
+                subagent_agent_id: record.work_id.clone(),
+                title: record.title.clone(),
+                subagent_type: "cursor-agent".into(),
+                status: record.terminal_status.clone().unwrap_or_else(|| "error".into()),
+                result: record
+                    .terminal_detail
+                    .clone()
+                    .unwrap_or_else(|| "CloudAgent finished without a textual result.".into()),
+                quiet_origin: None,
+            });
+            work_ids.push(record.work_id);
+        }
+        if completions.is_empty() {
+            return Ok(());
+        }
+        let _ = self.queue_cloud_agent_completion_revival(
+            &account_fence,
+            &agent_id,
+            &completions,
+            &work_ids,
+        );
+        Ok(())
+    }
+
     fn channel_failure_claim_id(failure_id: &str) -> String {
         format!("channel-failure-revival-claim:{failure_id}")
     }
@@ -13978,6 +14419,7 @@ impl AndroidJsonHost {
         let remote_runner = Arc::clone(&self.remote_runner);
         let remote_background_work = Arc::clone(&self.remote_background_work);
         let remote_background_shell_watches = self.remote_background_shell_watches.clone();
+        let remote_cloud_agent_watches = self.remote_cloud_agent_watches.clone();
         let remote_client_paused = Arc::clone(&self.remote_client_paused);
         let remote_approvals = self.remote_approvals.clone();
         let remote_user_settings = Arc::clone(&self.user_settings);
@@ -14661,6 +15103,7 @@ impl AndroidJsonHost {
                         Arc::clone(&remote_runner),
                         Arc::clone(&remote_background_work),
                         remote_background_shell_watches.clone(),
+                        remote_cloud_agent_watches.clone(),
                         remote_approvals.clone(),
                         Arc::clone(&remote_user_settings),
                         remote_local_tool_permission_ceiling,
@@ -16274,12 +16717,14 @@ impl AndroidJsonHost {
 
     fn feature_receive(&mut self) -> Result<Value, String> {
         let _ = self.rearm_remote_background_shell_watches();
+        let _ = self.rearm_remote_cloud_agent_watches();
         self.drain_mcp_auth_owner_events()?;
         self.drain_listener_connect_resume_once()?;
         self.drain_box_handoff_resume_once()?;
         self.drain_channel_failure_revival_once()?;
         self.drain_subagent_completion_revival_once()?;
         self.drain_remote_shell_completion_revival_once()?;
+        self.drain_remote_cloud_agent_completion_revival_once()?;
         self.drain_agent_wake_once()?;
         self.drain_visible_ack_redrive_once()?;
         self.drain_created_agent_kickstart_nudge_once()?;

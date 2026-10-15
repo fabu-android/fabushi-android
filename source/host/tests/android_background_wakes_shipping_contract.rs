@@ -101,10 +101,35 @@ fn background_shell_watcher_is_shipping_only_with_durable_remote_owner_and_reviv
 }
 
 #[test]
-fn cloud_agent_watcher_is_not_claimed_as_shipping_until_host_await_owner_is_wired() {
+fn cloud_agent_watcher_ships_through_same_authorized_remote_operation_and_durable_revival() {
     let runtime = source("host/src/android_json_runtime.rs");
-    assert!(
-        !runtime.contains("RunnerCloudAgentWatches::new"),
-        "CloudAgent watcher must remain non-shipping until Host owns production await_completion"
-    );
+    let routed = source("host/src/runner/remote_routed_tools.rs");
+    let owner = source("host/src/remote_background_work.rs");
+    let backend = source("box-exec-daemon/src/cloud_agent_backend.rs");
+    let production = source("box-exec-daemon/src/cloud_agent_production.rs");
+
+    for needle in [
+        "RunnerCloudAgentWatches::new",
+        "rearm_remote_cloud_agent_watches",
+        "reconcile_authorized",
+        "drain_remote_cloud_agent_completion_revival_once",
+        "cloud-agent-revival",
+        "PendingWakeKind::CloudAgent",
+    ] {
+        assert!(runtime.contains(needle), "CloudAgent shipping runtime must contain {needle}");
+    }
+    for needle in [
+        "cloud-pending-",
+        "rekey_prepared",
+        "progress_json",
+        "arm_cloud_agent_watch",
+    ] {
+        assert!(routed.contains(needle), "CloudAgent routed owner must contain {needle}");
+    }
+    assert!(owner.contains("RemoteBackgroundWorkKind::CloudAgent"));
+    assert!(owner.contains("rekey_prepared"));
+    assert!(backend.contains("continuation_watch_request"));
+    assert!(backend.contains("progress_json"));
+    assert!(production.contains("Launch is intentionally asynchronous"));
+    assert!(production.contains("progress_json: Some(progress_json)"));
 }

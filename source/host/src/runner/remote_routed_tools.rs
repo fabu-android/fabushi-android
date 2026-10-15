@@ -6,7 +6,8 @@ use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::remote_background_work::{DurableRemoteBackgroundWorkOwner, RemoteBackgroundWorkKind};
 use crate::remote_execution::RemoteExecutionState;
 use crate::runner::background_work::{
-    BackgroundShellWatchOptions, RunnerBackgroundShellWatches,
+    BackgroundShellWatchOptions, CloudAgentWatchOptions, RunnerBackgroundShellWatches,
+    RunnerCloudAgentWatches,
 };
 use crate::sha256::sha256_hex;
 use fabushi_android_box_exec_daemon::{
@@ -573,6 +574,7 @@ pub(crate) struct RemoteRoutedTools {
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     background_work: Arc<Mutex<DurableRemoteBackgroundWorkOwner>>,
     background_shell_watches: RunnerBackgroundShellWatches,
+    cloud_agent_watches: RunnerCloudAgentWatches,
     approvals: RemoteApprovalRegistry,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     local_tool_permission_ceiling: Option<LocalToolPermission>,
@@ -824,6 +826,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             format!("{}\n{}\n{}", self.parent_operation_id, name, args_json).as_bytes(),
         );
         let background_shell = is_background_shell(name, &args);
+        let cloud_agent_launch = name == CLOUD_AGENT_TOOL_NAME
+            && args.get("action").and_then(Value::as_str) == Some("launch");
         let capability = match name {
             "Shell" if background_shell => "background-shell",
             "Shell" | "ExternalShell" => "remote.shell",
@@ -1162,6 +1166,34 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         } else {
             None
         };
+        let provisional_cloud_work_id = if cloud_agent_launch {
+            let remote_record = {
+                let guard = self
+                    .runner
+                    .lock()
+                    .map_err(|_| "remote runner lock poisoned".to_string())?;
+                guard
+                    .as_ref()
+                    .and_then(|runner| runner.journal().record(&operation_id))
+                    .cloned()
+                    .ok_or("prepared CloudAgent launch omitted durable Remote journal record")?
+            };
+            let provisional = format!("cloud-pending-{}", &operation_id);
+            self.background_work
+                .lock()
+                .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+                .register(
+                    &self.parent_agent_id,
+                    &provisional,
+                    &cloud_agent_title(&args, &provisional),
+                    RemoteBackgroundWorkKind::CloudAgent,
+                    &remote_record,
+                    now_ms(),
+                )?;
+            Some(provisional)
+        } else {
+            None
+        };
 
         if let Err(error) = self.broker.consume_remote_approval_for_dispatch(
             &approval_id,
@@ -1182,6 +1214,10 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 background_shell_work_id.as_deref(),
                 &context,
             );
+            self.cancel_prepared_cloud_agent(
+                provisional_cloud_work_id.as_deref(),
+                &context,
+            );
             return Err(error);
         }
         if self.cancelled.load(Ordering::Acquire) || self.client_paused.load(Ordering::Acquire) {
@@ -1192,6 +1228,10 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             }
             self.cancel_prepared_background_shell(
                 background_shell_work_id.as_deref(),
+                &context,
+            );
+            self.cancel_prepared_cloud_agent(
+                provisional_cloud_work_id.as_deref(),
                 &context,
             );
             return Err(if self.client_paused.load(Ordering::Acquire) {
@@ -1238,6 +1278,38 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 ))
             }
             Err(ExecutionError::Transport(message))
+                if name == CLOUD_AGENT_TOOL_NAME
+                    && args.get("action").and_then(Value::as_str) == Some("launch")
+                    && (message.contains("remote_execution_accepted_pending")
+                        || message.contains("remote_outcome_unknown_reconcile_pending")) =>
+            {
+                let remote_record = runner
+                    .journal()
+                    .record(&operation_id)
+                    .cloned()
+                    .ok_or("accepted CloudAgent launch omitted durable Remote journal record")?;
+                let progress = remote_record
+                    .progress_json
+                    .as_deref()
+                    .ok_or("accepted CloudAgent launch omitted durable continuation progress")?;
+                let parsed = parse_remote_tool_output(name, &args, progress)?;
+                let work_id = parsed
+                    .get("agentId")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or("accepted CloudAgent launch progress omitted agentId")?
+                    .to_string();
+                drop(guard);
+                let provisional = provisional_cloud_work_id
+                    .as_deref()
+                    .ok_or("CloudAgent provisional durable owner is unavailable")?;
+                self.promote_cloud_agent_owner(provisional, &work_id, &context)?;
+                self.mark_cloud_agent_watching(&work_id, &context)?;
+                self.arm_cloud_agent_watch(&work_id);
+                Ok(parsed)
+            }
+            Err(ExecutionError::Transport(message))
                 if message.contains("remote_outcome_unknown") =>
             {
                 Err(format!("{message}; explicit reconciliation required"))
@@ -1246,6 +1318,10 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 drop(guard);
                 self.cancel_prepared_background_shell(
                     background_shell_work_id.as_deref(),
+                    &context,
+                );
+                self.cancel_prepared_cloud_agent(
+                    provisional_cloud_work_id.as_deref(),
                     &context,
                 );
                 Err(remote_execution_error(error))
@@ -1381,6 +1457,66 @@ impl RemoteRoutedTools {
         })
     }
 
+    fn promote_cloud_agent_owner(
+        &self,
+        provisional_work_id: &str,
+        work_id: &str,
+        context: &RemoteExecutionContext,
+    ) -> Result<(), String> {
+        self.background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .rekey_prepared(
+                provisional_work_id,
+                work_id,
+                &context.account_fence,
+                context.account_epoch,
+                now_ms(),
+            )?;
+        Ok(())
+    }
+
+    fn cancel_prepared_cloud_agent(
+        &self,
+        work_id: Option<&str>,
+        context: &RemoteExecutionContext,
+    ) {
+        let Some(work_id) = work_id else { return; };
+        if let Ok(mut owner) = self.background_work.lock() {
+            let _ = owner.cancel(
+                work_id,
+                &context.account_fence,
+                context.account_epoch,
+                now_ms(),
+            );
+        }
+    }
+
+    fn mark_cloud_agent_watching(
+        &self,
+        work_id: &str,
+        context: &RemoteExecutionContext,
+    ) -> Result<(), String> {
+        self.background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .mark_watching(
+                work_id,
+                &context.account_fence,
+                context.account_epoch,
+                now_ms(),
+            )?;
+        Ok(())
+    }
+
+    fn arm_cloud_agent_watch(&self, work_id: &str) {
+        let _ = self.cloud_agent_watches.watch_cloud_agent(
+            &self.parent_agent_id,
+            work_id,
+            CloudAgentWatchOptions::new(None, false),
+        );
+    }
+
     fn observe_browser_navigation(&self, name: &str, parsed: &Value, operation_id: &str) {
         let Some(observer) = self.browser_navigation_observer.as_ref() else {
             return;
@@ -1463,6 +1599,7 @@ pub(crate) fn with_remote_routed_tools(
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     background_work: Arc<Mutex<DurableRemoteBackgroundWorkOwner>>,
     background_shell_watches: RunnerBackgroundShellWatches,
+    cloud_agent_watches: RunnerCloudAgentWatches,
     approvals: RemoteApprovalRegistry,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     local_tool_permission_ceiling: Option<LocalToolPermission>,
@@ -1483,6 +1620,7 @@ pub(crate) fn with_remote_routed_tools(
         runner,
         background_work,
         background_shell_watches,
+        cloud_agent_watches,
         approvals,
         user_settings,
         local_tool_permission_ceiling,
@@ -2394,6 +2532,15 @@ fn push_event(events: &Arc<Mutex<VecDeque<Value>>>, event: Value) -> Result<(), 
     Ok(())
 }
 
+fn cloud_agent_title(args: &Value, work_id: &str) -> String {
+    args.get("title")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("Cloud agent {work_id}"))
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -2491,6 +2638,15 @@ mod tests {
                 None,
                 None,
             ),
+            cloud_agent_watches: RunnerCloudAgentWatches::new(
+                Arc::new(|_, _| CloudAgentWatchOutcome {
+                    status: "completed".into(),
+                    text: "done".into(),
+                }),
+                None,
+                None,
+                None,
+            ),
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
             local_tool_permission_ceiling: None,
@@ -2530,6 +2686,15 @@ mod tests {
             )),
             background_shell_watches: RunnerBackgroundShellWatches::new(
                 Arc::new(|_, _, _| None),
+                None,
+                None,
+                None,
+            ),
+            cloud_agent_watches: RunnerCloudAgentWatches::new(
+                Arc::new(|_, _| CloudAgentWatchOutcome {
+                    status: "completed".into(),
+                    text: "done".into(),
+                }),
                 None,
                 None,
                 None,
@@ -3202,6 +3367,15 @@ mod tests {
             )),
             background_shell_watches: RunnerBackgroundShellWatches::new(
                 Arc::new(|_, _, _| None),
+                None,
+                None,
+                None,
+            ),
+            cloud_agent_watches: RunnerCloudAgentWatches::new(
+                Arc::new(|_, _| CloudAgentWatchOutcome {
+                    status: "completed".into(),
+                    text: "done".into(),
+                }),
                 None,
                 None,
                 None,

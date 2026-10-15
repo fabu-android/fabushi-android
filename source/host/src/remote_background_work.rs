@@ -146,6 +146,60 @@ impl DurableRemoteBackgroundWorkOwner {
         Ok(record)
     }
 
+    pub fn rekey_prepared(
+        &mut self,
+        provisional_work_id: &str,
+        work_id: &str,
+        account_fence: &str,
+        account_epoch: u64,
+        now_ms: u64,
+    ) -> Result<RemoteBackgroundWorkRecord, String> {
+        validate_identity("background work", work_id)?;
+        if provisional_work_id == work_id {
+            return self
+                .state
+                .records
+                .get(work_id)
+                .cloned()
+                .ok_or_else(|| "remote background work is unknown".into());
+        }
+        let mut record = self
+            .state
+            .records
+            .remove(provisional_work_id)
+            .ok_or("provisional remote background work is unknown")?;
+        if let Err(error) = assert_current(&record, account_fence, account_epoch) {
+            self.state.records.insert(provisional_work_id.to_string(), record);
+            return Err(error);
+        }
+        if record.state != RemoteBackgroundWorkState::Prepared {
+            self.state.records.insert(provisional_work_id.to_string(), record);
+            return Err("only prepared remote background work can be rekeyed".into());
+        }
+        if let Some(existing) = self.state.records.get(work_id) {
+            let same = existing.parent_agent_id == record.parent_agent_id
+                && existing.operation_id == record.operation_id
+                && existing.request_id == record.request_id
+                && existing.account_fence == record.account_fence
+                && existing.account_epoch == record.account_epoch
+                && existing.device_id == record.device_id
+                && existing.kind == record.kind;
+            if same {
+                return Ok(existing.clone());
+            }
+            self.state.records.insert(provisional_work_id.to_string(), record);
+            return Err("background work rekey collides with another durable owner".into());
+        }
+        if record.title == format!("Cloud agent {provisional_work_id}") {
+            record.title = format!("Cloud agent {work_id}");
+        }
+        record.work_id = work_id.to_string();
+        record.updated_at_ms = now_ms;
+        self.state.records.insert(work_id.to_string(), record.clone());
+        self.persist()?;
+        Ok(record)
+    }
+
     pub fn mark_watching(
         &mut self,
         work_id: &str,
