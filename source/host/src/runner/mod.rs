@@ -23,6 +23,7 @@ pub mod sand_auto_review;
 pub mod sand_auto_review_classifier_run;
 pub mod sand_auto_review_summaries;
 pub mod sand_auto_review_tool_escalations;
+pub mod sand_browser_auto_review;
 pub mod sand_automation_auto_review;
 pub mod sand_computer_auto_review;
 pub mod sand_cloud_agent_auto_review;
