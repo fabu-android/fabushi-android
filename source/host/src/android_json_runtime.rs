@@ -16,6 +16,10 @@ use crate::automation_runtime::{
 };
 use crate::automation_trigger::trigger_listener_platforms;
 use crate::runner::listener_connect_cards::surface_listener_connect_cards;
+use crate::runner::background_work::{
+    BackgroundShellWatchOptions, BackgroundShellWatchOutcome, RunnerBackgroundShellWatches,
+    SHELL_REWATCH_MAX_WAIT_MS, SHELL_REWATCH_POLL_DEFAULT_MS,
+};
 use crate::listener_connect_watch::{DurableListenerConnectWatchStore, PendingListenerConnectWatch};
 use crate::listener_connectivity::AndroidListenerConnectivity;
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
@@ -46,6 +50,7 @@ use crate::human_remote_resource_outbound::{
 };
 use crate::env_descriptor_account_binding::EnvDescriptorAccountBinding;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
+use crate::remote_execution::RemoteExecutionState;
 use crate::remote_box_store_sync::{
     RemoteBoxStoreSyncAction, RemoteBoxStoreSyncJournal, RemoteBoxStoreSyncRecord,
     RemoteBoxStoreSyncState, REMOTE_BOX_STORE_SYNC_CAPABILITY,
@@ -146,7 +151,8 @@ use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
 use crate::extensions::transcript::background_wakes::{BackgroundWakes, build_channel_delivery_failure_wake_prompt};
 use crate::extensions::transcript::completion_revivals::{
-    build_subagent_revival_prompt, SubagentCompletion,
+    build_shell_revival_prompt, build_subagent_revival_prompt, ShellCompletion,
+    SubagentCompletion,
 };
 use crate::extensions::transcript::sand_pending_wake_store::{
     DurablePendingWakeMarker, PendingWakeKind, QuietWakeOrigin,
@@ -1571,6 +1577,7 @@ pub struct AndroidJsonHost {
     remote_binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     remote_runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     remote_background_work: Arc<Mutex<crate::remote_background_work::DurableRemoteBackgroundWorkOwner>>,
+    remote_background_shell_watches: RunnerBackgroundShellWatches,
     remote_journal_path: PathBuf,
     remote_box_store_sync: Mutex<RemoteBoxStoreSyncJournal>,
     automation_runtime: AutomationRuntime,
@@ -2348,6 +2355,186 @@ impl AndroidJsonHost {
             Arc::clone(&transcript_projection_events),
             host_event_bus.clone(),
         );
+
+        let remote_binding: Arc<Mutex<Option<RemoteDispatchBinding>>> =
+            Arc::new(Mutex::new(None));
+        let remote_runner: Arc<
+            Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>,
+        > = Arc::new(Mutex::new(None));
+        let remote_background_work = Arc::new(Mutex::new(
+            crate::remote_background_work::DurableRemoteBackgroundWorkOwner::open(
+                app_data_dir.join("remote-background-work.json"),
+                now_ms(),
+            )
+            .unwrap_or_else(|error| {
+                panic!("failed to open durable Remote background-work owner: {error}")
+            }),
+        ));
+
+        let shell_await_binding = Arc::clone(&remote_binding);
+        let shell_await_runner = Arc::clone(&remote_runner);
+        let shell_await_work = Arc::clone(&remote_background_work);
+        let shell_await = Arc::new(
+            move |_parent_agent_id: &str,
+                  work_id: &str,
+                  cancelled: Arc<AtomicBool>|
+                  -> Option<BackgroundShellWatchOutcome> {
+                let started = Instant::now();
+                loop {
+                    if cancelled.load(Ordering::Acquire) {
+                        return None;
+                    }
+                    if started.elapsed().as_millis() as u64 >= SHELL_REWATCH_MAX_WAIT_MS {
+                        // Leave the durable marker/owner intact. A later receive or refreshed
+                        // protected binding can rearm the exact same operation.
+                        return None;
+                    }
+                    let record = shell_await_work
+                        .lock()
+                        .ok()
+                        .and_then(|owner| owner.get(work_id).cloned())?;
+                    if record.kind != crate::remote_background_work::RemoteBackgroundWorkKind::Shell
+                    {
+                        return None;
+                    }
+                    let binding = shell_await_binding.lock().ok().and_then(|value| value.clone());
+                    let Some(binding) = binding else {
+                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                        continue;
+                    };
+                    if binding.account_fence != record.account_fence
+                        || binding.account_epoch != record.account_epoch
+                        || binding.device_id != record.device_id
+                        || !binding.supports("background-shell")
+                        || binding.active_at(now_ms()).is_err()
+                    {
+                        std::thread::sleep(Duration::from_millis(SHELL_REWATCH_POLL_DEFAULT_MS));
+                        continue;
+                    }
+                    let context = match binding.context(
+                        &record.operation_id,
+                        &record.request_id,
+                        &record.permission_grant_id,
+                    ) {
+                        Ok(context) => context,
+                        Err(_) => {
+                            std::thread::sleep(Duration::from_millis(
+                                SHELL_REWATCH_POLL_DEFAULT_MS,
+                            ));
+                            continue;
+                        }
+                    };
+                    let result = {
+                        let mut guard = match shell_await_runner.lock() {
+                            Ok(guard) => guard,
+                            Err(_) => return None,
+                        };
+                        let Some(runner) = guard.as_mut() else {
+                            drop(guard);
+                            std::thread::sleep(Duration::from_millis(
+                                SHELL_REWATCH_POLL_DEFAULT_MS,
+                            ));
+                            continue;
+                        };
+                        runner.reconcile_authorized(&context, now_ms())
+                    };
+                    match result {
+                        Ok(result) => {
+                            let parsed = serde_json::from_str::<
+                                fabushi_android_box_exec_daemon::BackgroundShellResult,
+                            >(&result.output_json)
+                            .ok()?;
+                            return Some(BackgroundShellWatchOutcome {
+                                status: parsed.status,
+                                detail: parsed.detail,
+                                output_path: Some(parsed.output_path),
+                            });
+                        }
+                        Err(ExecutionError::Transport(message))
+                            if message.contains("remote_execution_accepted_pending")
+                                || message.contains(
+                                    "remote_outcome_unknown_reconcile_pending",
+                                ) =>
+                        {
+                            std::thread::sleep(Duration::from_millis(
+                                SHELL_REWATCH_POLL_DEFAULT_MS,
+                            ));
+                        }
+                        Err(ExecutionError::Transport(message))
+                            if message.contains("remote_execution_rejected")
+                                || message.contains("remote_execution_cancelled") =>
+                        {
+                            return Some(BackgroundShellWatchOutcome {
+                                status: "error".into(),
+                                detail: Some(message),
+                                output_path: None,
+                            });
+                        }
+                        Err(_) => {
+                            // Network/credential/runtime transport failures do not prove the
+                            // command failed. Keep observing the original durable operation.
+                            std::thread::sleep(Duration::from_millis(
+                                SHELL_REWATCH_POLL_DEFAULT_MS,
+                            ));
+                        }
+                    }
+                }
+            },
+        );
+
+        let shell_pending_store = pending_wake_store.clone();
+        let shell_pending_work = Arc::clone(&remote_background_work);
+        let shell_on_pending = Arc::new(move |pending: &crate::runner::background_work::BackgroundShellPendingWatch| {
+            let Some(record) = shell_pending_work
+                .lock()
+                .ok()
+                .and_then(|owner| owner.get(&pending.work_id).cloned())
+            else {
+                return;
+            };
+            let _ = shell_pending_store.mark_pending(DurablePendingWakeMarker {
+                account_fence: record.account_fence,
+                agent_id: pending.parent_agent_id.clone(),
+                kind: PendingWakeKind::Shell,
+                work_id: pending.work_id.clone(),
+                marked_at_ms: now_ms(),
+                quiet_origin: None,
+                title: Some(pending.title.clone()),
+                subagent_type: None,
+                interrupted_by_recreate: record.interrupted_by_recreate,
+            });
+        });
+
+        let shell_settled_work = Arc::clone(&remote_background_work);
+        let shell_on_settled = Arc::new(
+            move |completion: crate::runner::background_work::BackgroundShellBackgroundCompletion| {
+                let Some(record) = shell_settled_work
+                    .lock()
+                    .ok()
+                    .and_then(|owner| owner.get(&completion.work_id).cloned())
+                else {
+                    return;
+                };
+                if let Ok(mut owner) = shell_settled_work.lock() {
+                    let _ = owner.settle(
+                        &completion.work_id,
+                        &record.account_fence,
+                        record.account_epoch,
+                        &completion.status,
+                        completion.detail,
+                        completion.output_path,
+                        now_ms(),
+                    );
+                }
+            },
+        );
+
+        let remote_background_shell_watches = RunnerBackgroundShellWatches::new(
+            shell_await,
+            Some(shell_on_pending),
+            Some(shell_on_settled),
+            None,
+        );
         Self {
             mode,
             device_id: device_id.clone(),
@@ -2477,17 +2664,10 @@ impl AndroidJsonHost {
             runtime_call_cancellations: Arc::new(RuntimeCallCancellationRegistry::default()),
             capability_broker: SharedCapabilityBroker::open(app_data_dir.join("capability-broker.json"), now_ms())
                 .unwrap_or_else(|error| panic!("failed to open durable Android Capability Broker: {error}")),
-            remote_binding: Arc::new(Mutex::new(None)),
-            remote_runner: Arc::new(Mutex::new(None)),
-            remote_background_work: Arc::new(Mutex::new(
-                crate::remote_background_work::DurableRemoteBackgroundWorkOwner::open(
-                    app_data_dir.join("remote-background-work.json"),
-                    now_ms(),
-                )
-                .unwrap_or_else(|error| {
-                    panic!("failed to open durable Remote background-work owner: {error}")
-                }),
-            )),
+            remote_binding,
+            remote_runner,
+            remote_background_work,
+            remote_background_shell_watches,
             remote_journal_path: app_data_dir.join("remote-execution-journal.json"),
             remote_box_store_sync: Mutex::new(
                 RemoteBoxStoreSyncJournal::open(
@@ -2544,7 +2724,168 @@ impl AndroidJsonHost {
         .map_err(|error| format!("failed to initialize authenticated Remote Runner: {error:?}"))?;
         *self.remote_binding.lock().map_err(|_| "remote binding lock poisoned".to_string())? = Some(binding);
         *self.remote_runner.lock().map_err(|_| "remote runner lock poisoned".to_string())? = Some(runner);
+        let _ = self.rearm_remote_background_shell_watches()?;
         Ok(())
+    }
+
+    fn rearm_remote_background_shell_watches(&mut self) -> Result<usize, String> {
+        let Some(binding) = self
+            .remote_binding
+            .lock()
+            .map_err(|_| "remote binding lock poisoned".to_string())?
+            .clone()
+        else {
+            return Ok(0);
+        };
+        if !binding.supports("background-shell") {
+            return Ok(0);
+        }
+        let current_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(0),
+        };
+        if binding.account_fence != current_fence {
+            return Ok(0);
+        }
+
+        // Recover the narrow process-death window between durable owner prepare and watcher arm.
+        let prepared = self
+            .remote_background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .prepared_for_account(&binding.account_fence, binding.account_epoch);
+        for record in prepared {
+            if record.kind != crate::remote_background_work::RemoteBackgroundWorkKind::Shell
+                || record.device_id != binding.device_id
+            {
+                continue;
+            }
+            let context = binding.context(
+                &record.operation_id,
+                &record.request_id,
+                &record.permission_grant_id,
+            )?;
+            let journal = self
+                .remote_runner
+                .lock()
+                .map_err(|_| "remote runner lock poisoned".to_string())?
+                .as_ref()
+                .and_then(|runner| runner.journal().record(&record.operation_id))
+                .cloned();
+            match journal.map(|entry| entry.state) {
+                Some(RemoteExecutionState::Pending) | None => {
+                    if let Ok(mut guard) = self.remote_runner.lock() {
+                        if let Some(runner) = guard.as_mut() {
+                            let _ = runner.cancel_prepared_authorized(&context, now_ms());
+                        }
+                    }
+                    let _ = self
+                        .remote_background_work
+                        .lock()
+                        .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+                        .cancel(
+                            &record.work_id,
+                            &record.account_fence,
+                            record.account_epoch,
+                            now_ms(),
+                        );
+                }
+                Some(RemoteExecutionState::Completed) => {
+                    let output = self
+                        .remote_runner
+                        .lock()
+                        .ok()
+                        .and_then(|guard| {
+                            guard
+                                .as_ref()
+                                .and_then(|runner| runner.journal().record(&record.operation_id))
+                                .and_then(|entry| entry.terminal_output_json.clone())
+                        });
+                    if let Some(output) = output {
+                        if let Ok(result) = serde_json::from_str::<
+                            fabushi_android_box_exec_daemon::BackgroundShellResult,
+                        >(&output)
+                        {
+                            let mut owner = self
+                                .remote_background_work
+                                .lock()
+                                .map_err(|_| {
+                                    "remote background-work owner lock poisoned".to_string()
+                                })?;
+                            let _ = owner.mark_watching(
+                                &record.work_id,
+                                &record.account_fence,
+                                record.account_epoch,
+                                now_ms(),
+                            );
+                            let _ = owner.settle(
+                                &record.work_id,
+                                &record.account_fence,
+                                record.account_epoch,
+                                &result.status,
+                                result.detail,
+                                Some(result.output_path),
+                                now_ms(),
+                            );
+                        }
+                    }
+                }
+                Some(RemoteExecutionState::Rejected)
+                | Some(RemoteExecutionState::Cancelled) => {
+                    let _ = self
+                        .remote_background_work
+                        .lock()
+                        .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+                        .cancel(
+                            &record.work_id,
+                            &record.account_fence,
+                            record.account_epoch,
+                            now_ms(),
+                        );
+                }
+                Some(
+                    RemoteExecutionState::Sent
+                    | RemoteExecutionState::Acked
+                    | RemoteExecutionState::OutcomeUnknown,
+                ) => {
+                    let _ = self
+                        .remote_background_work
+                        .lock()
+                        .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+                        .mark_watching(
+                            &record.work_id,
+                            &record.account_fence,
+                            record.account_epoch,
+                            now_ms(),
+                        );
+                }
+            }
+        }
+
+        let watching = self
+            .remote_background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .watching_for_account(&binding.account_fence, binding.account_epoch);
+        let mut armed = 0;
+        for record in watching {
+            if record.kind != crate::remote_background_work::RemoteBackgroundWorkKind::Shell
+                || record.device_id != binding.device_id
+            {
+                continue;
+            }
+            if self.remote_background_shell_watches.watch_background_shell(
+                &record.parent_agent_id,
+                &record.work_id,
+                BackgroundShellWatchOptions::new(
+                    (!record.title.trim().is_empty()).then(|| record.title.clone()),
+                    None,
+                ),
+            ) {
+                armed += 1;
+            }
+        }
+        Ok(armed)
     }
 
     fn source_map_path(&self) -> &std::path::Path {
@@ -9202,6 +9543,167 @@ impl AndroidJsonHost {
         Ok(session_mutation)
     }
 
+    fn shell_revival_request_id(agent_id: &str, work_ids: &[String]) -> String {
+        let mut work_ids = work_ids.to_vec();
+        work_ids.sort();
+        work_ids.dedup();
+        let material = format!("{agent_id}\n{}", work_ids.join("\n"));
+        format!(
+            "shell-revival:{}:{}",
+            agent_id,
+            crate::sha256::sha256_hex(material.as_bytes())
+        )
+    }
+
+    fn cleanup_shell_completion_obligations(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        work_ids: &[String],
+    ) {
+        for work_id in work_ids {
+            self.pending_wake_store.clear_one(
+                account_fence,
+                agent_id,
+                PendingWakeKind::Shell,
+                work_id,
+            );
+            if let Ok(mut owner) = self.remote_background_work.lock() {
+                let epoch = owner.get(work_id).map(|record| record.account_epoch);
+                if let Some(epoch) = epoch {
+                    let _ = owner.remove_settled(work_id, account_fence, epoch);
+                }
+            }
+        }
+    }
+
+    fn queue_shell_completion_revival(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        completions: &[ShellCompletion],
+        work_ids: &[String],
+    ) -> Result<Option<AccountSessionMutation>, String> {
+        if completions.is_empty() || work_ids.is_empty() {
+            return Ok(None);
+        }
+        let request_id = Self::shell_revival_request_id(agent_id, work_ids);
+        if self
+            .turn_journal
+            .lock()
+            .map_err(|_| "turn journal lock poisoned".to_string())?
+            .record(&request_id)
+            .is_some()
+        {
+            self.cleanup_shell_completion_obligations(account_fence, agent_id, work_ids);
+            return Ok(None);
+        }
+
+        let operation_id = self.next_operation_id(&request_id);
+        self.active_operations.insert(operation_id.clone());
+        let (bearer_token, session_mutation) = match self.bearer_token_for_turn() {
+            Ok(value) => value,
+            Err(error) => {
+                self.active_operations.remove(&operation_id);
+                return Err(error);
+            }
+        };
+        let command = json!({
+            "type":"chat.send",
+            "requestId":request_id,
+            "agentId":agent_id,
+            "text":build_shell_revival_prompt(completions),
+            "hidden":true,
+            "appendUserMessage":false,
+            "awaitTurn":false,
+            "requestSource":"background-shell-revival",
+            "skipAckObligation":true,
+            "directAddressedAcceptance":true,
+        });
+        if let Err(error) = self.queue_chat_turn(
+            &operation_id,
+            command.get("requestId").and_then(Value::as_str).unwrap_or_default(),
+            &command,
+            bearer_token,
+        ) {
+            self.active_operations.remove(&operation_id);
+            self.agent_turn_interruptions.unregister_operation(&operation_id);
+            return Err(error);
+        }
+        self.cleanup_shell_completion_obligations(account_fence, agent_id, work_ids);
+        Ok(session_mutation)
+    }
+
+    fn drain_remote_shell_completion_revival_once(&mut self) -> Result<(), String> {
+        let account_fence = match self.current_turn_account_fence() {
+            Ok(value) => value,
+            Err(_) => return Ok(()),
+        };
+        let markers = self
+            .pending_wake_store
+            .list_pending_for_account(&account_fence);
+        let Some(first) = markers
+            .iter()
+            .find(|marker| marker.kind == PendingWakeKind::Shell)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let agent_id = first.agent_id.clone();
+        let settled = self
+            .remote_background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .settled_for_fence(&account_fence);
+        if settled.is_empty() {
+            return Ok(());
+        }
+
+        let marker_by_work = markers
+            .into_iter()
+            .filter(|marker| {
+                marker.kind == PendingWakeKind::Shell && marker.agent_id == agent_id
+            })
+            .map(|marker| (marker.work_id.clone(), marker))
+            .collect::<BTreeMap<_, _>>();
+        let mut completions = Vec::new();
+        let mut work_ids = Vec::new();
+        for record in settled {
+            if record.parent_agent_id != agent_id {
+                continue;
+            }
+            let Some(marker) = marker_by_work.get(&record.work_id) else {
+                continue;
+            };
+            completions.push(ShellCompletion {
+                agent_id: agent_id.clone(),
+                shell_id: record.work_id.clone(),
+                title: record.title.clone(),
+                status: record
+                    .terminal_status
+                    .clone()
+                    .unwrap_or_else(|| "error".into()),
+                detail: record.terminal_detail.clone(),
+                output_path: record.output_path.clone(),
+                quiet_origin: marker.quiet_origin.clone(),
+            });
+            work_ids.push(record.work_id);
+        }
+        if completions.is_empty() {
+            return Ok(());
+        }
+
+        // Auth/provider/queue failures leave both owner settlement and pending marker intact.
+        // A later receive uses the same deterministic turn id.
+        let _ = self.queue_shell_completion_revival(
+            &account_fence,
+            &agent_id,
+            &completions,
+            &work_ids,
+        );
+        Ok(())
+    }
+
     fn channel_failure_claim_id(failure_id: &str) -> String {
         format!("channel-failure-revival-claim:{failure_id}")
     }
@@ -13474,6 +13976,7 @@ impl AndroidJsonHost {
         let remote_binding = Arc::clone(&self.remote_binding);
         let remote_runner = Arc::clone(&self.remote_runner);
         let remote_background_work = Arc::clone(&self.remote_background_work);
+        let remote_background_shell_watches = self.remote_background_shell_watches.clone();
         let remote_client_paused = Arc::clone(&self.remote_client_paused);
         let remote_approvals = self.remote_approvals.clone();
         let remote_user_settings = Arc::clone(&self.user_settings);
@@ -14156,6 +14659,7 @@ impl AndroidJsonHost {
                         Arc::clone(&remote_binding),
                         Arc::clone(&remote_runner),
                         Arc::clone(&remote_background_work),
+                        remote_background_shell_watches.clone(),
                         remote_approvals.clone(),
                         Arc::clone(&remote_user_settings),
                         remote_local_tool_permission_ceiling,
@@ -15768,11 +16272,13 @@ impl AndroidJsonHost {
     }
 
     fn feature_receive(&mut self) -> Result<Value, String> {
+        let _ = self.rearm_remote_background_shell_watches();
         self.drain_mcp_auth_owner_events()?;
         self.drain_listener_connect_resume_once()?;
         self.drain_box_handoff_resume_once()?;
         self.drain_channel_failure_revival_once()?;
         self.drain_subagent_completion_revival_once()?;
+        self.drain_remote_shell_completion_revival_once()?;
         self.drain_agent_wake_once()?;
         self.drain_visible_ack_redrive_once()?;
         self.drain_created_agent_kickstart_nudge_once()?;

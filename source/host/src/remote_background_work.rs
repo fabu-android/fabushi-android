@@ -251,6 +251,38 @@ impl DurableRemoteBackgroundWorkOwner {
             .collect()
     }
 
+    pub fn prepared_for_account(
+        &self,
+        account_fence: &str,
+        account_epoch: u64,
+    ) -> Vec<RemoteBackgroundWorkRecord> {
+        self.state
+            .records
+            .values()
+            .filter(|record| {
+                record.account_fence == account_fence
+                    && record.account_epoch == account_epoch
+                    && record.state == RemoteBackgroundWorkState::Prepared
+            })
+            .cloned()
+            .collect()
+    }
+
+    pub fn settled_for_fence(
+        &self,
+        account_fence: &str,
+    ) -> Vec<RemoteBackgroundWorkRecord> {
+        self.state
+            .records
+            .values()
+            .filter(|record| {
+                record.account_fence == account_fence
+                    && record.state == RemoteBackgroundWorkState::Settled
+            })
+            .cloned()
+            .collect()
+    }
+
     pub fn settled_for_account(
         &self,
         account_fence: &str,

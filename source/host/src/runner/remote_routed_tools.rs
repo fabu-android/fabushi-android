@@ -5,6 +5,9 @@ use crate::capability_broker::SharedCapabilityBroker;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::remote_background_work::{DurableRemoteBackgroundWorkOwner, RemoteBackgroundWorkKind};
 use crate::remote_execution::RemoteExecutionState;
+use crate::runner::background_work::{
+    BackgroundShellWatchOptions, RunnerBackgroundShellWatches,
+};
 use crate::sha256::sha256_hex;
 use fabushi_android_box_exec_daemon::{
     background_shell_id, AuthenticatedRemoteHttpTransport, RemoteBearerCredential,
@@ -569,6 +572,7 @@ pub(crate) struct RemoteRoutedTools {
     binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     background_work: Arc<Mutex<DurableRemoteBackgroundWorkOwner>>,
+    background_shell_watches: RunnerBackgroundShellWatches,
     approvals: RemoteApprovalRegistry,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     local_tool_permission_ceiling: Option<LocalToolPermission>,
@@ -928,6 +932,10 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                                     .as_deref()
                                     .ok_or("background shell work identity is unavailable")?;
                                 self.mark_background_shell_watching(work_id, &context)?;
+                                self.arm_background_shell_watch(
+                                    work_id,
+                                    &background_shell_title(&args),
+                                );
                                 return Ok(self.background_shell_running_result(
                                     work_id,
                                     &operation_id,
@@ -1219,6 +1227,10 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     .as_deref()
                     .ok_or("background shell durable work identity is unavailable")?;
                 self.mark_background_shell_watching(work_id, &context)?;
+                self.arm_background_shell_watch(
+                    work_id,
+                    &background_shell_title(&args),
+                );
                 Ok(self.background_shell_running_result(
                     work_id,
                     &operation_id,
@@ -1344,6 +1356,17 @@ impl RemoteRoutedTools {
         Ok(())
     }
 
+    fn arm_background_shell_watch(&self, work_id: &str, title: &str) {
+        let _ = self.background_shell_watches.watch_background_shell(
+            &self.parent_agent_id,
+            work_id,
+            BackgroundShellWatchOptions::new(
+                (!title.trim().is_empty()).then(|| title.trim().to_string()),
+                None,
+            ),
+        );
+    }
+
     fn background_shell_running_result(
         &self,
         work_id: &str,
@@ -1439,6 +1462,7 @@ pub(crate) fn with_remote_routed_tools(
     binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
     background_work: Arc<Mutex<DurableRemoteBackgroundWorkOwner>>,
+    background_shell_watches: RunnerBackgroundShellWatches,
     approvals: RemoteApprovalRegistry,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     local_tool_permission_ceiling: Option<LocalToolPermission>,
@@ -1458,6 +1482,7 @@ pub(crate) fn with_remote_routed_tools(
         binding,
         runner,
         background_work,
+        background_shell_watches,
         approvals,
         user_settings,
         local_tool_permission_ceiling,
@@ -2460,6 +2485,12 @@ mod tests {
                 )
                 .unwrap(),
             )),
+            background_shell_watches: RunnerBackgroundShellWatches::new(
+                Arc::new(|_, _, _| None),
+                None,
+                None,
+                None,
+            ),
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
             local_tool_permission_ceiling: None,
@@ -2497,6 +2528,12 @@ mod tests {
                 )
                 .unwrap(),
             )),
+            background_shell_watches: RunnerBackgroundShellWatches::new(
+                Arc::new(|_, _, _| None),
+                None,
+                None,
+                None,
+            ),
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
             local_tool_permission_ceiling: None,
@@ -3163,6 +3200,12 @@ mod tests {
                 )
                 .unwrap(),
             )),
+            background_shell_watches: RunnerBackgroundShellWatches::new(
+                Arc::new(|_, _, _| None),
+                None,
+                None,
+                None,
+            ),
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
             local_tool_permission_ceiling: None,
