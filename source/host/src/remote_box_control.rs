@@ -374,7 +374,10 @@ mod forwarding_tests {
         .unwrap();
         assert_eq!(bytes, vec![0x0a, 0x00]);
         let exec_requests = exec_requests.lock().unwrap();
-        assert!(exec_requests[0].input_json.contains("\\\"fieldNumber\\\":36"));
+        let exec_input: serde_json::Value =
+            serde_json::from_str(&exec_requests[0].input_json).unwrap();
+        assert_eq!(exec_input["fieldNumber"], MCP_STATE_EXEC_FIELD_NUMBER);
+        assert_eq!(exec_input["payloadHex"], "1200");
         assert!(execute_mcp_resource_via_authorized_runner(
             &mut exec_runner,
             &context("mcp-invalid"),
