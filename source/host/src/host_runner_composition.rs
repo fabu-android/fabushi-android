@@ -2,6 +2,10 @@ use crate::box_capabilities::{box_is_available, CapableBox};
 use crate::remote_execution::{
     RemoteExecutionJournal, RemoteExecutionRecord, RemoteExecutionState,
 };
+use crate::remote_box_control::{
+    RemoteBoxMcpBinding, apply_environment_via_authorized_runner,
+    load_mcp_servers_via_authorized_runner,
+};
 use crate::remote_box_store_sync::{RemoteBoxStoreSyncJournal, RemoteBoxStoreSyncRecord};
 use fabushi_android_box_exec_daemon::{
     AuthenticatedRemoteHttpTransport, RemoteCancelOutcome, RemoteDispatchOutcome,
@@ -88,7 +92,7 @@ impl<T: RemoteExecutionTransport> CapableBox<RemoteExecutionContext>
     type Description = String;
     type EnvironmentUpdate = String;
     type McpLoadResult = Vec<String>;
-    type McpAccessor = String;
+    type McpAccessor = RemoteBoxMcpBinding;
     type Error = ExecutionError;
 
     fn is_available(&self) -> Option<Result<bool, Self::Error>> {
@@ -97,6 +101,29 @@ impl<T: RemoteExecutionTransport> CapableBox<RemoteExecutionContext>
 
     fn description(&self) -> Option<Self::Description> {
         Some("authenticated-remote-box".into())
+    }
+
+    fn apply_environment(
+        &mut self,
+        ctx: &RemoteExecutionContext,
+        update: Self::EnvironmentUpdate,
+    ) -> Option<Result<(), Self::Error>> {
+        Some(apply_environment_via_authorized_runner(self, ctx, &update))
+    }
+
+    fn load_mcp_servers(
+        &mut self,
+        ctx: &RemoteExecutionContext,
+        config_json: &str,
+    ) -> Option<Result<Self::McpLoadResult, Self::Error>> {
+        Some(load_mcp_servers_via_authorized_runner(self, ctx, config_json))
+    }
+
+    fn mcp_resource_accessor(
+        &mut self,
+        ctx: &RemoteExecutionContext,
+    ) -> Option<Result<Self::McpAccessor, Self::Error>> {
+        Some(ctx.validate().map(|_| RemoteBoxMcpBinding::new(ctx)))
     }
 }
 
