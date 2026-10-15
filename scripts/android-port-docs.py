@@ -233,6 +233,23 @@ def rebaseline() -> None:
                 else:
                     responsibility['notes'] = note
                 touched_responsibilities += 1
+        reverse_links = {}
+        for responsibility in responsibility_doc.get('responsibilities', []):
+            rid = responsibility.get('responsibility_id')
+            if not rid:
+                continue
+            for source in responsibility.get('desktop_sources', []):
+                path = source.get('path')
+                if path in new_by_path:
+                    reverse_links.setdefault(path, set()).add(rid)
+        for row in new_rows:
+            linked = reverse_links.get(row['source_path'])
+            if linked:
+                row['responsibilities'] = sorted(set(row.get('responsibilities') or []) | linked)
+        ledger_text = ''.join(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n' for row in new_rows)
+        ledger_path.write_text(ledger_text, encoding='utf-8')
+        manifest['ledger_sha256'] = hashlib.sha256(ledger_text.encode('utf-8')).hexdigest()
+        save(manifest_path, manifest)
         save(responsibility_path, responsibility_doc)
 
     summary = {
