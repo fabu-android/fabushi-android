@@ -8,7 +8,6 @@ use super::conversation_state::{
     RecentUserMessage, select_unconfirmed_user_messages,
 };
 use super::sand_prompt_markers::SAND_HIDDEN_PROMPT_MARKER;
-use super::system_prompt::build_user_message_address_note;
 
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +75,15 @@ where
             return None;
         }
         delay(poll_ms.max(1));
+    }
+}
+
+fn build_user_message_address_note(message_id: Option<&str>) -> String {
+    let id = message_id.unwrap_or_default().trim();
+    if id.is_empty() {
+        String::new()
+    } else {
+        format!("[{id}]")
     }
 }
 
