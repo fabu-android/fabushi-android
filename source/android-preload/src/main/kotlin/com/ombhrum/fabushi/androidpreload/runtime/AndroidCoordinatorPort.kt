@@ -339,6 +339,16 @@ data class AndroidSecretSubmissionResult(
     val reconcileRequired: Boolean = false,
 )
 
+data class AndroidTranscriptReactionResult(
+    val accepted: Boolean,
+    val changed: Boolean,
+    val enabled: Boolean,
+    val generation: Long,
+    val operationId: String? = null,
+    val reason: String? = null,
+    val feedOutcomeUnknown: Boolean = false,
+)
+
 data class AndroidToolResultCard(
     val kind: String,
     val toolCallId: String,
@@ -1092,6 +1102,15 @@ interface AndroidCoordinatorPort {
         generation: Long,
     ): AndroidSecretSubmissionResult =
         error("Transcript secret submission is unavailable on this Coordinator port")
+    fun setTranscriptReaction(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+        emoji: String,
+        enabled: Boolean,
+        generation: Long,
+    ): AndroidTranscriptReactionResult =
+        error("Transcript reaction mutation is unavailable on this Coordinator port")
     fun featureInterrupt(params: JSONObject): JSONObject
     fun featureApprovalResolve(params: JSONObject): JSONObject
     fun featureApprovalStatus(approvalId: String): Boolean =

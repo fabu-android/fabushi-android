@@ -422,6 +422,7 @@ internal fun GrokBotChatAndroid(
     onRespondToWidget: (String, String) -> Unit,
     onDismissWidget: (String) -> Unit,
     onSubmitSecret: (String, String) -> Unit,
+    onSetTranscriptReaction: (String, String, Boolean) -> Unit,
     onStop: () -> Unit,
     onResolveApproval: (MobileApprovalDecision) -> Unit,
     onMessageTargetConsumed: (String) -> Unit,
@@ -859,6 +860,38 @@ internal fun GrokBotChatAndroid(
                                 }
                                 MobileTranscriptAttachments(entry.attachments, alignEnd = false)
                             }
+                        }
+                    }
+                }
+                if (entry.kind == MobileChatEntryKind.MESSAGE && !entry.streaming) {
+                    val reactions = entry.transcriptReactions
+                    Row(
+                        Modifier.padding(top = 3.dp, start = if (entry.role == MobileChatRole.USER) 0.dp else 27.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        reactions.forEach { reaction ->
+                            Text(
+                                reaction.emoji,
+                                color = if (reaction.reactedByMe) Color(0xFF2A92FE) else GrokMobileMuted,
+                                fontSize = 15.sp,
+                                modifier = Modifier
+                                    .clickable {
+                                        onSetTranscriptReaction(entry.id, reaction.emoji, !reaction.reactedByMe)
+                                    }
+                                    .padding(horizontal = 5.dp, vertical = 3.dp)
+                                    .testTag("mobile-bot-reaction-" + entry.id + "-" + reaction.emoji.hashCode()),
+                            )
+                        }
+                        if (reactions.none { it.emoji == "👍" }) {
+                            Text(
+                                "👍",
+                                color = GrokMobileMuted,
+                                fontSize = 15.sp,
+                                modifier = Modifier
+                                    .clickable { onSetTranscriptReaction(entry.id, "👍", true) }
+                                    .padding(horizontal = 5.dp, vertical = 3.dp)
+                                    .testTag("mobile-bot-reaction-add-" + entry.id),
+                            )
                         }
                     }
                 }

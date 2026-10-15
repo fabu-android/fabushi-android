@@ -294,6 +294,7 @@ data class MobileBotUiState(
     val approvalCleanup: MobileApprovalCleanupState = MobileApprovalCleanupState(),
     val widgetPendingEntryIds: Set<String> = emptySet(),
     val secretPendingEntryIds: Set<String> = emptySet(),
+    val reactionPendingEntryIds: Set<String> = emptySet(),
     val editorSuggestions: MobileEditorSuggestionSnapshot = MobileEditorSuggestionSnapshot(),
     val modelCatalog: MobileModelCatalogState = MobileModelCatalogState(),
     val messageTargetId: String? = null,
@@ -693,6 +694,8 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                         mutableState.value.copy(
                             widgetPendingEntryIds = emptySet(),
                             secretPendingEntryIds = emptySet(),
+                reactionPendingEntryIds = emptySet(),
+                            reactionPendingEntryIds = emptySet(),
                             approvalCleanup = MobileApprovalCleanupState(),
                             editorSuggestions = MobileEditorSuggestionSnapshot(),
                             modelCatalog = MobileModelCatalogState(),
@@ -1556,6 +1559,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
                 secretPendingEntryIds = emptySet(),
+                reactionPendingEntryIds = emptySet(),
                 editorSuggestions = MobileEditorSuggestionSnapshot(),
                 messageTargetId = targetEntryId,
                 error = null,
@@ -1862,6 +1866,7 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                 approvalCleanup = MobileApprovalCleanupState(),
                 widgetPendingEntryIds = emptySet(),
                 secretPendingEntryIds = emptySet(),
+                reactionPendingEntryIds = emptySet(),
                 editorSuggestions = MobileEditorSuggestionSnapshot(),
                 messageTargetId = null,
                 error = null,
@@ -2940,6 +2945,58 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
                     )
                 }
             }
+        }
+    }
+
+    fun setTranscriptReaction(entryId: String, emoji: String, enabled: Boolean) {
+        val snapshot = mutableState.value
+        val bot = snapshot.activeBot ?: return
+        val cleanEmoji = emoji.trim()
+        if (bot.miniAppId != null || entryId.isBlank() || cleanEmoji.isBlank()) return
+        if (cleanEmoji.toByteArray(Charsets.UTF_8).size > 64) return
+        val message = snapshot.messages.firstOrNull { it.id == entryId } ?: return
+        if (message.kind != MobileChatEntryKind.MESSAGE || message.streaming) return
+        val pendingKey = "$entryId\u0000$cleanEmoji"
+        if (pendingKey in snapshot.reactionPendingEntryIds) return
+        val accountSlot = rosterSelectionAccountSlot
+        val scopeGeneration = sendPresentationGeneration
+        commitState(snapshot.copy(reactionPendingEntryIds = snapshot.reactionPendingEntryIds + pendingKey, error = null))
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    coordinator.setTranscriptReaction(
+                        accountSlot = accountSlot,
+                        agentId = bot.id,
+                        entryId = entryId,
+                        emoji = cleanEmoji,
+                        enabled = enabled,
+                        generation = scopeGeneration,
+                    )
+                }
+            }
+            if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+            var reconcileFailure: Throwable? = null
+            try {
+                refreshDurableSendProjection(bot.id, accountSlot, scopeGeneration)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                reconcileFailure = error
+            }
+            if (!isCurrentSendScope(bot.id, accountSlot, scopeGeneration)) return@launch
+            val settled = result.getOrNull()
+            commitState(
+                mutableState.value.copy(
+                    reactionPendingEntryIds = mutableState.value.reactionPendingEntryIds - pendingKey,
+                    error = when {
+                        result.isFailure -> result.exceptionOrNull()?.message ?: "Reaction outcome is uncertain; Fabushi will not retry it automatically"
+                        settled?.accepted != true -> settled?.reason ?: "Reaction was rejected"
+                        settled.feedOutcomeUnknown -> settled.reason ?: "Reaction was saved, but Agent feed delivery is uncertain; it will not be retried automatically"
+                        reconcileFailure != null -> reconcileFailure?.message ?: "Reaction reconciliation failed"
+                        else -> null
+                    },
+                ),
+            )
         }
     }
 

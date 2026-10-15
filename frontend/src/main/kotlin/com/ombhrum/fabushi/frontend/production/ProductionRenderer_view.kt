@@ -1137,6 +1137,7 @@ internal fun ProductionRenderer(
                             onRespondToWidget = botModel::respondToWidget,
                             onDismissWidget = botModel::dismissWidget,
                             onSubmitSecret = botModel::submitSecret,
+                            onSetTranscriptReaction = botModel::setTranscriptReaction,
                             onStop = botModel::stop,
                             onResolveApproval = botModel::resolveApproval,
                             onMessageTargetConsumed = botModel::consumeMessageTarget,

@@ -242,6 +242,11 @@ data class MobileTranscriptAttachment(
     val mimeType: String? = null,
 )
 
+data class MobileTranscriptReaction(
+    val emoji: String,
+    val reactedByMe: Boolean,
+)
+
 data class MobileChatMessage(
     val id: String,
     val role: MobileChatRole,
@@ -275,6 +280,7 @@ data class MobileChatMessage(
     val transcriptSourceKind: String? = null,
     val transcriptPresentationKind: String? = null,
     val hasTranscriptReaction: Boolean = false,
+    val transcriptReactions: List<MobileTranscriptReaction> = emptyList(),
     val hasTranscriptThreadChip: Boolean = false,
 )
 

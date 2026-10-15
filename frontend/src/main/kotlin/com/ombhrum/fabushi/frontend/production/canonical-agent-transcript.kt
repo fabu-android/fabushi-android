@@ -73,8 +73,20 @@ private fun canonicalTranscriptPresentationKind(entry: org.json.JSONObject): Str
         ?.takeIf(String::isNotEmpty)
 }
 
+private fun canonicalTranscriptReactions(entry: org.json.JSONObject): List<MobileTranscriptReaction> {
+    val rows = entry.optJSONArray("reactions") ?: return emptyList()
+    val byEmoji = linkedMapOf<String, Boolean>()
+    for (index in 0 until rows.length()) {
+        val reaction = rows.optJSONObject(index) ?: continue
+        val emoji = reaction.optString("emoji").trim()
+        if (emoji.isBlank()) continue
+        byEmoji[emoji] = byEmoji[emoji] == true || reaction.optString("by") == "me"
+    }
+    return byEmoji.map { (emoji, reactedByMe) -> MobileTranscriptReaction(emoji, reactedByMe) }
+}
+
 private fun canonicalTranscriptHasReaction(entry: org.json.JSONObject): Boolean =
-    (entry.optJSONArray("reactions")?.length() ?: 0) > 0
+    canonicalTranscriptReactions(entry).isNotEmpty()
 
 private fun canonicalTranscriptAttachments(entry: org.json.JSONObject): List<MobileTranscriptAttachment> {
     val rows = entry.optJSONArray("attachments") ?: return emptyList()
@@ -140,6 +152,7 @@ internal fun canonicalMobileTranscriptForAgent(
                     transcriptSourceKind = entry.optString("sourceKind").trim().takeIf(String::isNotEmpty),
                     transcriptPresentationKind = canonicalTranscriptPresentationKind(entry),
                     hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                    transcriptReactions = canonicalTranscriptReactions(entry),
                     hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
                 )
             }
@@ -177,6 +190,7 @@ internal fun canonicalMobileTranscriptForAgent(
                         transcriptSourceKind = "send-message",
                         transcriptPresentationKind = if (text.urlCardUrl == null) "text" else "url-card",
                         hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                    transcriptReactions = canonicalTranscriptReactions(entry),
                         hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
                     )
                     continue
@@ -197,6 +211,7 @@ internal fun canonicalMobileTranscriptForAgent(
                             provided = entry.optBoolean("secretProvided", false),
                         ),
                         hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                    transcriptReactions = canonicalTranscriptReactions(entry),
                         hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
                     )
                     continue
@@ -236,6 +251,7 @@ internal fun canonicalMobileTranscriptForAgent(
                         dismissed = entry.optBoolean("widgetDismissed", false),
                     ),
                     hasTranscriptReaction = canonicalTranscriptHasReaction(entry),
+                    transcriptReactions = canonicalTranscriptReactions(entry),
                     hasTranscriptThreadChip = entry.optBoolean("hasThreadChip", false),
                 )
             }

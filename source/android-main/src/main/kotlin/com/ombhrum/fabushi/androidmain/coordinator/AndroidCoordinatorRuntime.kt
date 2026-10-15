@@ -2493,6 +2493,38 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
         )
     }
 
+    override fun setTranscriptReaction(
+        accountSlot: String?,
+        agentId: String,
+        entryId: String,
+        emoji: String,
+        enabled: Boolean,
+        generation: Long,
+    ): AndroidTranscriptReactionResult {
+        val result = host.request(
+            "feature.transcript.reaction.set",
+            JSONObject()
+                .putNullable("accountSlot", accountSlot)
+                .put("agentId", agentId)
+                .put("entryId", entryId)
+                .put("emoji", emoji)
+                .put("enabled", enabled)
+                .put("generation", generation),
+        )
+        check(result.optLong("generation", -1L) == generation) {
+            "Transcript reaction returned a stale generation"
+        }
+        return AndroidTranscriptReactionResult(
+            accepted = result.optBoolean("accepted", false),
+            changed = result.optBoolean("changed", false),
+            enabled = result.optBoolean("enabled", enabled),
+            generation = generation,
+            operationId = result.optString("operationId").takeIf(String::isNotBlank),
+            reason = result.optString("reason").takeIf(String::isNotBlank),
+            feedOutcomeUnknown = result.optBoolean("feedOutcomeUnknown", false),
+        )
+    }
+
     override fun featureInterrupt(params: JSONObject) = host.request("feature.interrupt", params)
     override fun featureApprovalResolve(params: JSONObject) = host.request("feature.approval.resolve", params)
     override fun featureApprovalStatus(approvalId: String): Boolean {

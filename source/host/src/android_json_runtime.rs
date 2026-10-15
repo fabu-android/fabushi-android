@@ -11136,6 +11136,158 @@ impl AndroidJsonHost {
         }))
     }
 
+    fn transcript_reaction_set(&mut self, params: &Value) -> Result<Value, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let account_slot = params
+            .get("accountSlot")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty());
+        let entry_id = required_string(params, "entryId")?;
+        let agent_id = required_string(params, "agentId")?;
+        let emoji = required_string(params, "emoji")?.trim();
+        if emoji.is_empty() || emoji.as_bytes().len() > 64 || emoji.chars().any(char::is_control) {
+            return Err("transcript reaction emoji is invalid".into());
+        }
+        let enabled = params
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .ok_or("transcript reaction enabled flag is required")?;
+        let generation = params
+            .get("generation")
+            .and_then(Value::as_u64)
+            .filter(|value| *value > 0)
+            .ok_or("transcript reaction generation is required")?;
+
+        let current = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .entry(entry_id)
+            .ok_or("reaction transcript entry was not found")?;
+        if current.get("agentId").and_then(Value::as_str) != Some(agent_id) {
+            return Err("reaction entry is fenced to another Agent".into());
+        }
+        if let Some(entry_slot) = current.get("accountSlot").and_then(Value::as_str) {
+            if Some(entry_slot) != account_slot {
+                return Err("reaction entry is fenced to another account slot".into());
+            }
+        }
+        if let Some(entry_fence) = current.get("accountFence").and_then(Value::as_str) {
+            if entry_fence != account_fence {
+                return Err("reaction entry is fenced to another account generation".into());
+            }
+        }
+        let kind = current.get("kind").and_then(Value::as_str);
+        if !matches!(kind, Some("message" | "send-message")) {
+            return Err("transcript reaction target is not a message".into());
+        }
+        let current_reactions = current
+            .get("reactions")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let already_enabled = current_reactions.iter().any(|reaction| {
+            reaction.get("emoji").and_then(Value::as_str) == Some(emoji)
+                && reaction.get("by").and_then(Value::as_str) == Some("me")
+        });
+        if already_enabled == enabled {
+            return Ok(json!({
+                "accepted":true,
+                "changed":false,
+                "enabled":enabled,
+                "generation":generation,
+                "entry":current,
+            }));
+        }
+
+        let emoji_owned = emoji.to_string();
+        let updated = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .update_entry(entry_id, |entry| {
+                let mut next = entry.clone();
+                let mut reactions = next
+                    .get("reactions")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                reactions.retain(|reaction| {
+                    !(reaction.get("emoji").and_then(Value::as_str) == Some(emoji_owned.as_str())
+                        && reaction.get("by").and_then(Value::as_str) == Some("me"))
+                });
+                if enabled {
+                    reactions.push(json!({"emoji":emoji_owned,"by":"me"}));
+                }
+                if reactions.is_empty() {
+                    next.as_object_mut().expect("transcript entry must be object").remove("reactions");
+                } else {
+                    next["reactions"] = Value::Array(reactions);
+                }
+                next
+            })
+            .map_err(|error| format!("failed to persist transcript reaction: {error}"))?
+            .ok_or("reaction transcript entry disappeared before commit")?;
+
+        let is_user_message = current.get("kind").and_then(Value::as_str) == Some("message")
+            && current.get("role").and_then(Value::as_str) == Some("user");
+        let mut operation_id = None;
+        let mut feed_outcome_unknown = false;
+        let mut reason = None;
+        if enabled && !is_user_message {
+            let quote = current
+                .get("content")
+                .and_then(Value::as_str)
+                .or_else(|| current.pointer("/message/text/content").and_then(Value::as_str))
+                .or_else(|| current.pointer("/message/content").and_then(Value::as_str))
+                .unwrap_or("message")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(240)
+                .collect::<String>();
+            let cue = format!(
+                "[The user reacted {emoji} to your message: \"{quote}\". You don't need to reply; act on it only if it's useful (e.g. acknowledge, adjust, or continue).]"
+            );
+            match self.feature_execute(&json!({"command":{
+                "type":"chat.send",
+                "requestId":format!("reaction:{agent_id}:{entry_id}:{generation}:{emoji}"),
+                "agentId":agent_id,
+                "text":cue,
+                "hidden":true,
+                "appendUserMessage":false,
+                "awaitTurn":false,
+                "requestSource":"handoff-resume",
+            }})) {
+                Ok(continuation) => {
+                    operation_id = continuation
+                        .get("operationId")
+                        .and_then(Value::as_str)
+                        .filter(|value| !value.trim().is_empty())
+                        .map(str::to_string);
+                }
+                Err(error) => {
+                    // The durable reaction is already committed. Never replay it or the hidden
+                    // handoff automatically when delivery outcome is uncertain; presentation
+                    // reconciles the canonical transcript instead.
+                    feed_outcome_unknown = true;
+                    reason = Some(error);
+                }
+            }
+        }
+        Ok(json!({
+            "accepted":true,
+            "changed":true,
+            "enabled":enabled,
+            "generation":generation,
+            "operationId":operation_id,
+            "feedOutcomeUnknown":feed_outcome_unknown,
+            "reason":reason,
+            "entry":updated,
+        }))
+    }
+
     fn widget_respond(&mut self, params: &Value) -> Result<Value, String> {
         let account_fence = self.current_turn_account_fence()?;
         let account_slot = params
@@ -20249,6 +20401,55 @@ mod widget_action_tests {
         assert_eq!(entry["secretProvided"], true);
         let durable = std::fs::read_to_string(reopened.transcript.lock().unwrap().path()).unwrap();
         assert!(!durable.contains("secret-token-must-never-enter-native-transcript"));
+    }
+
+    #[test]
+    fn agent_reaction_is_desired_state_durable_idempotent_and_account_fenced() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let fence = host.current_turn_account_fence().unwrap();
+        host.transcript.lock().unwrap().append_entry(json!({
+            "id":"assistant-reaction-a",
+            "kind":"message",
+            "role":"assistant",
+            "agentId":"agent-a",
+            "accountFence":fence,
+            "content":"done"
+        })).unwrap();
+
+        let first = host.dispatch("feature.transcript.reaction.set", &json!({
+            "agentId":"agent-a","entryId":"assistant-reaction-a","emoji":"👍","enabled":true,"generation":7
+        })).unwrap();
+        assert_eq!(first["accepted"], true);
+        assert_eq!(first["changed"], true);
+        assert_eq!(first["enabled"], true);
+
+        let duplicate = host.dispatch("feature.transcript.reaction.set", &json!({
+            "agentId":"agent-a","entryId":"assistant-reaction-a","emoji":"👍","enabled":true,"generation":7
+        })).unwrap();
+        assert_eq!(duplicate["changed"], false);
+        assert_eq!(duplicate["entry"]["reactions"].as_array().unwrap().len(), 1);
+        assert!(host.dispatch("feature.transcript.reaction.set", &json!({
+            "agentId":"agent-b","entryId":"assistant-reaction-a","emoji":"👍","enabled":false,"generation":7
+        })).is_err());
+
+        let removed = host.dispatch("feature.transcript.reaction.set", &json!({
+            "agentId":"agent-a","entryId":"assistant-reaction-a","emoji":"👍","enabled":false,"generation":8
+        })).unwrap();
+        assert_eq!(removed["changed"], true);
+        assert!(removed["entry"].get("reactions").is_none());
+
+        host.dispatch("feature.transcript.reaction.set", &json!({
+            "agentId":"agent-a","entryId":"assistant-reaction-a","emoji":"🔥","enabled":true,"generation":9
+        })).unwrap();
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        let snapshot = reopened.dispatch("feature.transcript.snapshot", &json!({})).unwrap();
+        let entry = snapshot.as_array().unwrap().iter().find(|row| row["id"] == "assistant-reaction-a").unwrap();
+        assert_eq!(entry["reactions"][0]["emoji"], "🔥");
+        assert_eq!(entry["reactions"][0]["by"], "me");
     }
 
     #[test]
