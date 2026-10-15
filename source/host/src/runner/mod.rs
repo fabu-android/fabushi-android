@@ -17,6 +17,7 @@ pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod remote_routed_tools;
 pub mod reaction_routed_tool;
+pub mod spotlight_routed_tools;
 pub mod local_routed_tools;
 pub mod mcp_meta_routed_tools;
 pub mod listener_connect_cards;
@@ -116,6 +117,7 @@ pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTur
 pub(crate) use web_routed_tools::with_web_routed_tools;
 pub(crate) use generate_image_routed_tools::with_generate_image_routed_tools;
 pub(crate) use reaction_routed_tool::{with_reaction_routed_tool, ReactionDeliveryCounter};
+pub(crate) use spotlight_routed_tools::{with_spotlighted_routed_tools, spotlight_prompt_section};
 pub(crate) use mcp_meta_routed_tools::{with_mcp_meta_routed_tools, McpMetaCallTarget, McpMetaReviewPreflight};
 
 pub(crate) use remote_routed_tools::{

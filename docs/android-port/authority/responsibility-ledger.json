@@ -58617,6 +58617,68 @@
       "artifact": "Run 38761115983 / job 116512325830 is exact-head Rust/Host evidence; no release artifact claimed.",
       "verification_status": "not-verified",
       "notes": "Implementation is closed at Rust Host/source responsibility level, but verification remains open until strict full-source closure plus final packaged/protected-device acceptance. This does not close the broader AUTOMATION-CLOUD-SYNC-ANDROID-001 cloud relay/fire responsibility or frontend TRANSCRIPT-LISTENER-INTEGRATIONS-ANDROID-001 presentation/connect-flow responsibility."
+    },
+    {
+      "responsibility_id": "TOOLS-SPOTLIGHT-UNTRUSTED-CONTENT-ANDROID-001",
+      "domain": "tools-security",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/sand_spotlight_tools.rs",
+          "blob_sha": "7b9976a7670a872d9f37497eb4a1f8cbe1880098",
+          "symbols": [
+            "SpotlightedRoutedToolBridge",
+            "spotlight_tool_result_value",
+            "spotlight_prompt_section"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Fence external tool content as untrusted data, neutralize forged fence markers, and prevent that data from authorizing side effects.",
+      "source_owner": "Desktop Runner spotlight fence",
+      "direct_callers": [
+        "turn_toolset::fence_turn_toolset",
+        "runner_prompt_glue"
+      ],
+      "downstream_dependencies": [
+        "routed tool results",
+        "root Agent system prompt",
+        "sand_spotlight experiment gate"
+      ],
+      "state_owner": "Rust Host per-turn tool/prompt composition",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "cursor_untrusted_data_1337",
+        "cursor_untrusted_data_redacted"
+      ],
+      "visible_effect": "Agents may read external content without treating embedded text as user/system authority.",
+      "failure_behavior": [
+        "Non-content results pass through unchanged",
+        "forged fence markers are redacted case-insensitively"
+      ],
+      "cancellation_behavior": "Preserves wrapped tool cancellation semantics.",
+      "retry_semantics": "Preserves wrapped tool retry semantics.",
+      "idempotency_semantics": "Pure deterministic transformation.",
+      "process_death_recovery": "Reconstructed per turn; no durable state.",
+      "account_fencing": "Inherited from the wrapped account-fenced routed tool chain.",
+      "security_boundary": "Applied inside Rust Host after tool execution and before provider consumption.",
+      "android_disposition": "direct-port",
+      "android_target": [
+        "source/host/src/runner/spotlight_routed_tools.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host routed-tool composition and root prompt",
+      "platform_delta": "AndroidRoutedToolBridge type adaptation only.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost snapshots sand_spotlight, appends the prompt section, and wraps the completed routed-tool chain.",
+      "unit_test": "Focused Rust tests cover result fencing, forged-marker redaction, mixed content, source sanitization and prompt guidance; exact-head Actions pending.",
+      "contract_test": "Desktop fence/redaction tokens preserved exactly; exact-head Actions pending.",
+      "integration_test": "required on exact-head Host routed-tool journey",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with an external-content tool journey",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Production implementation is present; exact-head CI/package/device evidence is still required.",
+      "android_head_at_update": "09ab9cca4a1dd8e170274d9acf247b2cdbaece4f"
     }
   ],
   "traceability": {

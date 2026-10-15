@@ -197,6 +197,7 @@ use crate::runner::{
     with_box_help_routed_tool, with_generate_image_routed_tools, with_local_file_tools,
     with_remote_routed_tools, with_web_routed_tools, WAITING_USER_CANCELLATION_PREFIX,
     with_reaction_routed_tool, ReactionDeliveryCounter,
+    with_spotlighted_routed_tools, spotlight_prompt_section,
     with_mcp_meta_routed_tools, McpMetaCallTarget, McpMetaReviewPreflight,
     AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry,
     RemoteAutoReviewDecision, RemoteAutoReviewPreflight, RemoteDispatchBinding,
@@ -12508,6 +12509,11 @@ impl AndroidJsonHost {
             &mut system_instructions,
             &remote_prompt_state,
         );
+        let spotlight_enabled = self.experiments.check_feature_gate("sand_spotlight");
+        if spotlight_enabled {
+            system_instructions.push_str("\n\n");
+            system_instructions.push_str(&spotlight_prompt_section(true));
+        }
         if let Some(existing) = self
             .turn_journal
             .lock()
@@ -13868,6 +13874,11 @@ impl AndroidJsonHost {
                         agent_attachment_root.clone(),
                         turn_attachments.clone(),
                     )
+                };
+                let routed_subagent_tools = if spotlight_enabled {
+                    with_spotlighted_routed_tools(routed_subagent_tools)
+                } else {
+                    routed_subagent_tools
                 };
 
                 let agent_v1_observation_owner = Arc::new(
