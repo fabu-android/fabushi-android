@@ -169,6 +169,7 @@ impl RemoteExecutionBackend for RemoteBoxDiskPressureBackend {
         &mut self,
         _identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
         Self::parse_request(request)?;
         Ok(RemoteBackendReconcileOutcome::Completed {
@@ -180,6 +181,7 @@ impl RemoteExecutionBackend for RemoteBoxDiskPressureBackend {
         &mut self,
         _identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
         Self::parse_request(request)?;
         Ok(RemoteBackendCancelOutcome::Confirmed)

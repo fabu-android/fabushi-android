@@ -214,6 +214,7 @@ impl RemoteExecutionBackend for ProductionBoxControlBackend {
         &mut self,
         _identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
         if !Self::reconcile_is_safe(request) {
             return Ok(RemoteBackendReconcileOutcome::Pending);
@@ -226,6 +227,7 @@ impl RemoteExecutionBackend for ProductionBoxControlBackend {
         &mut self,
         _identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
         if Self::reconcile_is_safe(request) {
             Ok(RemoteBackendCancelOutcome::Confirmed)

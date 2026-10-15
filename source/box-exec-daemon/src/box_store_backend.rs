@@ -1087,6 +1087,7 @@ impl RemoteExecutionBackend for RemoteBoxStoreBackend {
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
         self.parse_request(request)?;
         let fingerprint = Self::request_fingerprint(identity, request);
@@ -1109,6 +1110,7 @@ impl RemoteExecutionBackend for RemoteBoxStoreBackend {
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
         self.parse_request(request)?;
         let fingerprint = Self::request_fingerprint(identity, request);

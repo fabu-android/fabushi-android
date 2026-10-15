@@ -52,7 +52,7 @@ pub trait RemoteExecutionAuthorizer: Send {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RemoteBackendStartOutcome {
-    Accepted,
+    Accepted { progress_json: Option<String> },
     Completed { output_json: String },
     Rejected { reason: String },
     OutcomeUnknown { reason: String },
@@ -82,12 +82,14 @@ pub trait RemoteExecutionBackend: Send {
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError>;
 
     fn cancel(
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError>;
 }
 
@@ -460,7 +462,19 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
         let outcome = self.backend.start(&identity, &execution);
         if let Some(record) = self.records.get_mut(&request.operation_id) {
             match outcome {
-                Ok(RemoteBackendStartOutcome::Accepted) => {}
+                Ok(RemoteBackendStartOutcome::Accepted { progress_json }) => {
+                    if let Some(progress_json) = progress_json {
+                        if validate_json_payload("progress", &progress_json, MAX_PROGRESS_BYTES)
+                            .is_ok()
+                        {
+                            record.progress_json = Some(progress_json);
+                        } else {
+                            record.state = StoredState::OutcomeUnknown;
+                            record.error =
+                                Some("backend returned malformed accepted progress".into());
+                        }
+                    }
+                }
                 Ok(RemoteBackendStartOutcome::Completed { output_json }) => {
                     if validate_json_payload("output", &output_json, MAX_OUTPUT_BYTES).is_ok() {
                         record.state = StoredState::Completed;
@@ -541,7 +555,11 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
 
         if matches!(existing.state, StoredState::Running | StoredState::OutcomeUnknown) {
             let execution = existing.request();
-            match self.backend.reconcile(&identity, &execution) {
+            let progress_json = existing.progress_json.clone();
+            match self
+                .backend
+                .reconcile(&identity, &execution, progress_json.as_deref())
+            {
                 Ok(RemoteBackendReconcileOutcome::Pending) => {}
                 Ok(RemoteBackendReconcileOutcome::Completed { output_json }) => {
                     if validate_json_payload("output", &output_json, MAX_OUTPUT_BYTES).is_ok() {
@@ -624,7 +642,11 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
             }
         } else {
             let execution = existing.request();
-            match self.backend.cancel(&identity, &execution) {
+            let progress_json = existing.progress_json.clone();
+            match self
+                .backend
+                .cancel(&identity, &execution, progress_json.as_deref())
+            {
                 Ok(RemoteBackendCancelOutcome::Confirmed) | Err(ExecutionError::Cancelled) => {
                     if let Some(record) = self.records.get_mut(&identity.operation_id) {
                         record.state = StoredState::Cancelled;
@@ -998,7 +1020,9 @@ mod tests {
                 starts: 0,
                 cancels: 0,
                 reconciles: 0,
-                start_outcome: RemoteBackendStartOutcome::Accepted,
+                start_outcome: RemoteBackendStartOutcome::Accepted {
+                    progress_json: None,
+                },
                 reconcile_outcomes: VecDeque::new(),
             }
         }
@@ -1018,6 +1042,7 @@ mod tests {
             &mut self,
             _identity: &RemoteRequestIdentity,
             _request: &ExecutionRequest,
+            _progress_json: Option<&str>,
         ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
             self.reconciles += 1;
             Ok(self
@@ -1030,6 +1055,7 @@ mod tests {
             &mut self,
             _identity: &RemoteRequestIdentity,
             _request: &ExecutionRequest,
+            _progress_json: Option<&str>,
         ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
             self.cancels += 1;
             Ok(RemoteBackendCancelOutcome::Confirmed)

@@ -680,7 +680,18 @@ impl CloudAgentExecutor for ProductionCloudAgentExecutor {
         if matches!(request.action, CloudAgentAction::Watch) {
             return Ok(match self.watch_once(identity, request)? {
                 Some(output_json) => RemoteBackendStartOutcome::Completed { output_json },
-                None => RemoteBackendStartOutcome::Accepted,
+                None => RemoteBackendStartOutcome::Accepted {
+                    progress_json: None,
+                },
+            });
+        }
+        if request.action == CloudAgentAction::Launch {
+            // Launch is intentionally asynchronous. Persist the real backend agent/run identity
+            // as Remote operation progress; reconciliation of this same authorized operation
+            // watches completion and never replays launch.
+            let progress_json = self.mutate_action(identity, request)?;
+            return Ok(RemoteBackendStartOutcome::Accepted {
+                progress_json: Some(progress_json),
             });
         }
         let output_json = if matches!(

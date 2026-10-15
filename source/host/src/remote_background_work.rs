@@ -391,6 +391,7 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 2,
             remote_ack_id: Some("ack-1".into()),
+            progress_json: None,
             terminal_output_json: None,
         }
     }

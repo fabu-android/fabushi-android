@@ -123,6 +123,7 @@ impl<E: BoxStoreSyncExecutor> RemoteExecutionBackend for BoxStoreSyncBackend<E> 
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
         let request = BoxStoreSyncRequest::parse(request)?;
         self.executor.reconcile(identity, &request)
@@ -132,6 +133,7 @@ impl<E: BoxStoreSyncExecutor> RemoteExecutionBackend for BoxStoreSyncBackend<E> 
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
         let request = BoxStoreSyncRequest::parse(request)?;
         self.executor.cancel(identity, &request)

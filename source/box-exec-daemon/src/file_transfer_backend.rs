@@ -454,6 +454,7 @@ impl RemoteExecutionBackend for RemoteFileTransferBackend {
         &mut self,
         _identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
         let plan = self.parse(request)?;
         match self.reconcile_completed(&plan)? {
@@ -466,6 +467,7 @@ impl RemoteExecutionBackend for RemoteFileTransferBackend {
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
         let plan = self.parse(request)?;
         if self.reconcile_completed(&plan)?.is_some() {

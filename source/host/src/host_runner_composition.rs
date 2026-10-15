@@ -206,6 +206,7 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                 created_at_ms: now_ms,
                 updated_at_ms: now_ms,
                 remote_ack_id: None,
+                progress_json: None,
                 terminal_output_json: None,
             })
             .map_err(ExecutionError::Transport)
@@ -285,7 +286,10 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
             .map_err(ExecutionError::Transport)?;
 
         match self.runner.execute(context, request.clone())? {
-            RemoteDispatchOutcome::Accepted { ack_id } => {
+            RemoteDispatchOutcome::Accepted {
+                ack_id,
+                progress_json,
+            } => {
                 self.journal
                     .acknowledge(
                         &request.operation_id,
@@ -293,6 +297,7 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                         &context.account_fence,
                         context.account_epoch,
                         &ack_id,
+                        progress_json,
                         now_ms,
                     )
                     .map_err(ExecutionError::Transport)?;
@@ -308,6 +313,7 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                         &context.account_fence,
                         context.account_epoch,
                         &ack_id,
+                        None,
                         now_ms,
                     )
                     .map_err(ExecutionError::Transport)?;
@@ -486,13 +492,27 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
                     "remote_execution_rejected:{reason}"
                 )))
             }
-            RemoteReconcileOutcome::Pending { .. } => Err(ExecutionError::Transport(
-                if was_acked {
+            RemoteReconcileOutcome::Pending {
+                progress_json,
+                ..
+            } => {
+                if let Some(progress_json) = progress_json {
+                    self.journal
+                        .update_progress(
+                            &context.operation_id,
+                            &context.account_fence,
+                            context.account_epoch,
+                            progress_json,
+                            now_ms,
+                        )
+                        .map_err(ExecutionError::Transport)?;
+                }
+                Err(ExecutionError::Transport(if was_acked {
                     "remote_execution_accepted_pending".into()
                 } else {
                     "remote_outcome_unknown_reconcile_pending".into()
-                },
-            )),
+                }))
+            },
         }
     }
 
@@ -924,6 +944,7 @@ mod tests {
                 executes: 0,
                 result: Some(RemoteDispatchOutcome::Accepted {
                     ack_id: "ack-async".into(),
+                    progress_json: None,
                 }),
             },
             journal,

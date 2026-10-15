@@ -106,6 +106,7 @@ impl<E: BrowserUaReconcileExecutor> RemoteExecutionBackend for BrowserUaReconcil
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
         let request = BrowserUaReconcileRequest::parse(request)?;
         self.executor.reconcile(identity, &request)
@@ -115,6 +116,7 @@ impl<E: BrowserUaReconcileExecutor> RemoteExecutionBackend for BrowserUaReconcil
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
         let request = BrowserUaReconcileRequest::parse(request)?;
         self.executor.cancel(identity, &request)

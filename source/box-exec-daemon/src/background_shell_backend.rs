@@ -159,7 +159,7 @@ impl ProductionBackgroundShellBackend {
         if terminal.exists() {
             // A prior process crossed the spawn boundary but has no terminal footer.
             // Never launch it again; only the original live owner may still settle it.
-            return Ok(RemoteBackendStartOutcome::Accepted);
+            return Ok(RemoteBackendStartOutcome::Accepted { progress_json: None });
         }
 
         let mut command = Command::new("/bin/sh");
@@ -261,7 +261,7 @@ impl ProductionBackgroundShellBackend {
             });
         }
 
-        Ok(RemoteBackendStartOutcome::Accepted)
+        Ok(RemoteBackendStartOutcome::Accepted { progress_json: None })
     }
 }
 
@@ -279,6 +279,7 @@ impl RemoteExecutionBackend for ProductionBackgroundShellBackend {
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
         let (_, shell_id, _, terminal) = self.parse(identity, request)?;
         match self.observe(&shell_id, &terminal)? {
@@ -293,6 +294,7 @@ impl RemoteExecutionBackend for ProductionBackgroundShellBackend {
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        _progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
         let (_, shell_id, _, terminal) = self.parse(identity, request)?;
         if self.observe(&shell_id, &terminal)?.is_some() {
@@ -520,7 +522,7 @@ mod tests {
         let request = request("op", "printf hello");
         assert_eq!(
             backend.start(&identity, &request).unwrap(),
-            RemoteBackendStartOutcome::Accepted
+            RemoteBackendStartOutcome::Accepted { progress_json: None }
         );
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         loop {
@@ -555,7 +557,7 @@ mod tests {
         let mut reopened = ProductionBackgroundShellBackend::open(backend.config.clone()).unwrap();
         assert_eq!(
             reopened.start(&identity, &request).unwrap(),
-            RemoteBackendStartOutcome::Accepted
+            RemoteBackendStartOutcome::Accepted { progress_json: None }
         );
         assert_eq!(
             reopened.cancel(&identity, &request).unwrap(),

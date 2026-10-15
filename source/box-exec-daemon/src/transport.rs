@@ -90,6 +90,7 @@ impl RemoteExecutionContext {
 pub enum RemoteDispatchOutcome {
     Accepted {
         ack_id: String,
+        progress_json: Option<String>,
     },
     Completed {
         ack_id: String,
@@ -117,6 +118,7 @@ pub enum RemoteReconcileOutcome {
     },
     Pending {
         ack_id: Option<String>,
+        progress_json: Option<String>,
     },
 }
 
@@ -340,10 +342,14 @@ impl RemoteExecutionTransport for AuthenticatedRemoteHttpTransport {
         };
 
         let mut last_ack = None;
+        let mut last_progress = None;
         for attempt in 0..self.policy.reconcile_attempts.max(1) {
             match self.request(RECONCILE_PATH, context, &body) {
                 Ok(response) => {
                     last_ack = response.ack_id.clone().or(last_ack);
+                    if response.progress_json.is_some() {
+                        last_progress = response.progress_json.clone();
+                    }
                     match response.status.as_str() {
                         "completed" => {
                             let output_json = response.output_json.ok_or_else(|| {
@@ -409,7 +415,10 @@ impl RemoteExecutionTransport for AuthenticatedRemoteHttpTransport {
             }
         }
 
-        Ok(RemoteReconcileOutcome::Pending { ack_id: last_ack })
+        Ok(RemoteReconcileOutcome::Pending {
+            ack_id: last_ack,
+            progress_json: last_progress,
+        })
     }
 
     fn cancel(
@@ -505,6 +514,8 @@ struct WireResponse {
     ack_id: Option<String>,
     status: String,
     #[serde(default)]
+    progress_json: Option<String>,
+    #[serde(default)]
     output_json: Option<String>,
     #[serde(default)]
     error: Option<String>,
@@ -554,7 +565,10 @@ fn dispatch_from_wire(
                     "remote accepted execution omitted ack_id".into()
                 )
             })?;
-            Ok(RemoteDispatchOutcome::Accepted { ack_id })
+            Ok(RemoteDispatchOutcome::Accepted {
+                ack_id,
+                progress_json: response.progress_json,
+            })
         }
         "outcome_unknown" => Ok(RemoteDispatchOutcome::OutcomeUnknown {
             ack_id: response.ack_id,
@@ -782,7 +796,8 @@ mod tests {
         let outcome = transport.execute(&context, &execution_request()).unwrap();
         assert!(matches!(
             outcome,
-            RemoteDispatchOutcome::Accepted { ack_id } if ack_id == "ack-async"
+            RemoteDispatchOutcome::Accepted { ack_id, progress_json }
+                if ack_id == "ack-async" && progress_json.is_none()
         ));
         handle.join().unwrap();
         assert_eq!(captured.lock().unwrap().len(), 1);
@@ -883,7 +898,8 @@ mod tests {
         assert_eq!(
             outcome,
             RemoteReconcileOutcome::Pending {
-                ack_id: Some("ack-1".into())
+                ack_id: Some("ack-1".into()),
+                progress_json: None,
             }
         );
         handle.join().unwrap();

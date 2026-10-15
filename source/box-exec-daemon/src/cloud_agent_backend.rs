@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
 use serde::Deserialize;
+use serde_json::Value;
 
 use crate::server::{
     RemoteBackendCancelOutcome, RemoteBackendReconcileOutcome, RemoteBackendStartOutcome,
@@ -312,6 +313,47 @@ impl<E: CloudAgentExecutor> CloudAgentBackend<E> {
     }
 }
 
+fn continuation_watch_request(
+    progress_json: Option<&str>,
+) -> Result<Option<CloudAgentRequest>, ExecutionError> {
+    let Some(progress_json) = progress_json else {
+        return Ok(None);
+    };
+    let progress: Value = serde_json::from_str(progress_json).map_err(|error| {
+        ExecutionError::Transport(format!(
+            "invalid CloudAgent launch continuation progress: {error}"
+        ))
+    })?;
+    let agent_id = progress
+        .get("agentId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ExecutionError::Transport(
+                "CloudAgent launch continuation omitted agentId".into(),
+            )
+        })?
+        .to_string();
+    Ok(Some(CloudAgentRequest {
+        action: CloudAgentAction::Watch,
+        prompt: None,
+        images: Vec::new(),
+        repo_url: None,
+        starting_ref: None,
+        model: None,
+        model_params: BTreeMap::new(),
+        title: None,
+        environment: None,
+        interrupt: None,
+        agent_id: Some(agent_id),
+        scope: None,
+        include_archived: None,
+        limit: None,
+        confirm: None,
+    }))
+}
+
 impl<E: CloudAgentExecutor> RemoteExecutionBackend for CloudAgentBackend<E> {
     fn start(
         &mut self,
@@ -326,8 +368,17 @@ impl<E: CloudAgentExecutor> RemoteExecutionBackend for CloudAgentBackend<E> {
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        progress_json: Option<&str>,
     ) -> Result<RemoteBackendReconcileOutcome, ExecutionError> {
         let parsed = CloudAgentRequest::parse(request)?;
+        if parsed.action == CloudAgentAction::Launch {
+            let Some(watch) = continuation_watch_request(progress_json)? else {
+                // The launch may already have crossed the external backend boundary. Without
+                // durable launch progress, never replay it and never guess the agent identity.
+                return Ok(RemoteBackendReconcileOutcome::Pending);
+            };
+            return self.executor.reconcile(identity, &watch);
+        }
         self.executor.reconcile(identity, &parsed)
     }
 
@@ -335,8 +386,17 @@ impl<E: CloudAgentExecutor> RemoteExecutionBackend for CloudAgentBackend<E> {
         &mut self,
         identity: &RemoteRequestIdentity,
         request: &ExecutionRequest,
+        progress_json: Option<&str>,
     ) -> Result<RemoteBackendCancelOutcome, ExecutionError> {
         let parsed = CloudAgentRequest::parse(request)?;
+        if parsed.action == CloudAgentAction::Launch {
+            let Some(watch) = continuation_watch_request(progress_json)? else {
+                return Ok(RemoteBackendCancelOutcome::OutcomeUnknown {
+                    reason: "CloudAgent launch has no durable agent continuation identity".into(),
+                });
+            };
+            return self.executor.cancel(identity, &watch);
+        }
         self.executor.cancel(identity, &parsed)
     }
 }

@@ -30,6 +30,8 @@ pub struct RemoteExecutionRecord {
     pub created_at_ms: u64,
     pub updated_at_ms: u64,
     pub remote_ack_id: Option<String>,
+    #[serde(default)]
+    pub progress_json: Option<String>,
     pub terminal_output_json: Option<String>,
 }
 
@@ -143,6 +145,7 @@ impl RemoteExecutionJournal {
         current_account_fence: &str,
         current_account_epoch: u64,
         remote_ack_id: &str,
+        progress_json: Option<String>,
         now_ms: u64,
     ) -> Result<(), String> {
         validate_identity("remote acknowledgement", remote_ack_id)?;
@@ -167,6 +170,48 @@ impl RemoteExecutionJournal {
         }
         record.state = RemoteExecutionState::Acked;
         record.remote_ack_id = Some(remote_ack_id.into());
+        if progress_json.is_some() {
+            record.progress_json = progress_json;
+        }
+        record.updated_at_ms = now_ms;
+        self.persist()
+    }
+
+    pub fn update_progress(
+        &mut self,
+        operation_id: &str,
+        current_account_fence: &str,
+        current_account_epoch: u64,
+        progress_json: String,
+        now_ms: u64,
+    ) -> Result<(), String> {
+        if progress_json.len() > 256 * 1024 {
+            return Err("remote progress exceeds 256 KiB".into());
+        }
+        serde_json::from_str::<serde_json::Value>(&progress_json)
+            .map_err(|error| format!("remote progress is not valid JSON: {error}"))?;
+        let record = self
+            .state
+            .operations
+            .get_mut(operation_id)
+            .ok_or("remote operation is unknown")?;
+        if record.account_fence != current_account_fence
+            || record.account_epoch != current_account_epoch
+        {
+            return Err("stale remote progress from old account epoch".into());
+        }
+        if !matches!(
+            record.state,
+            RemoteExecutionState::Sent
+                | RemoteExecutionState::Acked
+                | RemoteExecutionState::OutcomeUnknown
+        ) {
+            return Err(format!(
+                "remote progress is invalid from state {:?}",
+                record.state
+            ));
+        }
+        record.progress_json = Some(progress_json);
         record.updated_at_ms = now_ms;
         self.persist()
     }
@@ -587,6 +632,7 @@ mod tests {
             created_at_ms: 1,
             updated_at_ms: 1,
             remote_ack_id: None,
+            progress_json: None,
             terminal_output_json: None,
         }
     }
@@ -609,7 +655,7 @@ mod tests {
             .mark_sent("op-1", "account-a:epoch-7", 7, "grant-1", 2)
             .unwrap();
         journal
-            .acknowledge("op-1", "req-1", "account-a:epoch-7", 7, "ack-1", 3)
+            .acknowledge("op-1", "req-1", "account-a:epoch-7", 7, "ack-1", None, 3)
             .unwrap();
         journal
             .complete(
@@ -643,6 +689,7 @@ mod tests {
                 "account-a:epoch-7",
                 7,
                 "ack-async",
+                None,
                 3,
             )
             .unwrap();
@@ -786,7 +833,7 @@ mod tests {
             .mark_sent("op-1", "account-a:epoch-7", 7, "grant-1", 2)
             .unwrap();
         assert!(journal
-            .acknowledge("op-1", "req-1", "account-b:epoch-8", 8, "ack-1", 3)
+            .acknowledge("op-1", "req-1", "account-b:epoch-8", 8, "ack-1", None, 3)
             .is_err());
         assert_eq!(journal.revoke_permission("grant-1", 4).unwrap(), 1);
         assert_eq!(
