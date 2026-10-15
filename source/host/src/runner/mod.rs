@@ -2,6 +2,7 @@ pub mod sand_prompt_markers;
 pub mod conversation_outline;
 pub mod agent_management;
 pub mod agent_v1_wire;
+pub mod agent_v1_observation;
 pub mod android_host_inference;
 pub mod background_work;
 pub mod durable_turn_journal;
@@ -53,8 +54,10 @@ pub use transient_stream_error::{
 
 pub use android_host_inference::{
     AndroidHostInferenceProvider, AndroidInferenceMode, AndroidRoutedToolBridge,
-    AndroidSubagentReviewDecision,
+    AndroidSubagentReviewDecision, AndroidToolCallObservation,
+    AndroidToolCallObservationSink,
 };
+pub use agent_v1_observation::DurableAgentV1ObservationOwner;
 
 pub use send_message::{
     with_send_message_tools, with_send_message_tools_counted_to_target, SEND_MESSAGE_TOOL_NAME,

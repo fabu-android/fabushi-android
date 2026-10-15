@@ -1,4 +1,5 @@
 use super::{
+    agent_v1_wire::encode_routed_tool_call_observation,
     production_turn_agent_owner::SAND_AGENT_MAX_STEPS,
     stream_attempt::{ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider},
 };
@@ -9,7 +10,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 pub const DEFAULT_DACHENG_RESPONSES_BASE_URL: &str =
@@ -43,6 +44,22 @@ pub trait AndroidRoutedToolBridge: Send + Sync {
     fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String>;
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AndroidToolCallObservation {
+    pub agent_id: String,
+    pub operation_id: String,
+    pub tool_name: String,
+    pub tool_call_id: String,
+    pub protobuf_bytes: Vec<u8>,
+    pub started_at_ms: u64,
+    pub completed_at_ms: u64,
+    pub succeeded: bool,
+}
+
+pub trait AndroidToolCallObservationSink: Send + Sync {
+    fn record(&self, observation: &AndroidToolCallObservation) -> Result<(), String>;
+}
+
 #[derive(Clone)]
 pub struct AndroidHostInferenceProvider {
     mode: AndroidInferenceMode,
@@ -51,6 +68,7 @@ pub struct AndroidHostInferenceProvider {
     default_model: String,
     cancelled: Arc<AtomicBool>,
     routed_tools: Option<Arc<dyn AndroidRoutedToolBridge>>,
+    tool_call_observation_sink: Option<Arc<dyn AndroidToolCallObservationSink>>,
     request_timeout: Option<Duration>,
 }
 
@@ -77,6 +95,7 @@ impl AndroidHostInferenceProvider {
             default_model: DEFAULT_SAND_MODEL_ID.into(),
             cancelled: Arc::new(AtomicBool::new(false)),
             routed_tools: None,
+            tool_call_observation_sink: None,
             request_timeout: None,
         }
     }
@@ -95,6 +114,7 @@ impl AndroidHostInferenceProvider {
             default_model: DEFAULT_SAND_MODEL_ID.into(),
             cancelled,
             routed_tools: None,
+            tool_call_observation_sink: None,
             request_timeout: None,
         })
     }
@@ -292,12 +312,21 @@ impl AndroidHostInferenceProvider {
             default_model: DEFAULT_SAND_MODEL_ID.into(),
             cancelled,
             routed_tools: None,
+            tool_call_observation_sink: None,
             request_timeout: None,
         }
     }
 
     pub fn with_routed_tools(mut self, bridge: Arc<dyn AndroidRoutedToolBridge>) -> Self {
         self.routed_tools = Some(bridge);
+        self
+    }
+
+    pub fn with_tool_call_observation_sink(
+        mut self,
+        sink: Arc<dyn AndroidToolCallObservationSink>,
+    ) -> Self {
+        self.tool_call_observation_sink = Some(sink);
         self
     }
 
@@ -539,15 +568,93 @@ impl AndroidHostInferenceProvider {
                 if self.cancelled.load(Ordering::Acquire) {
                     return Err(ProviderFailure::new("cancelled"));
                 }
+
+                let canonical_agent_v1_tool = matches!(
+                    name.as_str(),
+                    "SendMessage" | "send_message" | "CommunicateUpdate" | "communicate_update"
+                );
+                let observation_sink = if canonical_agent_v1_tool {
+                    Some(self.tool_call_observation_sink.as_ref().ok_or_else(|| ProviderFailure {
+                        message: "canonical agent.v1 tool observation sink is not bound".into(),
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
+                    })?)
+                } else {
+                    None
+                };
+
+                let started_at_ms = unix_time_ms();
+                if canonical_agent_v1_tool {
+                    // Validate canonical arguments and identifiers before a side effect starts.
+                    // The final observation below is encoded again with the real dispatch result.
+                    encode_routed_tool_call_observation(
+                        &name,
+                        &arguments,
+                        Err("preflight"),
+                        &call_id,
+                        started_at_ms,
+                        started_at_ms,
+                    )
+                    .map_err(|message| ProviderFailure {
+                        message,
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
+                    })?;
+                }
+
+                // From this point onward a bridge error can mean the side effect committed but
+                // its acknowledgement was lost. Never allow StreamAttemptHost to replay the turn.
                 routed_tool_dispatch_started = true;
-                let result = bridge
-                    .call_tool(&name, arguments, &call_id)
+                let dispatch = bridge.call_tool(&name, arguments.clone(), &call_id);
+                let completed_at_ms = unix_time_ms().max(started_at_ms);
+
+                if let Some(sink) = observation_sink {
+                    let encoded = encode_routed_tool_call_observation(
+                        &name,
+                        &arguments,
+                        dispatch.as_ref().map_err(String::as_str),
+                        &call_id,
+                        started_at_ms,
+                        completed_at_ms,
+                    )
                     .map_err(|message| ProviderFailure {
                         message,
                         retry_after_ms: None,
                         first_token_stall: false,
                         stream_output_produced: true,
+                    })?
+                    .ok_or_else(|| ProviderFailure {
+                        message: "canonical agent.v1 tool observation was not encoded".into(),
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: true,
                     })?;
+                    sink.record(&AndroidToolCallObservation {
+                        agent_id: input.agent_id.clone(),
+                        operation_id: input.operation_id.clone(),
+                        tool_name: name.clone(),
+                        tool_call_id: call_id.clone(),
+                        protobuf_bytes: encoded,
+                        started_at_ms,
+                        completed_at_ms,
+                        succeeded: dispatch.is_ok(),
+                    })
+                    .map_err(|message| ProviderFailure {
+                        message: format!("canonical agent.v1 observation persistence failed: {message}"),
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: true,
+                    })?;
+                }
+
+                let result = dispatch.map_err(|message| ProviderFailure {
+                    message,
+                    retry_after_ms: None,
+                    first_token_stall: false,
+                    stream_output_produced: true,
+                })?;
                 outputs.push(json!({
                     "type":"function_call_output",
                     "call_id":call_id,
@@ -662,6 +769,14 @@ fn parse_subagent_review_decision(
     }
 }
 
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64
+}
+
 fn valid_bearer_token(token: &str) -> bool {
     (24..=16 * 1024).contains(&token.len())
         && !token.chars().any(char::is_whitespace)
@@ -773,6 +888,8 @@ fn parse_sse_data(data: &str) -> Result<ProviderSseEvent, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+    use std::sync::Mutex;
 
     fn input() -> StreamAttemptInput {
         StreamAttemptInput {
@@ -1050,6 +1167,308 @@ mod tests {
             error.stream_output_produced,
             "a routed tool dispatch attempt must suppress blind provider retry",
         );
+    }
+
+    #[derive(Default)]
+    struct RecordingObservationSink {
+        observations: Mutex<Vec<AndroidToolCallObservation>>,
+    }
+
+    impl AndroidToolCallObservationSink for RecordingObservationSink {
+        fn record(&self, observation: &AndroidToolCallObservation) -> Result<(), String> {
+            self.observations.lock().unwrap().push(observation.clone());
+            Ok(())
+        }
+    }
+
+    struct CanonicalProductionTools {
+        result: Result<Value, String>,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl AndroidRoutedToolBridge for CanonicalProductionTools {
+        fn list_tools(&self) -> Result<Vec<Value>, String> {
+            Ok(vec![
+                json!({
+                    "type":"function",
+                    "name":"SendMessage",
+                    "parameters":{"type":"object"}
+                }),
+                json!({
+                    "type":"function",
+                    "name":"CommunicateUpdate",
+                    "parameters":{"type":"object"}
+                }),
+            ])
+        }
+
+        fn call_tool(
+            &self,
+            _name: &str,
+            _args: Value,
+            _tool_call_id: &str,
+        ) -> Result<Value, String> {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            self.result.clone()
+        }
+    }
+
+    fn spawn_sse_server(responses: Vec<String>) -> String {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for body in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                let mut header_end = None;
+                loop {
+                    let read = stream.read(&mut buffer).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    if header_end.is_none() {
+                        header_end = request
+                            .windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                            .map(|position| position + 4);
+                    }
+                    if let Some(end) = header_end {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.split_once(':').and_then(|(name, value)| {
+                                    name.eq_ignore_ascii_case("content-length")
+                                        .then(|| value.trim().parse::<usize>().ok())
+                                        .flatten()
+                                })
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= end + content_length {
+                            break;
+                        }
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        format!("http://{address}")
+    }
+
+    fn tool_sse(name: &str, call_id: &str, arguments_json: &str) -> String {
+        let item = json!({
+            "type":"response.output_item.done",
+            "item":{
+                "type":"function_call",
+                "call_id":call_id,
+                "name":name,
+                "arguments":arguments_json,
+            }
+        });
+        let completed = json!({"type":"response.completed","response":{"id":"resp-tool"}});
+        format!("data: {item}\n\ndata: {completed}\n\n")
+    }
+
+    fn final_sse() -> String {
+        let delta = json!({"type":"response.output_text.delta","delta":"done"});
+        let completed = json!({"type":"response.completed","response":{"id":"resp-final"}});
+        format!("data: {delta}\n\ndata: {completed}\n\n")
+    }
+
+    #[test]
+    fn production_send_message_dispatch_persists_canonical_agent_v1_observation() {
+        use super::super::agent_v1_wire::{
+            agent_tool_call, decode_agent_tool_call, send_message_args, send_message_result,
+        };
+
+        let endpoint = spawn_sse_server(vec![
+            tool_sse(
+                "SendMessage",
+                "call-send-9",
+                r#"{"message":{"type":"text","content":"hello"}}"#,
+            ),
+            final_sse(),
+        ]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Ok(json!({"sent":true,"messageId":"msg-9"})),
+            calls: Arc::clone(&calls),
+        }))
+        .with_tool_call_observation_sink(sink.clone());
+
+        let output = provider.start_stream(&input(), 1).unwrap();
+        assert_eq!(output.chunks.concat(), "done");
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+
+        let observations = sink.observations.lock().unwrap();
+        assert_eq!(observations.len(), 1);
+        let observation = &observations[0];
+        assert_eq!(observation.agent_id, "agent");
+        assert_eq!(observation.operation_id, "op");
+        assert_eq!(observation.tool_call_id, "call-send-9");
+        assert!(observation.succeeded);
+        assert!(observation.completed_at_ms >= observation.started_at_ms);
+        assert_eq!(&observation.protobuf_bytes[..2], &[0xda, 0x03]);
+
+        let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
+        assert_eq!(decoded.tool_call_id.as_deref(), Some("call-send-9"));
+        assert_eq!(decoded.started_at_ms, Some(observation.started_at_ms));
+        assert_eq!(decoded.completed_at_ms, Some(observation.completed_at_ms));
+        match decoded.tool.unwrap() {
+            agent_tool_call::Tool::SendMessageToolCall(call) => {
+                assert!(matches!(
+                    call.args.unwrap().message.unwrap(),
+                    send_message_args::Message::Text(text) if text.content == "hello"
+                ));
+                assert!(matches!(
+                    call.result.unwrap().result.unwrap(),
+                    send_message_result::Result::Success(result)
+                        if result.message_id == "msg-9"
+                            && result.timestamp == observation.completed_at_ms
+                ));
+            }
+            _ => panic!("expected canonical field 55 SendMessageToolCall"),
+        }
+    }
+
+    #[test]
+    fn production_communicate_update_bridge_failure_records_error_and_suppresses_retry() {
+        use super::super::agent_v1_wire::{
+            agent_tool_call, communicate_update_result, decode_agent_tool_call,
+        };
+
+        let endpoint = spawn_sse_server(vec![tool_sse(
+            "CommunicateUpdate",
+            "call-update-3",
+            r#"{"currentStep":"working","finalSummary":"partial"}"#,
+        )]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Err("outcome unknown".into()),
+            calls: Arc::clone(&calls),
+        }))
+        .with_tool_call_observation_sink(sink.clone());
+
+        let error = provider.start_stream(&input(), 1).unwrap_err();
+        assert!(error.message.contains("outcome unknown"));
+        assert!(error.stream_output_produced);
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+
+        let observations = sink.observations.lock().unwrap();
+        assert_eq!(observations.len(), 1);
+        let observation = &observations[0];
+        assert!(!observation.succeeded);
+        assert_eq!(&observation.protobuf_bytes[..2], &[0x82, 0x03]);
+        let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
+        assert_eq!(decoded.tool_call_id.as_deref(), Some("call-update-3"));
+        assert_eq!(decoded.started_at_ms, Some(observation.started_at_ms));
+        assert_eq!(decoded.completed_at_ms, Some(observation.completed_at_ms));
+        match decoded.tool.unwrap() {
+            agent_tool_call::Tool::CommunicateUpdateToolCall(call) => {
+                assert!(matches!(
+                    call.result.unwrap().result.unwrap(),
+                    communicate_update_result::Result::Error(result)
+                        if result.error == "outcome unknown"
+                ));
+            }
+            _ => panic!("expected canonical field 48 CommunicateUpdateToolCall"),
+        }
+    }
+
+    #[test]
+    fn production_canonical_dispatch_fails_closed_for_malformed_args_and_results() {
+        let malformed_args_endpoint = spawn_sse_server(vec![tool_sse(
+            "SendMessage",
+            "bad-args",
+            r#"{"message":{"type":"widget","content":"nope"}}"#,
+        )]);
+        let malformed_args_calls = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            malformed_args_endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Ok(json!({"messageId":"should-not-dispatch"})),
+            calls: Arc::clone(&malformed_args_calls),
+        }))
+        .with_tool_call_observation_sink(sink.clone());
+        let error = provider.start_stream(&input(), 1).unwrap_err();
+        assert!(error.message.contains("unsupported SendMessage canonical message type"));
+        assert_eq!(malformed_args_calls.load(AtomicOrdering::SeqCst), 0);
+        assert!(sink.observations.lock().unwrap().is_empty());
+
+        let malformed_result_endpoint = spawn_sse_server(vec![tool_sse(
+            "SendMessage",
+            "bad-result",
+            r#"{"message":{"type":"text","content":"hello"}}"#,
+        )]);
+        let malformed_result_calls = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            malformed_result_endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Ok(json!({"sent":true})),
+            calls: Arc::clone(&malformed_result_calls),
+        }))
+        .with_tool_call_observation_sink(sink.clone());
+        let error = provider.start_stream(&input(), 1).unwrap_err();
+        assert!(error.message.contains("message_id"));
+        assert!(error.stream_output_produced);
+        assert_eq!(malformed_result_calls.load(AtomicOrdering::SeqCst), 1);
+        assert!(sink.observations.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn production_canonical_dispatch_requires_observation_owner_before_side_effect() {
+        let endpoint = spawn_sse_server(vec![tool_sse(
+            "SendMessage",
+            "missing-owner",
+            r#"{"message":{"type":"text","content":"hello"}}"#,
+        )]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Ok(json!({"sent":true,"messageId":"msg"})),
+            calls: Arc::clone(&calls),
+        }));
+        let error = provider.start_stream(&input(), 1).unwrap_err();
+        assert!(error.message.contains("observation sink is not bound"));
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 0);
     }
 
     #[test]

@@ -167,7 +167,7 @@ use crate::extensions::webauthn_proxy::{
 };
 use crate::runner::{
     AndroidHostInferenceProvider, AndroidInferenceMode, AndroidSubagentReviewDecision,
-    DurableTurnJournal, DurableTurnState,
+    DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
     ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
@@ -13225,10 +13225,17 @@ impl AndroidJsonHost {
                     )
                 };
 
+                let agent_v1_observation_owner = Arc::new(
+                    DurableAgentV1ObservationOwner::new(
+                        Arc::clone(&transcript),
+                        account_fence_owned.clone(),
+                    ),
+                );
                 let provider = match mode {
                     AndroidHostMode::Test => {
                         AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
                             .with_routed_tools(Arc::clone(&routed_subagent_tools))
+                            .with_tool_call_observation_sink(agent_v1_observation_owner.clone())
                     }
                     AndroidHostMode::Production => {
                         let Some(token) = bearer_token else {
@@ -13260,7 +13267,9 @@ impl AndroidJsonHost {
                             return;
                         };
                         match AndroidHostInferenceProvider::production(token, cancelled.clone()) {
-                            Ok(provider) => provider.with_routed_tools(Arc::clone(&routed_subagent_tools)),
+                            Ok(provider) => provider
+                                .with_routed_tools(Arc::clone(&routed_subagent_tools))
+                                .with_tool_call_observation_sink(agent_v1_observation_owner.clone()),
                             Err(error) => {
                                 let message = error.message;
                                 let settled = turn_journal
