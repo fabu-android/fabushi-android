@@ -1100,6 +1100,13 @@
             "build_sand_shell_auto_review_target_enrichment",
             "SandShellTargetEnrichment"
           ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_permission_request.rs",
+          "blob_sha": "1415c717e488c96b672fc374dd321522c24c78af",
+          "symbols": [
+            "summarize_permission_request"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -1149,7 +1156,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented production Rust authorization/cancellation boundary and intentionally remains not-verified pending same-exact-HEAD package/device evidence. For Box/External/Computer/Browser, authorization is necessary but not sufficient: Desktop current-main exposes those capabilities only through explicit resource/executor ports, while current Android Host has no proven outbound executor adapter. The inbound FabushiRemoteDeviceGateway must not be reused as outbound execution authority and no transport may be invented. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Auto-review source audit at Android 7de28f271ef94c3bd47d2deeef1d67c539be359f confirms durable approval/account/operation identity exists. Missing parity is the Desktop Shell/MCP escalation/recheck contract, browser post-review state recheck, and Shell target-definition enrichment; integrate into existing broker/review owners, not a parallel registry.",
+      "notes": "Implemented production Rust authorization/cancellation boundary and intentionally remains not-verified pending same-exact-HEAD package/device evidence. For Box/External/Computer/Browser, authorization is necessary but not sufficient: Desktop current-main exposes those capabilities only through explicit resource/executor ports, while current Android Host has no proven outbound executor adapter. The inbound FabushiRemoteDeviceGateway must not be reused as outbound execution authority and no transport may be invented. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Auto-review source audit at Android 7de28f271ef94c3bd47d2deeef1d67c539be359f confirms durable approval/account/operation identity exists. Missing parity is the Desktop Shell/MCP escalation/recheck contract, browser post-review state recheck, and Shell target-definition enrichment; integrate into existing broker/review owners, not a parallel registry. Desktop source/host/src/runner/tools/sand_permission_request.rs is intentionally not direct-ported: current Desktop defines this helper as a legacy, non-actionable summary only. Android replaces that inert wire artifact with the existing Host Capability Broker/native approval lifecycle, preserving real user authorization while avoiding a second stale permission truth.",
       "android_head_at_update": "7de28f271ef94c3bd47d2deeef1d67c539be359f"
     },
     {
@@ -3914,6 +3921,82 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "This closes only the server-catalog slice of DesktopMcpManager. Server add/remove/rename/logout, effective-plugin mutation, routed tool discovery/execute and install backfill remain separate/open; do not upgrade the aggregate source row beyond mapped. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/mcp_state_executor.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop MCP state executor projects canonical agent.v1 server/tool state. Android Host uses typed dashboard MCP catalog/tool definitions plus durable per-server tool settings; wire-equivalence is mapped, not claimed fully verified."
+    },
+    {
+      "responsibility_id": "MCP-META-TOOLS-ANDROID-001",
+      "domain": "mcp-connectors",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/tools/mcp_meta_tools.rs",
+          "blob_sha": "6a23f51cfbe549801d9a8cd48be82d646d76932b",
+          "symbols": [
+            "McpMetaToolBridge",
+            "create_sand_mcp_meta_tool_options",
+            "GetMcpTools",
+            "CallMcpTool",
+            "suggested_tool_timeout_ms",
+            "pick_tool_call_timeout_tier_ms"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Expose the current account's MCP catalog through the two meta tools, resolve exact server/tool targets, enforce bounded execution/approval semantics, and prevent duplicate or uncertain side-effect replay.",
+      "source_owner": "Desktop RoutedProvider MCP meta tool bridge",
+      "direct_callers": [
+        "shipping root/subagent routed-provider tool composition",
+        "provider function-call loop"
+      ],
+      "downstream_dependencies": [
+        "MCP server/tool catalog",
+        "MCP execution backend",
+        "auto-review/approval boundary",
+        "account epoch/cancellation state"
+      ],
+      "state_owner": "Android Rust Host; Dashboard backend remains canonical MCP connectivity/catalog owner and Capability Broker remains canonical pending-call/approval owner.",
+      "persistent_state": [
+        "No second MCP catalog store",
+        "Host Capability Broker durable pending/terminal call state",
+        "existing account-scoped MCP server tool settings"
+      ],
+      "protocol_wire_contract": [
+        "GetMcpTools",
+        "CallMcpTool",
+        "Dashboard GetAvailableMcpServers/ListSandMcpTools/ExecuteSandMcpTool"
+      ],
+      "visible_effect": "Agents discover only currently enabled MCP tools and can invoke an exact discovered connector tool without exposing credentials to Compose/ViewModel.",
+      "failure_behavior": [
+        "catalog lookup failure surfaces an error without inventing disconnected state",
+        "disabled/missing server or tool fails closed",
+        "transport timeout/failure settles outcome-unknown and forbids automatic replay",
+        "late result after account switch/cancellation is fenced and requires reconciliation"
+      ],
+      "cancellation_behavior": "Cancellation is checked before discovery/execution and after backend completion; late side-effect results are never accepted into the new account epoch.",
+      "retry_semantics": "Read-only discovery may be retried normally; CallMcpTool is not blindly retried after timeout/transport uncertainty.",
+      "idempotency_semantics": "Stable account-fenced tool-call request identity is registered in the Capability Broker; duplicate/terminal identities do not replay the backend side effect.",
+      "process_death_recovery": "Pending/terminal execution identity is durable in the existing Capability Broker; uncertain calls reconcile instead of being recreated from UI state.",
+      "account_fencing": "Live account fence is checked before and after backend work and is included in durable request identity.",
+      "security_boundary": "Provider tool routing stays inside Rust Host; Compose/ViewModel never receives MCP credentials and cannot bypass Capability Broker/auto-review.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/mcp_meta_routed_tools.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs",
+        "source/host/src/mcp_server_tool_settings.rs",
+        "source/host/src/capability_broker.rs"
+      ],
+      "android_owner": "Rust Host routed-tool composition + Dashboard MCP backend + Capability Broker",
+      "platform_delta": "Android reuses the Host-side Dashboard RPC backend instead of Desktop service/Electron composition while preserving the provider-facing meta-tool contract and canonical Rust owners.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost wraps the production root and generated-child routed-tool bridges with with_mcp_meta_routed_tools when the Dashboard MCP backend exists. Discovery reads fresh descriptors, filters account-scoped disabled tools, and execution runs through review preflight plus Capability Broker with stable request identity and stale-account/cancellation fencing.",
+      "unit_test": "runner::mcp_meta_routed_tools tests cover timeout tiers, discovery filtering/disabled tools, successful call, duplicate no-replay, outcome-unknown and account-switch fencing.",
+      "contract_test": "Same exact HEAD 46cf23de055ea96fb44c5077ad24b11a09c4876b GitHub Actions run 38764676819 rust-runtime-foundation job 116524659628 succeeded; Desktop names/schema and Dashboard wire decoding are covered by Rust contract tests.",
+      "integration_test": "Production Host composition is Rust-tested; protected-account real connector execution, account switch during live remote side effect and packaged process-death reconciliation remain required.",
+      "packaged_test": "required on final exact-head APK/AAB",
+      "device_test": "required with protected authenticated connector account",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented is intentionally not verified: exact-head Rust evidence exists, but architecture/full Android package and protected-device acceptance are still required.",
+      "android_head_at_update": "46cf23de055ea96fb44c5077ad24b11a09c4876b"
     },
     {
       "responsibility_id": "MCP-PLUGIN-VARIABLES-001",
@@ -14245,6 +14328,13 @@
             "stale_permission_card_is_retired_durably_and_second_resolution_is_idempotent",
             "boot_sweep_expires_only_cards_pending_before_cutoff_across_agents"
           ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_permission_request.rs",
+          "blob_sha": "1415c717e488c96b672fc374dd321522c24c78af",
+          "symbols": [
+            "summarize_permission_request"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -14311,7 +14401,7 @@
       "device_test": "required with real Authorized Remote Runner/bounded Local Runner",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Account-fence hardening implemented by 477d9b32e6c27790fe0ae2921bf2b1ff89e9559d and 4d5c4bde06f8214146b25da20178d1d456c27ed2: standing grants no longer cross accounts; legacy global grants fail closed to Ask. Implementation remains not-verified until a descendant exact HEAD passes Rust/Android/package/device gates with a real Authorized Remote Runner or bounded Local Runner. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/widget_responses.rs@97b4b47b61b3c2cd18d381758ebec2640714f1d3 — Desktop WidgetResponses centralizes choice response rollback, auto-review/local-permission stale settlement, typed secret submission and reaction mutation. Android choice/approval pieces exist, while secret and Agent reaction production paths remain confirmed gaps.",
+      "notes": "Account-fence hardening implemented by 477d9b32e6c27790fe0ae2921bf2b1ff89e9559d and 4d5c4bde06f8214146b25da20178d1d456c27ed2: standing grants no longer cross accounts; legacy global grants fail closed to Ask. Implementation remains not-verified until a descendant exact HEAD passes Rust/Android/package/device gates with a real Authorized Remote Runner or bounded Local Runner. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/widget_responses.rs@97b4b47b61b3c2cd18d381758ebec2640714f1d3 — Desktop WidgetResponses centralizes choice response rollback, auto-review/local-permission stale settlement, typed secret submission and reaction mutation. Android choice/approval pieces exist, while secret and Agent reaction production paths remain confirmed gaps. Desktop source/host/src/runner/tools/sand_permission_request.rs is intentionally not direct-ported: current Desktop defines this helper as a legacy, non-actionable summary only. Android replaces that inert wire artifact with the existing Host Capability Broker/native approval lifecycle, preserving real user authorization while avoiding a second stale permission truth.",
       "android_head_at_update": "242d5b2efc5f1f7eaf6c4bad26ba571f5a0f827c"
     },
     {
