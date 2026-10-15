@@ -1,5 +1,6 @@
 use super::AndroidRoutedToolBridge;
 use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
+use crate::box_readiness::remote_box_not_ready_message;
 use crate::capability_broker::SharedCapabilityBroker;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::remote_execution::RemoteExecutionState;
@@ -2054,7 +2055,14 @@ fn parse_remote_tool_output(name: &str, args: &Value, output: &str) -> Result<Va
 }
 
 fn remote_execution_error(error: ExecutionError) -> String {
-    format!("{error:?}")
+    match &error {
+        ExecutionError::TimedOut
+        | ExecutionError::CapabilityUnavailable(_)
+        | ExecutionError::Transport(_) => {
+            format!("{} ({error:?})", remote_box_not_ready_message(&error))
+        }
+        _ => format!("{error:?}"),
+    }
 }
 
 fn push_event(events: &Arc<Mutex<VecDeque<Value>>>, event: Value) -> Result<(), String> {
@@ -2117,6 +2125,20 @@ mod tests {
             vec!["approval-b1".to_string()],
         );
         assert!(registry.pending_ids_for_account("account-c").unwrap().is_empty());
+    }
+
+    #[test]
+    fn remote_box_errors_preserve_readiness_and_no_monitor_taxonomy() {
+        assert!(remote_execution_error(ExecutionError::TimedOut)
+            .starts_with(crate::box_readiness::SAND_BOX_NOT_RESPONDING_MESSAGE));
+        assert!(remote_execution_error(ExecutionError::Transport(
+            "connection refused".into(),
+        ))
+        .starts_with(crate::box_readiness::SAND_BOX_NOT_READY_MESSAGE));
+        assert!(remote_execution_error(ExecutionError::CapabilityUnavailable(
+            "no private desktop monitor is available".into(),
+        ))
+        .starts_with(crate::box_readiness::SAND_BOX_NO_MONITOR_AVAILABLE_MESSAGE));
     }
 
     #[test]

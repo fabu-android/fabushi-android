@@ -17225,20 +17225,23 @@
         "source/host/src/capability_broker.rs",
         "source/box-exec-daemon/src/transport.rs",
         "source/local-exec-daemon",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/AndroidRemoteComputerDataPlane.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/AndroidRemoteComputerDataPlane.kt",
+        "source/host/src/box_readiness.rs",
+        "source/box-exec-daemon/src/protected_path_guard.rs",
+        "source/box-exec-daemon/src/file_transfer_backend.rs"
       ],
       "android_owner": "Rust Host RemoteRoutedTools + CapabilityBroker + AuthenticatedRemoteHostRunner; bounded Local Runner remains separate; Presentation owns no execution authority",
       "platform_delta": "Desktop loopback/VNC/process-spawn/window mechanisms are forbidden as the Android local product architecture. Android may execute only bounded local actions or route to an explicitly enrolled Remote Runner with separate credentials and reconciliation.",
       "implementation_status": "mapped",
-      "production_wiring": "Implemented in the shipping Rust Host. AndroidJsonHost parses only protected authorized-remote-runner-v1 bindings, validates current account fence/epoch, expiry, HTTPS transport and explicit executor capabilities, constructs AuthenticatedRemoteHostRunner with the durable remote journal, and projects readiness from that bound runner. Root Agent turns wrap their real tool graph with with_remote_routed_tools only when the trusted turn capability projection reports remote_box_available. Remote tools request/consume durable CapabilityBroker approval before dispatch; side-effecting execute is sent exactly once and transport ambiguity becomes outcome-unknown followed only by idempotent reconcile/cancel, never blind replay. Shell/read/write/computer/screenshot/browser/external/cloud-agent executor scopes are explicit and unsupported scopes fail closed. Audit correction at 43d15e4d53620f972dca79fc8bd9b6149a93f552: Remote shell/read/write/computer/browser routing is shipping, but Desktop CopyToBox/CopyFromBox 100 MiB user-computer↔Agent-Box transfer is not production-wired. The AndroidLocal staged upload handlers are test-only and are not a Remote Box substitute.",
-      "unit_test": "Focused Rust coverage in remote_routed_tools.rs and remote_execution.rs covers wrong account epoch, unrelated credential planes, expired/not-yet-active credentials, plaintext endpoint rejection, explicit executor scope, bounded write input, permission=never, approval identity/consumption, pre-dispatch grant cancellation, and outcome-unknown reconciliation. Same-final-head Actions are still required.",
+      "production_wiring": "Shipping Rust Host already owns protected authorized-remote-runner-v1 binding, explicit executor scopes, one-time CapabilityBroker approval, durable authenticated Remote execution/reconciliation, BoxStore sync and CopyToBox/CopyFromBox. This descendant additionally maps Remote timeout/refused/no-monitor failures to the frozen Desktop readiness taxonomy and applies Host-only protected-root fencing inside the external Runner transfer backend. The aggregate stays mapped because Desktop Box MCP/environment forwarding and backend-policy subcontracts still require dedicated production parity review.",
+      "unit_test": "Focused Rust coverage includes Remote account/device/executor/approval/outcome-unknown fencing, CopyToBox/CopyFromBox bounds, readiness/no-monitor/window taxonomy, and protected-root direct/relative/symlink rejection. Exact-head Actions required.",
       "contract_test": "Production transport and Host composition implement separate authorized Remote Runner credentials, stable operation/request/grant/device/account identity, capability consumption, exactly-once side-effect dispatch and outcome-unknown reconciliation. Same exact-head GitHub Actions plus deployed executor compatibility remain required.",
       "integration_test": "Client-side production composition is wired through AndroidJsonHost -> real turn tool graph -> RemoteRoutedTools -> AuthenticatedRemoteHostRunner -> AuthenticatedRemoteHttpTransport. Live integration still requires an externally enrolled authorized Runner and therefore remains not-verified.",
       "packaged_test": "required on final APK/AAB",
       "device_test": "required for pairing/revoke/reconnect/viewport/file-transfer/computer-use on supported Android devices",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production Android client/Host execution path is implemented; the prior note claiming no outbound Remote Runner adapter was stale and has been removed. Do not mark verified until a real enrolled Runner proves shell/read/write/computer/browser/file/lifecycle behavior on the same exact Android HEAD, followed by packaged/device evidence. Release signing and protected-account blockers remain independent. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/box.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop box port centralizes readiness/no-monitor/unsupported errors and primary/fork monitor identity. Android replacement lives behind authorized Box/Remote Runner routing; exact no-monitor/readiness taxonomy is only mapped pending parity review. 1 MiB Remote Write and test-only AndroidLocal staged upload do not prove Desktop large-file transfer parity.",
+      "notes": "Readiness/no-monitor taxonomy and protected-path transfer fencing are implemented sub-responsibilities. Keep this aggregate mapped until the remaining Box MCP/environment/backend-policy responsibilities are implemented and same-final-head package/device evidence closes the full Box product surface.",
       "desktop_sources": [
         {
           "path": "source/host/src/ports/box.rs",
@@ -58372,20 +58375,21 @@
         "source/box-exec-daemon/src/file_transfer_backend.rs",
         "source/box-exec-daemon/src/deployment_contract.rs",
         "source/local-exec-daemon/src/bounded_file_handlers.rs",
-        "source/host/tests/box_file_transfer_contract.rs"
+        "source/host/tests/box_file_transfer_contract.rs",
+        "source/box-exec-daemon/src/protected_path_guard.rs"
       ],
       "android_owner": "Rust Host + CapabilityBroker + authenticated external Runner + Agent Box service",
       "platform_delta": "Desktop co-resident local-exec becomes authorized Remote Runner for user-computer endpoint.",
       "implementation_status": "implemented",
-      "production_wiring": "Shipping Agent tool graph now exposes CopyToBox/CopyFromBox only for protected bindings that explicitly declare the file-transfer executor. RemoteRoutedTools maps both tools to box.file.transfer and sends them through the existing CapabilityBroker one-time approval, AuthenticatedRemoteHostRunner durable journal, authenticated execute/reconcile/cancel transport, and account/device/executor fences. The authorized external Runner has a dedicated RemoteFileTransferBackend/open_remote_file_transfer_execution_service that owns bounded user-root↔Agent-box-root mutation. AndroidLocal staged upload is supporting semantics only, not the canonical production owner.",
-      "unit_test": "file_transfer_backend tests cover CopyToBox/CopyFromBox roundtrip, 100 MiB rejection, destination version conflict, traversal rejection, explicit staged start/chunk/commit order, duplicate/out-of-order chunks, digest mismatch, reconcile and staging cleanup; remote_routed_tools unit tests cover explicit file-transfer executor and argument bounds.",
+      "production_wiring": "Shipping Agent tool graph now exposes CopyToBox/CopyFromBox only for protected bindings that explicitly declare the file-transfer executor. RemoteRoutedTools maps both tools to box.file.transfer and sends them through the existing CapabilityBroker one-time approval, AuthenticatedRemoteHostRunner durable journal, authenticated execute/reconcile/cancel transport, and account/device/executor fences. The authorized external Runner has a dedicated RemoteFileTransferBackend/open_remote_file_transfer_execution_service that owns bounded user-root↔Agent-box-root mutation. AndroidLocal staged upload is supporting semantics only, not the canonical production owner. The external Runner transfer backend also rejects configured Host-only protected roots before path resolution, including relative traversal and canonicalized symlink aliases, so CopyToBox/CopyFromBox cannot expose Host credential/state stores.",
+      "unit_test": "file_transfer_backend tests cover CopyToBox/CopyFromBox roundtrip, 100 MiB rejection, destination version conflict, traversal rejection, explicit staged start/chunk/commit order, duplicate/out-of-order chunks, digest mismatch, reconcile and staging cleanup; remote_routed_tools unit tests cover explicit file-transfer executor and argument bounds. Protected-root focused coverage rejects direct, relative and symlink-alias access while allowing safe workspace paths.",
       "contract_test": "source/host/tests/box_file_transfer_contract.rs freezes shipping Host→authorized Remote wiring, 100 MiB/32 KiB staged bounds, digest result, reconciliation, and durable Remote identity; same exact-head GitHub Actions still pending.",
       "integration_test": "Production composition exists in source and is exercised by Rust contract composition. Live enrolled external-Runner acceptance remains blocked by REMOTE-RUNNER-ENROLLMENT-001.",
       "packaged_test": "Open exact-head packaged transfer journey",
       "device_test": "Open selected-device protected-account transfer acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production caller now exists, so mapped→implemented is justified. Do not promote to verified until this exact HEAD passes required Actions and packaged/device transfer evidence exists. No predecessor d06 artifact is reused.",
+      "notes": "Production caller remains implemented. Protected-root fencing is now part of the external Runner owner. Verification remains withheld until a descendant exact HEAD passes required Actions plus packaged/device transfer evidence; no predecessor artifact is reused.",
       "android_head_at_update": "cba2056382e25987de5263414d713701de3d80c5"
     },
     {
@@ -59633,6 +59637,130 @@
       "verification_status": "not-verified",
       "notes": "This closes the Desktop bootstrap_contract.rs source responsibility without promoting the broader HOST-GATEWAY-TRANSPORT-ANDROID-001 aggregate, which remains mapped until its remaining gateway method/policy replacements are complete. No local Rust/Kotlin/JNI build or test was run.",
       "android_head_at_update": "1d43d0c5ae13e5c9ac963ad4d0ea68442f07d4f2"
+    },
+    {
+      "responsibility_id": "BOX-READINESS-ANDROID-001",
+      "domain": "box-foundation",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/box_foundation_contract.rs",
+          "blob_sha": "7f6822c2cd96d19a44d785d064e023bd84287915",
+          "symbols": [
+            "box_port_preserves_readiness_messages_window_indices_and_no_monitor_identity"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Preserve stable Box readiness/no-monitor user-visible taxonomy and primary/fork window semantics when Desktop Box execution is replaced by an authorized external Runner.",
+      "source_owner": "Desktop ports::box readiness classifier and no-monitor executor identity",
+      "direct_callers": [
+        "Agent computer-use tool error projection",
+        "Box readiness UX"
+      ],
+      "downstream_dependencies": [
+        "RemoteRoutedTools",
+        "computer.use",
+        "Screenshot",
+        "Agent error recovery"
+      ],
+      "state_owner": "Rust Host Remote execution projection; no UI-owned readiness truth.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "timeout/crash -> not responding",
+        "ordinary unavailable/refused -> not ready",
+        "monitor exhaustion -> no-monitor message",
+        "window index <=1 is primary; first fork=2"
+      ],
+      "visible_effect": "Agent/user receives stable actionable startup/wedged/no-monitor messages instead of raw Remote transport errors.",
+      "failure_behavior": [
+        "timeout/crash classify as not responding",
+        "monitor capability exhaustion classifies as no-monitor",
+        "other unavailable transport classifies as not ready"
+      ],
+      "cancellation_behavior": "Cancellation remains cancellation and is not mislabeled as readiness.",
+      "retry_semantics": "Messages advise retry but Host never blindly replays an unknown side effect.",
+      "idempotency_semantics": "Classification is pure and does not mutate execution identity.",
+      "process_death_recovery": "Reopened Remote operations retain durable outcome state; readiness projection is applied only to the current execution error.",
+      "account_fencing": "Inherited from AuthenticatedRemoteHostRunner binding and operation journal.",
+      "security_boundary": "Classification stays below Compose in Rust Host.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/box_readiness.rs",
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/tests/android_box_foundation_shipping_contract.rs"
+      ],
+      "android_owner": "Rust Host RemoteRoutedTools",
+      "platform_delta": "Desktop local Box daemon errors become authenticated Remote Runner execution errors, but user-facing readiness taxonomy remains equivalent.",
+      "implementation_status": "implemented",
+      "production_wiring": "remote_execution_error in shipping RemoteRoutedTools maps TimedOut/Transport/CapabilityUnavailable through box_readiness while preserving structured debug detail.",
+      "unit_test": "box_readiness unit tests freeze exact readiness/no-monitor messages and primary/fork taxonomy; remote_routed_tools unit test freezes production projection.",
+      "contract_test": "android_box_foundation_shipping_contract.rs requires shipping projection.",
+      "integration_test": "Pending same-exact-HEAD GitHub Actions after commit.",
+      "packaged_test": "Pending packaged computer-use readiness journey.",
+      "device_test": "Pending external Runner monitor exhaustion/startup/wedged acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented child responsibility only; aggregate box_foundation source stays mapped because backend-policy and MCP compatibility are still open."
+    },
+    {
+      "responsibility_id": "BOX-PROTECTED-PATH-ANDROID-001",
+      "domain": "box-foundation",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/box_foundation_contract.rs",
+          "blob_sha": "7f6822c2cd96d19a44d785d064e023bd84287915",
+          "symbols": [
+            "protected_path_guard_rejects_direct_and_relative_protected_paths"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Prevent Agent/Remote file operations from reading or writing host-only protected stores through direct paths, relative traversal or symlink aliases.",
+      "source_owner": "Desktop protected_path_guard",
+      "direct_callers": [
+        "CopyToBox",
+        "CopyFromBox"
+      ],
+      "downstream_dependencies": [
+        "authorized external Runner file transfer",
+        "host-only credential/state stores"
+      ],
+      "state_owner": "External Runner file-transfer boundary owns protected-root enforcement.",
+      "persistent_state": [],
+      "protocol_wire_contract": [
+        "configured protected roots are absolute",
+        "lexical check before IO",
+        "nearest-existing realpath check catches symlink aliases"
+      ],
+      "visible_effect": "Authorized file-copy keeps working for user files while protected Host stores are refused.",
+      "failure_behavior": [
+        "direct/relative/symlink protected path fails before transfer side effect",
+        "invalid protected-root config fails service open"
+      ],
+      "cancellation_behavior": "Rejected path never creates transfer staging state.",
+      "retry_semantics": "Policy rejection is deterministic and is not retried.",
+      "idempotency_semantics": "Guard is pure; accepted transfer continues under stable operation identity.",
+      "process_death_recovery": "No protected-path mutation exists to recover; accepted transfers use existing staged/reconcile semantics.",
+      "account_fencing": "Inherited from Host Capability Broker and AuthenticatedRemoteHostRunner.",
+      "security_boundary": "External Runner enforces protected roots in addition to bounded user_root/agent_box_root containment.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/box-exec-daemon/src/protected_path_guard.rs",
+        "source/box-exec-daemon/src/file_transfer_backend.rs",
+        "source/host/tests/android_box_foundation_shipping_contract.rs"
+      ],
+      "android_owner": "Authorized external Runner RemoteFileTransferBackend",
+      "platform_delta": "Desktop protected Host roots are enforced at local Box tooling; Android enforces the same policy at the external Runner resource boundary.",
+      "implementation_status": "implemented",
+      "production_wiring": "RemoteFileTransferConfig carries protected_roots and parse() checks source and destination through assert_path_outside_protected_roots before bounded path resolution or staging.",
+      "unit_test": "protected_path_guard tests direct/relative/symlink alias rejection; file_transfer_backend tests configured protected-root refusal.",
+      "contract_test": "android_box_foundation_shipping_contract.rs freezes protected-path production wiring.",
+      "integration_test": "Pending same-exact-HEAD GitHub Actions after commit.",
+      "packaged_test": "Not independently package-visible; exercised through packaged CopyToBox/CopyFromBox journey once external Runner is enrolled.",
+      "device_test": "Pending protected-path rejection through real paired Runner.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Implemented child responsibility only; live external Runner acceptance remains blocked by existing enrollment blocker."
     }
   ],
   "traceability": {

@@ -1,3 +1,4 @@
+use crate::protected_path_guard::assert_path_outside_protected_roots;
 use crate::server::{
     RemoteBackendCancelOutcome, RemoteBackendReconcileOutcome, RemoteBackendStartOutcome,
     RemoteExecutionAuthorizer, RemoteExecutionBackend, RemoteExecutionService, RemoteRequestIdentity,
@@ -20,6 +21,9 @@ pub const TRANSFER_CHUNK_BYTES: usize = 32 * 1024;
 pub struct RemoteFileTransferConfig {
     pub user_root: PathBuf,
     pub agent_box_root: PathBuf,
+    /// Host-only roots that must never be exposed through CopyToBox/CopyFromBox,
+    /// even through relative traversal or a symlink alias.
+    pub protected_roots: Vec<PathBuf>,
 }
 
 impl RemoteFileTransferConfig {
@@ -32,6 +36,13 @@ impl RemoteFileTransferConfig {
                 return Err(ExecutionError::InvalidRequest(format!(
                     "file-transfer {label} must be absolute"
                 )));
+            }
+        }
+        for root in &self.protected_roots {
+            if root.as_os_str().is_empty() || !root.is_absolute() {
+                return Err(ExecutionError::InvalidRequest(
+                    "file-transfer protected root must be absolute".into(),
+                ));
             }
         }
         Ok(())
@@ -149,6 +160,19 @@ impl RemoteFileTransferBackend {
                 )
             }
         };
+        assert_path_outside_protected_roots(
+            &self.config.protected_roots,
+            Path::new(&source_raw),
+            source_root,
+        )
+        .map_err(|error| ExecutionError::InvalidRequest(error.to_string()))?;
+        assert_path_outside_protected_roots(
+            &self.config.protected_roots,
+            Path::new(&destination_raw),
+            destination_root,
+        )
+        .map_err(|error| ExecutionError::InvalidRequest(error.to_string()))?;
+
         let source = bounded_path(source_root, &source_raw, false)?;
         let destination = bounded_path(destination_root, &destination_raw, true)?;
         Ok(TransferPlan {
@@ -649,6 +673,7 @@ mod tests {
             RemoteFileTransferBackend::open(RemoteFileTransferConfig {
                 user_root: user,
                 agent_box_root: box_root,
+                protected_roots: Vec::new(),
             })
             .unwrap(),
         )
@@ -705,6 +730,45 @@ mod tests {
             .unwrap();
         assert!(matches!(from_box, RemoteBackendStartOutcome::Completed { .. }));
         assert_eq!(fs::read(root.join("user/report.bin")).unwrap(), b"hello transfer");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn configured_host_only_roots_are_rejected_directly_relatively_and_through_symlink_alias() {
+        let root = root("protected");
+        let _ = fs::remove_dir_all(&root);
+        let user = root.join("user");
+        let box_root = root.join("box");
+        let protected = user.join("host-store");
+        fs::create_dir_all(&protected).unwrap();
+        fs::create_dir_all(&box_root).unwrap();
+        fs::write(protected.join("secret.db"), b"secret").unwrap();
+
+        let mut backend = RemoteFileTransferBackend::open(RemoteFileTransferConfig {
+            user_root: user.clone(),
+            agent_box_root: box_root,
+            protected_roots: vec![protected.clone()],
+        }).unwrap();
+
+        let direct = request(
+            "op-protected-direct",
+            "CopyToBox",
+            json!({"computer_path":"host-store/secret.db","box_path":"safe.db"}),
+        );
+        assert!(backend.start(&identity("op-protected-direct"), &direct).is_err());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let alias = user.join("alias");
+            symlink(&protected, &alias).unwrap();
+            let aliased = request(
+                "op-protected-alias",
+                "CopyToBox",
+                json!({"computer_path":"alias/secret.db","box_path":"safe.db"}),
+            );
+            assert!(backend.start(&identity("op-protected-alias"), &aliased).is_err());
+        }
         let _ = fs::remove_dir_all(root);
     }
 
@@ -766,6 +830,7 @@ mod tests {
         let mut reopened = RemoteFileTransferBackend::open(RemoteFileTransferConfig {
             user_root: root.join("user"),
             agent_box_root: root.join("box"),
+            protected_roots: Vec::new(),
         })
         .unwrap();
         assert!(matches!(

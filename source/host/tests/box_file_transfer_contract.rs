@@ -79,6 +79,7 @@ fn external_runner_transfer_is_100_mib_chunked_digest_verified_and_reconcilable(
     let mut backend = RemoteFileTransferBackend::open(RemoteFileTransferConfig {
         user_root: user_root.clone(),
         agent_box_root: box_root.clone(),
+        protected_roots: Vec::new(),
     })
     .unwrap();
     let req = request(

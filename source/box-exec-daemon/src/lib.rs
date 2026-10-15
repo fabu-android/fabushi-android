@@ -17,6 +17,7 @@ pub mod cli;
 pub mod main;
 pub mod deployment_contract;
 pub mod file_transfer_backend;
+pub mod protected_path_guard;
 pub mod server;
 pub mod transport;
 
