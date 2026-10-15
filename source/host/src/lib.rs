@@ -78,6 +78,7 @@ pub mod onepassword_provisioning;
 pub mod process_crash_guard;
 pub mod process_metrics;
 pub mod production_binding_providers;
+pub mod remote_background_work;
 pub mod remote_execution;
 pub mod remote_browser_ua;
 pub mod remote_box_control;

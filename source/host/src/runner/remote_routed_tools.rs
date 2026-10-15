@@ -3,11 +3,12 @@ use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::box_readiness::remote_box_not_ready_message;
 use crate::capability_broker::SharedCapabilityBroker;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
+use crate::remote_background_work::{DurableRemoteBackgroundWorkOwner, RemoteBackgroundWorkKind};
 use crate::remote_execution::RemoteExecutionState;
 use crate::sha256::sha256_hex;
 use fabushi_android_box_exec_daemon::{
-    AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteExecutionContext,
-    RemoteTransportPolicy,
+    background_shell_id, AuthenticatedRemoteHttpTransport, RemoteBearerCredential,
+    RemoteExecutionContext, RemoteTransportPolicy,
 };
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
 use serde::Deserialize;
@@ -108,12 +109,43 @@ fn is_remote_browser_tool(name: &str) -> bool {
     REMOTE_BROWSER_TOOL_NAMES.contains(&name)
 }
 
+fn is_background_shell(name: &str, args: &Value) -> bool {
+    name == "Shell"
+        && args
+            .get("is_background")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+}
+
+fn background_shell_title(args: &Value) -> String {
+    let command = args
+        .get("command")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if command.chars().count() <= 80 {
+        command
+    } else {
+        format!("{}…", command.chars().take(79).collect::<String>())
+    }
+}
+
 fn remote_execution_input_json(name: &str, args: &Value) -> String {
-    // CloudAgent is a first-class typed Remote capability whose external Runner backend
-    // deserializes CloudAgentRequest directly. Other legacy Remote tools retain the shared
-    // tool-wrapper envelope expected by their generic execution backend.
+    // CloudAgent and durable background Shell are first-class typed Remote capabilities.
+    // Legacy one-shot tools retain the generic wrapper expected by their execution backend.
     if name == CLOUD_AGENT_TOOL_NAME {
         args.to_string()
+    } else if is_background_shell(name, args) {
+        json!({
+            "command": args.get("command").cloned().unwrap_or(Value::Null),
+            "workingDirectory": args
+                .get("working_directory")
+                .cloned()
+                .unwrap_or_else(|| Value::String("/workspace".into())),
+        })
+        .to_string()
     } else {
         json!({"tool":name,"arguments":args}).to_string()
     }
@@ -265,6 +297,7 @@ impl RemoteDispatchBinding {
         }
         const ALLOWED_EXECUTORS: &[&str] = &[
             "shell",
+            "background-shell",
             "read",
             "write",
             "computer",
@@ -535,11 +568,13 @@ pub(crate) struct RemoteRoutedTools {
     broker: SharedCapabilityBroker,
     binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
+    background_work: Arc<Mutex<DurableRemoteBackgroundWorkOwner>>,
     approvals: RemoteApprovalRegistry,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     local_tool_permission_ceiling: Option<LocalToolPermission>,
     live_account_fence: Arc<Mutex<Option<String>>>,
     events: Arc<Mutex<VecDeque<Value>>>,
+    parent_agent_id: String,
     parent_operation_id: String,
     parent_request_id: String,
     cancelled: Arc<AtomicBool>,
@@ -568,18 +603,20 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     | COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME
             ) && !is_remote_browser_tool(name)
         });
-        if binding.supports("shell") {
+        if binding.supports("shell") || binding.supports("background-shell") {
             tools.push(json!({
             "type":"function",
             "name":"Shell",
-            "description":"Run a bounded shell command on the currently paired trusted Remote desktop. Requires one-time user approval before dispatch.",
+            "description":"Run a shell command on the currently paired trusted Remote Runner. Set is_background for durable background execution; every new dispatch requires the exact authorized executor.",
             "parameters":{
                 "type":"object",
                 "additionalProperties":false,
                 "required":["command"],
                 "properties":{
                     "command":{"type":"string"},
-                    "timeoutMs":{"type":"integer","minimum":1000,"maximum":120000}
+                    "timeoutMs":{"type":"integer","minimum":1000,"maximum":120000},
+                    "is_background":{"type":"boolean"},
+                    "working_directory":{"type":"string"}
                 }
             }
         }));
@@ -782,7 +819,9 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         let refusal_id = sha256_hex(
             format!("{}\n{}\n{}", self.parent_operation_id, name, args_json).as_bytes(),
         );
+        let background_shell = is_background_shell(name, &args);
         let capability = match name {
+            "Shell" if background_shell => "background-shell",
             "Shell" | "ExternalShell" => "remote.shell",
             "Read" | "ExternalRead" => "remote.read",
             "Write" => "remote.write",
@@ -810,6 +849,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         }
         let binding = self.current_binding()?;
         let required_executor = match name {
+            "Shell" if background_shell => "background-shell",
             "Shell" => "shell",
             "Read" => "read",
             "Write" => "write",
@@ -860,15 +900,36 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 .map_err(|_| "remote runner lock poisoned".to_string())?;
             let runner = guard.as_mut().ok_or("trusted Remote runner is unavailable")?;
             if let Some(record) = runner.journal().record(&operation_id).cloned() {
+                let existing_shell_id = background_shell
+                    .then(|| self.background_shell_work_id(&context));
                 let result = match record.state {
                     RemoteExecutionState::Completed => runner
                         .execute_authorized(&context, &request, now_ms())
                         .map_err(remote_execution_error)?,
                     RemoteExecutionState::OutcomeUnknown
                     | RemoteExecutionState::Sent
-                    | RemoteExecutionState::Acked => runner
-                        .reconcile_authorized(&context, now_ms())
-                        .map_err(remote_execution_error)?,
+                    | RemoteExecutionState::Acked => {
+                        match runner.reconcile_authorized(&context, now_ms()) {
+                            Ok(result) => result,
+                            Err(ExecutionError::Transport(message))
+                                if background_shell
+                                    && (message.contains("remote_execution_accepted_pending")
+                                        || message.contains("remote_outcome_unknown_reconcile_pending")) =>
+                            {
+                                drop(guard);
+                                let work_id = existing_shell_id
+                                    .as_deref()
+                                    .ok_or("background shell work identity is unavailable")?;
+                                self.mark_background_shell_watching(work_id, &context)?;
+                                return Ok(self.background_shell_running_result(
+                                    work_id,
+                                    &operation_id,
+                                    record.state == RemoteExecutionState::OutcomeUnknown,
+                                ));
+                            }
+                            Err(error) => return Err(remote_execution_error(error)),
+                        }
+                    }
                     RemoteExecutionState::Pending => {
                         return Err("remote_pending_dispatch_requires_original_owner".into())
                     }
@@ -876,6 +937,11 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     RemoteExecutionState::Cancelled => return Err("remote_execution_cancelled".into()),
                 };
                 let parsed = parse_remote_tool_output(name, &args, &result.output_json)?;
+                drop(guard);
+                if let Some(work_id) = existing_shell_id.as_deref() {
+                    self.mark_background_shell_watching(work_id, &context)?;
+                    self.settle_background_shell(work_id, &context, &parsed)?;
+                }
                 self.observe_browser_navigation(name, &parsed, &operation_id);
                 return Ok(parsed);
             }
@@ -1061,6 +1127,27 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             ));
         }
 
+        let background_shell_work_id = if background_shell {
+            let remote_record = {
+                let guard = self
+                    .runner
+                    .lock()
+                    .map_err(|_| "remote runner lock poisoned".to_string())?;
+                guard
+                    .as_ref()
+                    .and_then(|runner| runner.journal().record(&operation_id))
+                    .cloned()
+                    .ok_or("prepared Remote background Shell omitted durable journal record")?
+            };
+            Some(self.prepare_background_shell_owner(
+                &context,
+                &background_shell_title(&args),
+                &remote_record,
+            )?)
+        } else {
+            None
+        };
+
         if let Err(error) = self.broker.consume_remote_approval_for_dispatch(
             &approval_id,
             &operation_id,
@@ -1076,6 +1163,10 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     let _ = runner.cancel_prepared_authorized(&context, now_ms());
                 }
             }
+            self.cancel_prepared_background_shell(
+                background_shell_work_id.as_deref(),
+                &context,
+            );
             return Err(error);
         }
         if self.cancelled.load(Ordering::Acquire) || self.client_paused.load(Ordering::Acquire) {
@@ -1084,6 +1175,10 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     let _ = runner.cancel_prepared_authorized(&context, now_ms());
                 }
             }
+            self.cancel_prepared_background_shell(
+                background_shell_work_id.as_deref(),
+                &context,
+            );
             return Err(if self.client_paused.load(Ordering::Acquire) {
                 "trusted Remote client is paused before side effect".into()
             } else {
@@ -1099,8 +1194,29 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
         match runner.dispatch_prepared_authorized(&context, &request, now_ms()) {
             Ok(result) => {
                 let parsed = parse_remote_tool_output(name, &args, &result.output_json)?;
+                drop(guard);
+                if let Some(work_id) = background_shell_work_id.as_deref() {
+                    self.mark_background_shell_watching(work_id, &context)?;
+                    self.settle_background_shell(work_id, &context, &parsed)?;
+                }
                 self.observe_browser_navigation(name, &parsed, &operation_id);
                 Ok(parsed)
+            }
+            Err(ExecutionError::Transport(message))
+                if background_shell
+                    && (message.contains("remote_execution_accepted_pending")
+                        || message.contains("remote_outcome_unknown")) =>
+            {
+                drop(guard);
+                let work_id = background_shell_work_id
+                    .as_deref()
+                    .ok_or("background shell durable work identity is unavailable")?;
+                self.mark_background_shell_watching(work_id, &context)?;
+                Ok(self.background_shell_running_result(
+                    work_id,
+                    &operation_id,
+                    message.contains("outcome_unknown"),
+                ))
             }
             Err(ExecutionError::Transport(message))
                 if message.contains("remote_outcome_unknown") =>
@@ -1113,6 +1229,121 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
 }
 
 impl RemoteRoutedTools {
+    fn background_shell_work_id(
+        &self,
+        context: &RemoteExecutionContext,
+    ) -> String {
+        background_shell_id(
+            &context.account_fence,
+            context.account_epoch,
+            &context.device_id,
+            &context.operation_id,
+        )
+    }
+
+    fn prepare_background_shell_owner(
+        &self,
+        context: &RemoteExecutionContext,
+        title: &str,
+        remote_record: &crate::remote_execution::RemoteExecutionRecord,
+    ) -> Result<String, String> {
+        let work_id = self.background_shell_work_id(context);
+        self.background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .register(
+                &self.parent_agent_id,
+                &work_id,
+                title,
+                RemoteBackgroundWorkKind::Shell,
+                remote_record,
+                now_ms(),
+            )?;
+        Ok(work_id)
+    }
+
+    fn mark_background_shell_watching(
+        &self,
+        work_id: &str,
+        context: &RemoteExecutionContext,
+    ) -> Result<(), String> {
+        self.background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .mark_watching(
+                work_id,
+                &context.account_fence,
+                context.account_epoch,
+                now_ms(),
+            )?;
+        Ok(())
+    }
+
+    fn cancel_prepared_background_shell(
+        &self,
+        work_id: Option<&str>,
+        context: &RemoteExecutionContext,
+    ) {
+        let Some(work_id) = work_id else {
+            return;
+        };
+        if let Ok(mut owner) = self.background_work.lock() {
+            let _ = owner.cancel(
+                work_id,
+                &context.account_fence,
+                context.account_epoch,
+                now_ms(),
+            );
+        }
+    }
+
+    fn settle_background_shell(
+        &self,
+        work_id: &str,
+        context: &RemoteExecutionContext,
+        parsed: &Value,
+    ) -> Result<(), String> {
+        let status = parsed
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("success");
+        let detail = parsed
+            .get("detail")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let output_path = parsed
+            .get("outputPath")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        self.background_work
+            .lock()
+            .map_err(|_| "remote background-work owner lock poisoned".to_string())?
+            .settle(
+                work_id,
+                &context.account_fence,
+                context.account_epoch,
+                status,
+                detail,
+                output_path,
+                now_ms(),
+            )?;
+        Ok(())
+    }
+
+    fn background_shell_running_result(
+        &self,
+        work_id: &str,
+        operation_id: &str,
+        outcome_unknown: bool,
+    ) -> Value {
+        json!({
+            "shellId": work_id,
+            "operationId": operation_id,
+            "status": if outcome_unknown { "outcome-unknown" } else { "running" },
+            "background": true,
+        })
+    }
+
     fn observe_browser_navigation(&self, name: &str, parsed: &Value, operation_id: &str) {
         let Some(observer) = self.browser_navigation_observer.as_ref() else {
             return;
@@ -1193,11 +1424,13 @@ pub(crate) fn with_remote_routed_tools(
     broker: SharedCapabilityBroker,
     binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
+    background_work: Arc<Mutex<DurableRemoteBackgroundWorkOwner>>,
     approvals: RemoteApprovalRegistry,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
     local_tool_permission_ceiling: Option<LocalToolPermission>,
     live_account_fence: Arc<Mutex<Option<String>>>,
     events: Arc<Mutex<VecDeque<Value>>>,
+    parent_agent_id: &str,
     parent_operation_id: &str,
     parent_request_id: &str,
     cancelled: Arc<AtomicBool>,
@@ -1210,11 +1443,13 @@ pub(crate) fn with_remote_routed_tools(
         broker,
         binding,
         runner,
+        background_work,
         approvals,
         user_settings,
         local_tool_permission_ceiling,
         live_account_fence,
         events,
+        parent_agent_id: parent_agent_id.to_string(),
         parent_operation_id: parent_operation_id.to_string(),
         parent_request_id: parent_request_id.to_string(),
         cancelled,
@@ -1253,11 +1488,47 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
             if command.len() > MAX_SHELL_COMMAND || command.chars().any(|c| c == '\0') {
                 return Err("Remote Shell command is invalid or too large".into());
             }
-            let timeout = object.get("timeoutMs").and_then(Value::as_u64).unwrap_or(30_000);
-            if !(1_000..=120_000).contains(&timeout) {
-                return Err("Remote Shell timeoutMs is outside the bounded range".into());
+            let background = object
+                .get("is_background")
+                .map(|value| {
+                    value
+                        .as_bool()
+                        .ok_or("Remote Shell is_background must be boolean")
+                })
+                .transpose()?
+                .unwrap_or(false);
+            if let Some(working_directory) = object.get("working_directory") {
+                let working_directory = working_directory
+                    .as_str()
+                    .ok_or("Remote Shell working_directory must be a string")?
+                    .trim();
+                if working_directory.is_empty()
+                    || working_directory.len() > MAX_READ_PATH
+                    || working_directory.chars().any(|c| c == '\0')
+                {
+                    return Err("Remote Shell working_directory is invalid".into());
+                }
+                if !background {
+                    return Err(
+                        "Remote Shell working_directory is supported only for background execution"
+                            .into(),
+                    );
+                }
             }
-            Ok(timeout)
+            if background {
+                if object.contains_key("timeoutMs") {
+                    return Err(
+                        "Remote background Shell is durable and does not accept timeoutMs".into(),
+                    );
+                }
+                Ok(REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS)
+            } else {
+                let timeout = object.get("timeoutMs").and_then(Value::as_u64).unwrap_or(30_000);
+                if !(1_000..=120_000).contains(&timeout) {
+                    return Err("Remote Shell timeoutMs is outside the bounded range".into());
+                }
+                Ok(timeout)
+            }
         }
         "Read" => {
             let path = object
@@ -2168,11 +2439,19 @@ mod tests {
             broker: SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap(),
             binding: Arc::new(Mutex::new(None)),
             runner: Arc::new(Mutex::new(None)),
+            background_work: Arc::new(Mutex::new(
+                DurableRemoteBackgroundWorkOwner::open(
+                    root.path().join("remote-background-work.json"),
+                    1,
+                )
+                .unwrap(),
+            )),
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
             local_tool_permission_ceiling: None,
             live_account_fence: Arc::new(Mutex::new(Some("acct".into()))),
             events: Arc::new(Mutex::new(VecDeque::new())),
+            parent_agent_id: "agent-test".into(),
             parent_operation_id: "parent-operation".into(),
             parent_request_id: "parent-request".into(),
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -2197,11 +2476,19 @@ mod tests {
             broker: SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap(),
             binding: Arc::new(Mutex::new(None)),
             runner: Arc::new(Mutex::new(None)),
+            background_work: Arc::new(Mutex::new(
+                DurableRemoteBackgroundWorkOwner::open(
+                    root.path().join("remote-background-work.json"),
+                    1,
+                )
+                .unwrap(),
+            )),
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
             local_tool_permission_ceiling: None,
             live_account_fence: Arc::new(Mutex::new(None)),
             events: Arc::new(Mutex::new(VecDeque::new())),
+            parent_agent_id: "agent-test".into(),
             parent_operation_id: "parent-operation".into(),
             parent_request_id: "parent-request".into(),
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -2855,11 +3142,19 @@ mod tests {
             broker: SharedCapabilityBroker::open(root.path().join("broker.json"), 1).unwrap(),
             binding: Arc::new(Mutex::new(None)),
             runner: Arc::new(Mutex::new(None)),
+            background_work: Arc::new(Mutex::new(
+                DurableRemoteBackgroundWorkOwner::open(
+                    root.path().join("remote-background-work.json"),
+                    1,
+                )
+                .unwrap(),
+            )),
             approvals: RemoteApprovalRegistry::default(),
             user_settings: Arc::new(Mutex::new(settings)),
             local_tool_permission_ceiling: None,
             live_account_fence: Arc::new(Mutex::new(None)),
             events: Arc::new(Mutex::new(VecDeque::new())),
+            parent_agent_id: "agent-test".into(),
             parent_operation_id: "parent".into(),
             parent_request_id: "request".into(),
             cancelled: Arc::new(AtomicBool::new(false)),

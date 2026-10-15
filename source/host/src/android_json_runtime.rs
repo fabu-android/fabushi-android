@@ -1570,6 +1570,7 @@ pub struct AndroidJsonHost {
     capability_broker: SharedCapabilityBroker,
     remote_binding: Arc<Mutex<Option<RemoteDispatchBinding>>>,
     remote_runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>,
+    remote_background_work: Arc<Mutex<crate::remote_background_work::DurableRemoteBackgroundWorkOwner>>,
     remote_journal_path: PathBuf,
     remote_box_store_sync: Mutex<RemoteBoxStoreSyncJournal>,
     automation_runtime: AutomationRuntime,
@@ -2478,6 +2479,15 @@ impl AndroidJsonHost {
                 .unwrap_or_else(|error| panic!("failed to open durable Android Capability Broker: {error}")),
             remote_binding: Arc::new(Mutex::new(None)),
             remote_runner: Arc::new(Mutex::new(None)),
+            remote_background_work: Arc::new(Mutex::new(
+                crate::remote_background_work::DurableRemoteBackgroundWorkOwner::open(
+                    app_data_dir.join("remote-background-work.json"),
+                    now_ms(),
+                )
+                .unwrap_or_else(|error| {
+                    panic!("failed to open durable Remote background-work owner: {error}")
+                }),
+            )),
             remote_journal_path: app_data_dir.join("remote-execution-journal.json"),
             remote_box_store_sync: Mutex::new(
                 RemoteBoxStoreSyncJournal::open(
@@ -13463,6 +13473,7 @@ impl AndroidJsonHost {
         let remote_capability_broker = self.capability_broker.clone();
         let remote_binding = Arc::clone(&self.remote_binding);
         let remote_runner = Arc::clone(&self.remote_runner);
+        let remote_background_work = Arc::clone(&self.remote_background_work);
         let remote_client_paused = Arc::clone(&self.remote_client_paused);
         let remote_approvals = self.remote_approvals.clone();
         let remote_user_settings = Arc::clone(&self.user_settings);
@@ -14144,11 +14155,13 @@ impl AndroidJsonHost {
                         remote_capability_broker.clone(),
                         Arc::clone(&remote_binding),
                         Arc::clone(&remote_runner),
+                        Arc::clone(&remote_background_work),
                         remote_approvals.clone(),
                         Arc::clone(&remote_user_settings),
                         remote_local_tool_permission_ceiling,
                         Arc::clone(&live_account_fence),
                         Arc::clone(&turn_events),
+                        &conversation_id_owned,
                         &operation_id_owned,
                         &request_id_owned,
                         Arc::clone(&cancelled),

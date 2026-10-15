@@ -29,8 +29,8 @@ pub mod transport;
 
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
 pub use background_shell_backend::{
-    open_background_shell_service, BackgroundShellConfig, BackgroundShellResult,
-    ProductionBackgroundShellBackend, BACKGROUND_SHELL_CAPABILITY,
+    background_shell_id, open_background_shell_service, BackgroundShellConfig,
+    BackgroundShellResult, ProductionBackgroundShellBackend, BACKGROUND_SHELL_CAPABILITY,
 };
 pub use browser_ua_backend::{
     BrowserUaReconcileBackend, BrowserUaReconcileExecutor, BrowserUaReconcileRequest,

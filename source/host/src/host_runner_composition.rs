@@ -81,6 +81,12 @@ impl<L: HostRunnerSession, R: HostRunnerSession> HostRunnerComposition<L, R> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteAuthorizedCancelOutcome {
+    Confirmed,
+    OutcomeUnknown,
+}
+
 pub struct AuthenticatedRemoteHostRunner<T: RemoteExecutionTransport> {
     runner: RemoteRunner<T>,
     journal: RemoteExecutionJournal,
@@ -494,37 +500,41 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
         &mut self,
         context: &RemoteExecutionContext,
         now_ms: u64,
-    ) -> Result<(), ExecutionError> {
+    ) -> Result<RemoteAuthorizedCancelOutcome, ExecutionError> {
         let state = self
             .journal
             .record(&context.operation_id)
             .map(|record| record.state.clone())
             .ok_or_else(|| ExecutionError::InvalidRequest("remote operation is unknown".into()))?;
         if state == RemoteExecutionState::Pending {
-            return self
-                .journal
+            self.journal
                 .cancel_before_dispatch(&context.operation_id, now_ms)
-                .map_err(ExecutionError::Transport);
+                .map_err(ExecutionError::Transport)?;
+            return Ok(RemoteAuthorizedCancelOutcome::Confirmed);
         }
         match self.runner.cancel(
             context,
             &context.operation_id,
             &context.request_id,
         )? {
-            RemoteCancelOutcome::Confirmed { ack_id } => self
-                .journal
-                .confirm_cancel_after_dispatch(
-                    &context.operation_id,
-                    &context.account_fence,
-                    context.account_epoch,
-                    ack_id.as_deref(),
-                    now_ms,
-                )
-                .map_err(ExecutionError::Transport),
-            RemoteCancelOutcome::OutcomeUnknown { .. } => self
-                .journal
-                .cancel_after_dispatch(&context.operation_id, now_ms)
-                .map_err(ExecutionError::Transport),
+            RemoteCancelOutcome::Confirmed { ack_id } => {
+                self.journal
+                    .confirm_cancel_after_dispatch(
+                        &context.operation_id,
+                        &context.account_fence,
+                        context.account_epoch,
+                        ack_id.as_deref(),
+                        now_ms,
+                    )
+                    .map_err(ExecutionError::Transport)?;
+                Ok(RemoteAuthorizedCancelOutcome::Confirmed)
+            }
+            RemoteCancelOutcome::OutcomeUnknown { .. } => {
+                self.journal
+                    .cancel_after_dispatch(&context.operation_id, now_ms)
+                    .map_err(ExecutionError::Transport)?;
+                Ok(RemoteAuthorizedCancelOutcome::OutcomeUnknown)
+            }
         }
     }
 

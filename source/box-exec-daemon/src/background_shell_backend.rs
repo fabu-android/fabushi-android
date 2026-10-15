@@ -108,7 +108,12 @@ impl ProductionBackgroundShellBackend {
                 "background-shell working directory does not exist".into(),
             ));
         }
-        let shell_id = deterministic_shell_id(identity);
+        let shell_id = background_shell_id(
+            &identity.account_fence,
+            identity.account_epoch,
+            &identity.device_id,
+            &identity.operation_id,
+        );
         let terminal = self.config.terminals_root.join(format!("{shell_id}.txt"));
         Ok((parsed, shell_id, cwd, terminal))
     }
@@ -339,10 +344,18 @@ fn completed(
     })
 }
 
-fn deterministic_shell_id(identity: &RemoteRequestIdentity) -> String {
+pub fn background_shell_id(
+    account_fence: &str,
+    account_epoch: u64,
+    device_id: &str,
+    operation_id: &str,
+) -> String {
     let material = format!(
-        "{}\n{}\n{}\n{}",
-        identity.account_fence, identity.account_epoch, identity.device_id, identity.operation_id
+        "{}
+{}
+{}
+{}",
+        account_fence, account_epoch, device_id, operation_id
     );
     let digest = Sha256::digest(material.as_bytes());
     format!("remote-{}", hex_prefix(&digest, 24))
@@ -551,7 +564,15 @@ mod tests {
                     "background-shell live process owner was lost; terminal has no footer".into()
             }
         );
-        assert_eq!(deterministic_shell_id(&identity), shell_id);
+        assert_eq!(
+            background_shell_id(
+                &identity.account_fence,
+                identity.account_epoch,
+                &identity.device_id,
+                &identity.operation_id,
+            ),
+            shell_id
+        );
     }
 
     #[test]
