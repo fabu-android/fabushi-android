@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "f503c6bed748c14044475f7079511f8a86a0c5251e4ed2bbe182ec3086725c55",
-  "closure_review": "incremental-semantic-audit-storage-folder-id-sqlite-busy-at-05827a6",
+  "ledger_sha256": "1622cf89e2bf3bd4a5860147960fc830b1f690769e0dcef874047795622ab41b",
+  "closure_review": "incremental-semantic-audit-sand-prompt-markers-at-4f4e03c",
   "product_acceptance": "not-claimed"
 }
