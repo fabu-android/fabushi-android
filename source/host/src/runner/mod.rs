@@ -55,7 +55,9 @@ pub use android_host_inference::{
     AndroidSubagentReviewDecision,
 };
 
-pub use send_message::{with_send_message_tools, SEND_MESSAGE_TOOL_NAME};
+pub use send_message::{
+    with_send_message_tools, with_send_message_tools_counted_to_target, SEND_MESSAGE_TOOL_NAME,
+};
 
 pub use agent_management::{
     with_agent_management_tools, with_agent_management_tools_and_transcript,
