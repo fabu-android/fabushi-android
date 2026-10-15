@@ -126,6 +126,10 @@ mod tests {
             )]),
             None
         );
+        assert_eq!(
+            state.observe_tool_step(&[call("Read", json!({}))]),
+            Some(EARLY_RESULT_REMINDER_MESSAGE.to_string())
+        );
         assert_eq!(state.observe_tool_step(&[call("Read", json!({}))]), None);
         assert_eq!(
             state.observe_tool_step(&[call("Read", json!({}))]),
