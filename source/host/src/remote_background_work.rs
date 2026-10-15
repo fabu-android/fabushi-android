@@ -478,6 +478,50 @@ mod tests {
     }
 
     #[test]
+    fn cloud_agent_provisional_identity_rekeys_and_survives_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("remote-background.json");
+        let mut cloud_remote = remote("cloud-op-1");
+        cloud_remote.capability_id = "cloud-agent".into();
+        {
+            let mut owner = DurableRemoteBackgroundWorkOwner::open(&path, 1).unwrap();
+            owner
+                .register(
+                    "agent-1",
+                    "cloud-pending-cloud-op-1",
+                    "Cloud agent cloud-pending-cloud-op-1",
+                    RemoteBackgroundWorkKind::CloudAgent,
+                    &cloud_remote,
+                    2,
+                )
+                .unwrap();
+            let rekeyed = owner
+                .rekey_prepared(
+                    "cloud-pending-cloud-op-1",
+                    "cloud-agent-42",
+                    "account-a",
+                    7,
+                    3,
+                )
+                .unwrap();
+            assert_eq!(rekeyed.kind, RemoteBackgroundWorkKind::CloudAgent);
+            assert_eq!(rekeyed.work_id, "cloud-agent-42");
+            assert_eq!(rekeyed.title, "Cloud agent cloud-agent-42");
+            owner
+                .mark_watching("cloud-agent-42", "account-a", 7, 4)
+                .unwrap();
+        }
+        let owner = DurableRemoteBackgroundWorkOwner::open(&path, 99).unwrap();
+        let record = owner.get("cloud-agent-42").unwrap();
+        assert_eq!(record.kind, RemoteBackgroundWorkKind::CloudAgent);
+        assert_eq!(record.operation_id, "cloud-op-1");
+        assert_eq!(record.capability_id, "cloud-agent");
+        assert_eq!(record.state, RemoteBackgroundWorkState::Watching);
+        assert!(record.interrupted_by_recreate);
+        assert!(owner.get("cloud-pending-cloud-op-1").is_none());
+    }
+
+    #[test]
     fn duplicate_work_id_cannot_change_remote_or_account_identity() {
         let root = tempfile::tempdir().unwrap();
         let mut owner =

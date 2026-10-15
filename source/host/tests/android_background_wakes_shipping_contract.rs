@@ -126,7 +126,7 @@ fn cloud_agent_watcher_ships_through_same_authorized_remote_operation_and_durabl
     ] {
         assert!(routed.contains(needle), "CloudAgent routed owner must contain {needle}");
     }
-    assert!(owner.contains("RemoteBackgroundWorkKind::CloudAgent"));
+    assert!(owner.contains("CloudAgent,"));
     assert!(owner.contains("rekey_prepared"));
     assert!(backend.contains("continuation_watch_request"));
     assert!(backend.contains("progress_json"));
