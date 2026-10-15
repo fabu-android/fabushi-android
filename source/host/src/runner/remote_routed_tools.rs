@@ -1307,7 +1307,7 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .ok_or_else(|| format!("Remote {name} requires {required}"))?;
-            if path.len() > MAX_READ_PATH || path.contains(' ') {
+            if path.len() > MAX_READ_PATH || path.contains('\0') {
                 return Err(format!("Remote {name} {required} is invalid or too large"));
             }
             for optional in ["computer_path", "box_path"] {
@@ -1316,7 +1316,7 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
                 }
                 if let Some(value) = object.get(optional) {
                     let value = value.as_str().ok_or_else(|| format!("Remote {name} {optional} must be a string"))?;
-                    if value.trim().is_empty() || value.len() > MAX_READ_PATH || value.contains(' ') {
+                    if value.trim().is_empty() || value.len() > MAX_READ_PATH || value.contains('\0') {
                         return Err(format!("Remote {name} {optional} is invalid or too large"));
                     }
                 }
