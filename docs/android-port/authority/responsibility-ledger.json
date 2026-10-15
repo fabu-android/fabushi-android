@@ -19696,7 +19696,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Compose the shipping transcript extension around the canonical transcript/session owners; bridge profile/timeline/run/configuration events through the Host event bus; coalesce runner outline updates; publish roster projection events without creating a second transcript or roster owner; dispose observers/workers deterministically.",
       "source_owner": "Desktop TranscriptExtension + ProductionRosterEmit over ProductionSessionWorkers/TranscriptManager/SandHostEventBus",
       "direct_callers": [
@@ -19746,23 +19746,25 @@
       "security_boundary": "Host owns transcript/event composition; Compose/ViewModel receives typed immutable projections and cannot inject privileged Host events directly.",
       "android_disposition": "android-adapted",
       "android_target": [
-        "source/host/src/extensions/transcript/mod.rs",
-        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/transcript/extension.rs",
+        "source/host/src/extensions/transcript/roster_emit.rs",
+        "source/host/src/extensions/transcript/replica_writer.rs",
+        "source/host/src/host_event_bus.rs",
         "source/host/src/android_agent_roster.rs",
-        "source/host/src/host_event_bus.rs"
+        "source/host/src/android_json_runtime.rs"
       ],
-      "android_owner": "Rust Host transcript/session/runtime owners; Android currently has the canonical stores/event infrastructure but does not yet contain a complete one-for-one TranscriptExtension/ProductionRosterEmit shipping composition.",
+      "android_owner": "Rust Host TranscriptExtension + ProductionRosterEmit composed and owned by AndroidJsonHost; canonical AndroidAgentRoster/transcript/session owners remain separate durable truth.",
       "platform_delta": "Core transcript/event semantics stay in Rust. Android replaces Desktop process/window integration with Host process lifecycle and typed JNI projections; missing composition must be completed rather than moved into Compose.",
-      "implementation_status": "mapped",
-      "production_wiring": "partial: Android ships transcript/session stores, Host event projection, roster state and runner/runtime wiring, but the Desktop extension.rs + ProductionRosterEmit composition is not yet represented as a single complete Android production boundary.",
-      "unit_test": "partial: existing Android transcript/session/roster and Host event tests cover component semantics; dedicated full composition lifecycle coverage remains required.",
-      "contract_test": "required: profile/timeline/run/configuration event families, outline coalescing, subscription disposal, account fencing and cold-start reconstruction.",
-      "integration_test": "required through production Host→JNI→typed Kotlin projection on the final exact HEAD.",
-      "packaged_test": "required on minified release artifact.",
-      "device_test": "required for process death/restart and streaming outline/profile projection without duplicate transcript mutation.",
+      "implementation_status": "implemented",
+      "production_wiring": "Implemented in shipping Android Host: AndroidJsonHost::new constructs HostEventBus, live_account_fence, HostReplicaWriter and start_production_transcript_extension, retains TranscriptExtension for Host lifetime, and drains account-fenced projection events through the typed Host event surface. TranscriptExtension owns ProductionRosterEmit plus profile/timeline/runner-outline subscriptions; ProductionRosterEmit publishes agents/profile/timeline/automation/outline projections from canonical AndroidAgentRoster and replica stamps. Account/session resolution writes the same live_account_fence; logout/account-switch clears or replaces it, so stale event payloads and queued outline updates are fenced. TranscriptExtension Drop clears HostEvent subscriptions and calls ProductionRosterEmit::dispose, which stops the outline coalescer and clears transient streams without deleting canonical stores.",
+      "unit_test": "source/host/src/extensions/transcript/extension.rs covers production event-family composition and account-switch/dispose fencing; roster_emit.rs covers account-fenced canonical-roster reconstruction and outline coalescer disposal. Exact descendant CI after 97fdae… is still in progress.",
+      "contract_test": "Production Host composition is now explicit and retained by AndroidJsonHost. Remaining verification gate is same-descendant CI plus final packaged/process-death acceptance, not a missing composition implementation.",
+      "integration_test": "Shipping AndroidJsonHost routes channel/automation/run/profile/timeline events through TranscriptExtension and drains fenced projections; final packaged JNI/UI journey remains required.",
+      "packaged_test": "required on final minified githubRelease APK/AAB",
+      "device_test": "required for process death/restart, account switch and streaming outline/profile projection",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Reviewed from Desktop authority 371b72f… and Android exact head 470f3090fd0d166df698635cba62c5e41ca76d64. This row intentionally records a real partial composition gap; it must not be promoted to verified until production wiring and same-head CI/package/device evidence exist. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/transcript_manager.rs@3d86d37255aebeff06707ed5888fb722b9760a73 — Desktop TranscriptManager composes session workers, transcript runtime, runner registry, ack obligations, automation, background wakes, shared rooms, group chat and widget responses. Android owners exist in pieces; shipping composition/dispose/cold-start fencing remains partial."
+      "notes": "Desktop b6a66fd2 blobs for extension.rs/mod.rs/roster_emit.rs/transcript_manager.rs are unchanged from the ledger anchors. The prior 'partial composition gap' text is stale: Android now has an explicit shipping TranscriptExtension/ProductionRosterEmit boundary. Status is implemented, not verified, until exact descendant CI/package/device evidence is complete."
     },
     {
       "responsibility_id": "TRANSCRIPT-REPLICA-PROJECTION-ANDROID-001",
@@ -21685,7 +21687,7 @@
   "metadata": {
     "android_head_at_update": "dc717afdc2851bb0d5262e46c7a102fcccd1feb4",
     "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof. Audited native/mahayana-messaging/blob_store.rs is now a direct-port row to Host messaging_blob with stronger Android ownership/idempotency fences; the rest of the messaging crate remains individually open.",
-    "last_updated_android_head": "e9c6ec74e138f387967d5c474787b8799c5d4199",
-    "last_update_note": "Mapped Desktop host-extension/scheduling/local-exec daemon authority; added explicit Android scheduling-policy gap and replacement links."
+    "last_updated_android_head": "97fdae593ac58fa51eede9871498e162bb971e56",
+    "last_update_note": "Reconciled TranscriptExtension/ProductionRosterEmit to current shipping Android composition; verification remains pending exact descendant CI/package/device evidence."
   }
 }
