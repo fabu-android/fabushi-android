@@ -1,6 +1,7 @@
 use crate::remote_execution::{
     RemoteExecutionJournal, RemoteExecutionRecord, RemoteExecutionState,
 };
+use crate::remote_box_store_sync::{RemoteBoxStoreSyncJournal, RemoteBoxStoreSyncRecord};
 use fabushi_android_box_exec_daemon::{
     AuthenticatedRemoteHttpTransport, RemoteCancelOutcome, RemoteDispatchOutcome,
     RemoteExecutionContext, RemoteExecutionTransport, RemoteReconcileOutcome, RemoteRunner,
@@ -443,6 +444,7 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
 pub struct AuthorizedHostRunnerComposition<L: HostRunnerSession, T: RemoteExecutionTransport> {
     local: L,
     remote: AuthenticatedRemoteHostRunner<T>,
+    box_store_sync: Option<RemoteBoxStoreSyncJournal>,
 }
 
 impl<L: HostRunnerSession>
@@ -455,6 +457,11 @@ impl<L: HostRunnerSession>
         policy: RemoteTransportPolicy,
         now_ms: u64,
     ) -> Result<Self, ExecutionError> {
+        let remote_journal_path = remote_journal_path.as_ref();
+        let box_store_sync_path = remote_journal_path.with_extension("box-store-sync.json");
+        let box_store_sync =
+            RemoteBoxStoreSyncJournal::open(&box_store_sync_path, now_ms)
+                .map_err(ExecutionError::Transport)?;
         Ok(Self {
             local,
             remote: AuthenticatedRemoteHostRunner::production(
@@ -463,13 +470,30 @@ impl<L: HostRunnerSession>
                 policy,
                 now_ms,
             )?,
+            box_store_sync: Some(box_store_sync),
         })
     }
 }
 
 impl<L: HostRunnerSession, T: RemoteExecutionTransport> AuthorizedHostRunnerComposition<L, T> {
     pub fn new(local: L, remote: AuthenticatedRemoteHostRunner<T>) -> Self {
-        Self { local, remote }
+        Self {
+            local,
+            remote,
+            box_store_sync: None,
+        }
+    }
+
+    pub fn with_box_store_sync(
+        local: L,
+        remote: AuthenticatedRemoteHostRunner<T>,
+        box_store_sync: RemoteBoxStoreSyncJournal,
+    ) -> Self {
+        Self {
+            local,
+            remote,
+            box_store_sync: Some(box_store_sync),
+        }
     }
 
     pub fn run(
@@ -493,18 +517,49 @@ impl<L: HostRunnerSession, T: RemoteExecutionTransport> AuthorizedHostRunnerComp
         }
     }
 
+    pub fn dispatch_box_store_sync(
+        &mut self,
+        context: &RemoteExecutionContext,
+        record: RemoteBoxStoreSyncRecord,
+        now_ms: u64,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        let domain = self.box_store_sync.as_mut().ok_or_else(|| {
+            ExecutionError::Transport("box_store_sync_owner_unavailable".into())
+        })?;
+        domain.dispatch_via_authorized_runner(&mut self.remote, context, record, now_ms)
+    }
+
+    pub fn reconcile_box_store_sync(
+        &mut self,
+        context: &RemoteExecutionContext,
+        now_ms: u64,
+    ) -> Result<ExecutionResult, ExecutionError> {
+        let domain = self.box_store_sync.as_mut().ok_or_else(|| {
+            ExecutionError::Transport("box_store_sync_owner_unavailable".into())
+        })?;
+        domain.reconcile_via_authorized_runner(&mut self.remote, context, now_ms)
+    }
+
+    pub fn box_store_sync(&self) -> Option<&RemoteBoxStoreSyncJournal> {
+        self.box_store_sync.as_ref()
+    }
+
     pub fn remote(&self) -> &AuthenticatedRemoteHostRunner<T> {
         &self.remote
     }
 
     pub fn into_parts(self) -> (L, AuthenticatedRemoteHostRunner<T>) {
-        (self.local, self.remote)
+        let Self { local, remote, .. } = self;
+        (local, remote)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::remote_box_store_sync::{
+        RemoteBoxStoreSyncAction, RemoteBoxStoreSyncRecord, RemoteBoxStoreSyncState,
+    };
     use fabushi_android_box_exec_daemon::{
         RemoteBearerCredential, RemoteCancelOutcome, RemoteDispatchOutcome,
         RemoteReconcileOutcome,
@@ -917,4 +972,162 @@ mod tests {
         assert!(local.cancels.is_empty());
         assert_eq!(remote.cancels, vec!["remote-op"]);
     }
+    #[test]
+    fn shipping_composition_owns_box_store_sync_and_uses_the_same_remote_authority() {
+        let root = tempfile::tempdir().unwrap();
+        let remote_path = root.path().join("remote.json");
+        let box_store_path = root.path().join("box-store.json");
+        let remote_journal = RemoteExecutionJournal::open(&remote_path, 1).unwrap();
+        let remote =
+            AuthenticatedRemoteHostRunner::new(RecordingRemoteTransport::default(), remote_journal);
+        let box_store_sync = RemoteBoxStoreSyncJournal::open(&box_store_path, 1).unwrap();
+        let mut composition = AuthorizedHostRunnerComposition::with_box_store_sync(
+            RecordingRunner::default(),
+            remote,
+            box_store_sync,
+        );
+        let ctx = context("box-sync-op");
+        let record = RemoteBoxStoreSyncRecord::prepared(
+            "box-sync-op",
+            "request-box-sync-op",
+            "session:account-a",
+            7,
+            "device-1",
+            "store-a",
+            RemoteBoxStoreSyncAction::Hydrate,
+            None,
+            2,
+        )
+        .unwrap();
+
+        let result = composition
+            .dispatch_box_store_sync(&ctx, record, 3)
+            .unwrap();
+        assert!(result.output_json.contains("ok"));
+        assert_eq!(
+            composition
+                .box_store_sync()
+                .unwrap()
+                .record("box-sync-op")
+                .unwrap()
+                .state,
+            RemoteBoxStoreSyncState::Completed
+        );
+        assert_eq!(
+            composition
+                .remote()
+                .journal()
+                .record("box-sync-op")
+                .unwrap()
+                .state,
+            RemoteExecutionState::Completed
+        );
+    }
+
+    #[test]
+    fn box_store_sync_process_death_reopens_outcome_unknown_and_reconciles_without_replay() {
+        let root = tempfile::tempdir().unwrap();
+        let remote_path = root.path().join("remote.json");
+        let box_store_path = root.path().join("box-store.json");
+        let ctx = context("box-sync-unknown");
+
+        {
+            let remote_journal = RemoteExecutionJournal::open(&remote_path, 1).unwrap();
+            let remote = AuthenticatedRemoteHostRunner::new(
+                RecordingRemoteTransport {
+                    executes: 0,
+                    result: Some(RemoteDispatchOutcome::OutcomeUnknown {
+                        ack_id: Some("ack-unknown".into()),
+                        reason: "connection-lost".into(),
+                    }),
+                },
+                remote_journal,
+            );
+            let box_store_sync = RemoteBoxStoreSyncJournal::open(&box_store_path, 1).unwrap();
+            let mut composition = AuthorizedHostRunnerComposition::with_box_store_sync(
+                RecordingRunner::default(),
+                remote,
+                box_store_sync,
+            );
+            let record = RemoteBoxStoreSyncRecord::prepared(
+                "box-sync-unknown",
+                "request-box-sync-unknown",
+                "session:account-a",
+                7,
+                "device-1",
+                "store-a",
+                RemoteBoxStoreSyncAction::Snapshot,
+                Some("etag-before".into()),
+                2,
+            )
+            .unwrap();
+
+            assert!(
+                composition
+                    .dispatch_box_store_sync(&ctx, record, 3)
+                    .is_err()
+            );
+            assert_eq!(
+                composition
+                    .box_store_sync()
+                    .unwrap()
+                    .record("box-sync-unknown")
+                    .unwrap()
+                    .state,
+                RemoteBoxStoreSyncState::OutcomeUnknown
+            );
+            assert_eq!(
+                composition
+                    .remote()
+                    .journal()
+                    .record("box-sync-unknown")
+                    .unwrap()
+                    .state,
+                RemoteExecutionState::OutcomeUnknown
+            );
+        }
+
+        let remote_journal = RemoteExecutionJournal::open(&remote_path, 99).unwrap();
+        let remote =
+            AuthenticatedRemoteHostRunner::new(RecordingRemoteTransport::default(), remote_journal);
+        let box_store_sync = RemoteBoxStoreSyncJournal::open(&box_store_path, 99).unwrap();
+        let mut composition = AuthorizedHostRunnerComposition::with_box_store_sync(
+            RecordingRunner::default(),
+            remote,
+            box_store_sync,
+        );
+
+        assert_eq!(
+            composition
+                .box_store_sync()
+                .unwrap()
+                .record("box-sync-unknown")
+                .unwrap()
+                .state,
+            RemoteBoxStoreSyncState::OutcomeUnknown
+        );
+        let reconciled = composition
+            .reconcile_box_store_sync(&ctx, 100)
+            .unwrap();
+        assert!(reconciled.output_json.contains("reconciled"));
+        assert_eq!(
+            composition
+                .box_store_sync()
+                .unwrap()
+                .record("box-sync-unknown")
+                .unwrap()
+                .state,
+            RemoteBoxStoreSyncState::Completed
+        );
+        assert_eq!(
+            composition
+                .remote()
+                .journal()
+                .record("box-sync-unknown")
+                .unwrap()
+                .state,
+            RemoteExecutionState::Completed
+        );
+    }
+
 }
