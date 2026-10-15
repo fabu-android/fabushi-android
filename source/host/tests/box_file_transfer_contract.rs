@@ -100,7 +100,7 @@ fn external_runner_transfer_is_100_mib_chunked_digest_verified_and_reconcilable(
 
     assert!(matches!(
         backend
-            .reconcile(&identity("transfer-op", "session:a", "device-a"), &req)
+            .reconcile(&identity("transfer-op", "session:a", "device-a"), &req, None)
             .unwrap(),
         RemoteBackendReconcileOutcome::Completed { .. }
     ));
