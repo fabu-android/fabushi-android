@@ -19,6 +19,12 @@ pub struct AndroidPendingHandoff {
     pub account_fence: String,
     pub agent_id: String,
     pub instruction: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub domain: Option<String>,
+    #[serde(default)]
+    pub idp_domain: Option<String>,
     pub snapshot_data_url: Option<String>,
     pub created_at_ms: u64,
 }
@@ -113,6 +119,19 @@ impl AndroidBoxHandoffOwner {
         instruction: &str,
         now_ms: u64,
     ) -> Result<AndroidHandoffStart, String> {
+        self.start_with_context(account_fence, agent_id, instruction, None, None, None, now_ms)
+    }
+
+    pub fn start_with_context(
+        &mut self,
+        account_fence: &str,
+        agent_id: &str,
+        instruction: &str,
+        reason: Option<&str>,
+        domain: Option<&str>,
+        idp_domain: Option<&str>,
+        now_ms: u64,
+    ) -> Result<AndroidHandoffStart, String> {
         let (account_fence, agent_id) = validate_scope(account_fence, agent_id)?;
         let instruction = instruction.trim();
         if instruction.is_empty() {
@@ -134,6 +153,9 @@ impl AndroidBoxHandoffOwner {
             account_fence: account_fence.to_string(),
             agent_id: agent_id.to_string(),
             instruction: instruction.to_string(),
+            reason: normalize_optional_context(reason),
+            domain: normalize_optional_context(domain),
+            idp_domain: normalize_optional_context(idp_domain),
             snapshot_data_url: None,
             created_at_ms: now_ms,
         };
@@ -289,6 +311,9 @@ impl AndroidBoxHandoffOwner {
             Some(pending) => json!({
                 "requestId": pending.request_id,
                 "instruction": pending.instruction,
+                "reason": pending.reason,
+                "domain": pending.domain,
+                "idpDomain": pending.idp_domain,
                 "snapshotDataUrl": pending.snapshot_data_url,
                 "createdAtMs": pending.created_at_ms,
             }),
@@ -317,6 +342,13 @@ fn validate_scope<'a>(
         return Err("box handoff agent id is invalid".into());
     }
     Ok((account_fence, agent_id))
+}
+
+fn normalize_optional_context(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.chars().take(512).collect())
 }
 
 fn normalized_end_value(value: Option<&str>, fallback: &str) -> String {

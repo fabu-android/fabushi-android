@@ -6,6 +6,7 @@ pub mod agent_management;
 pub mod agent_v1_wire;
 pub mod agent_v1_observation;
 pub mod android_host_inference;
+pub mod box_help_routed_tool;
 pub mod android_system_prompt;
 pub mod background_work;
 mod checkpoint;
@@ -118,6 +119,9 @@ pub(crate) use remote_routed_tools::{
 };
 
 pub(crate) use local_routed_tools::{with_local_file_tools, LocalApprovalRegistry};
+pub(crate) use box_help_routed_tool::{
+    with_box_help_routed_tool, WAITING_USER_CANCELLATION_PREFIX,
+};
 
 pub use multitask_todo::{
     with_multitask_todo_tools, DurableMultitaskTodoStore, MultitaskTodoItem,

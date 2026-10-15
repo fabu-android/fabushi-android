@@ -190,7 +190,8 @@ use crate::runner::{
     build_parent_subagent_routed_tools, spawn_generated_subagent, SubagentCompletionWakeSink,
     with_agent_management_tools_and_transcript,
     with_send_message_tools, with_send_message_tools_counted_to_target, with_multitask_todo_tools,
-    with_generate_image_routed_tools, with_local_file_tools, with_remote_routed_tools, with_web_routed_tools,
+    with_box_help_routed_tool, with_generate_image_routed_tools, with_local_file_tools,
+    with_remote_routed_tools, with_web_routed_tools, WAITING_USER_CANCELLATION_PREFIX,
     AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry,
     RemoteAutoReviewDecision, RemoteAutoReviewPreflight, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
@@ -9109,6 +9110,9 @@ impl AndroidJsonHost {
                 "status": "started",
                 "requestId": pending.request_id,
                 "instruction": pending.instruction,
+                "reason": pending.reason,
+                "domain": pending.domain,
+                "idpDomain": pending.idp_domain,
                 "snapshotDataUrl": pending.snapshot_data_url,
                 "createdAtMs": pending.created_at_ms,
             }),
@@ -9116,6 +9120,9 @@ impl AndroidJsonHost {
                 "status": "already-pending",
                 "requestId": pending.request_id,
                 "instruction": pending.instruction,
+                "reason": pending.reason,
+                "domain": pending.domain,
+                "idpDomain": pending.idp_domain,
                 "snapshotDataUrl": pending.snapshot_data_url,
                 "createdAtMs": pending.created_at_ms,
             }),
@@ -9157,6 +9164,10 @@ impl AndroidJsonHost {
             )?;
         Ok(match ended {
             Some(ended) => {
+                self.turn_lifecycle
+                    .lock()
+                    .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+                    .clear_awaiting_user_for_agent_response(&account_fence, &ended.agent_id)?;
                 let resume_mutation = self.queue_box_handoff_resume_turn(
                     &account_fence,
                     &ended.agent_id,
@@ -12913,6 +12924,7 @@ impl AndroidJsonHost {
         let multitask_todos = Arc::clone(&self.multitask_todos);
         let agent_roster = Arc::clone(&self.agents);
         let agent_messaging = Arc::clone(&self.messaging);
+        let box_handoff = Arc::clone(&self.box_handoff);
         let live_account_fence = Arc::clone(&self.live_account_fence);
         let agent_turn_interruptions = Arc::clone(&self.agent_turn_interruptions);
         let web_backend = self.mcp_dashboard_backend.clone();
@@ -13354,6 +13366,16 @@ impl AndroidJsonHost {
                         Arc::clone(&cancelled),
                     )
                 };
+                // Desktop root Agents can explicitly suspend the turn for human-only box work.
+                // The routed adapter mutates only the durable AndroidBoxHandoffOwner; provider
+                // termination and durable awaiting-user settlement are handled below from its
+                // acknowledged request identity, avoiding a second handoff owner.
+                let routed_subagent_tools = with_box_help_routed_tool(
+                    routed_subagent_tools,
+                    Arc::clone(&box_handoff),
+                    &account_fence_owned,
+                    &conversation_id_owned,
+                );
                 // Desktop exposes TodoWrite only on a root non-subagent turn when
                 // multitask is enabled. Keep it outside GeneratedChildToolRegistry
                 // so no generated child can inherit root bookkeeping authority.
@@ -13975,6 +13997,65 @@ impl AndroidJsonHost {
                             }
                         }
                         ProductionTurnEvent::Failed { message } => {
+                            if let Some(handoff_request_id) =
+                                message.strip_prefix(WAITING_USER_CANCELLATION_PREFIX)
+                            {
+                                let waiting_reason =
+                                    format!("{WAITING_USER_CANCELLATION_PREFIX}{handoff_request_id}");
+                                turn_lifecycle
+                                    .lock()
+                                    .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+                                    .mark_awaiting_user(
+                                        &account_fence_owned,
+                                        &conversation_id_owned,
+                                        &request_id_owned,
+                                        &operation_id_owned,
+                                        turn_generation,
+                                        turn_lifecycle_process_epoch,
+                                        &waiting_reason,
+                                        now_ms(),
+                                    )?;
+                                if settles_visible_ack {
+                                    if let Some(ack_token) = ack_run_token_owned.as_deref() {
+                                        visible_ack_obligations
+                                            .defer_unfulfilled_for_token(
+                                                &account_fence_owned,
+                                                &conversation_id_owned,
+                                                ack_token,
+                                                now_ms(),
+                                            )
+                                            .map_err(|error| {
+                                                format!(
+                                                    "failed to persist visible acknowledgement interruption: {error}"
+                                                )
+                                            })?;
+                                    }
+                                }
+                                turn_journal
+                                    .lock()
+                                    .map_err(|_| "turn journal lock poisoned".to_string())?
+                                    .settle(
+                                        &request_id_owned,
+                                        &operation_id_owned,
+                                        &account_fence_owned,
+                                        turn_generation,
+                                        DurableTurnState::Cancelled,
+                                        Some(waiting_reason),
+                                        now_ms(),
+                                    )?;
+                                terminal_emitted = true;
+                                push_turn_event(
+                                    &turn_events,
+                                    json!({
+                                        "type":"operation.interrupted",
+                                        "operationId":operation_id_owned,
+                                        "requestId":request_id_owned,
+                                        "reason":"waiting-user",
+                                        "handoffRequestId":handoff_request_id,
+                                    }),
+                                );
+                                return Ok(());
+                            }
                             if settles_visible_ack {
                                 let observed = now_ms();
                                 if let Some(ack_token) = ack_run_token_owned.as_deref() {
@@ -19694,6 +19775,138 @@ export function apply(ctx) {
             host.agents.lock().unwrap().get(&agent_id).unwrap().introduction_pending,
             false
         );
+    }
+
+    #[test]
+    fn request_box_help_routed_tool_parks_turn_and_resumes_once_after_handback() {
+        let root_owner = tempfile::tempdir().unwrap();
+        let root = root_owner.path();
+        let mut host = AndroidJsonHost::new(root, AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let accepted = host
+            .dispatch(
+                "feature.execute",
+                &json!({"command":{
+                    "type":"chat.send",
+                    "requestId":"box-help-root-request",
+                    "agentId":"mahayana-assistant",
+                    "model":"default",
+                    "text":"[[tool:request_box_help]] {\"instruction\":\"Complete account sign-in\",\"reason\":\"auth\",\"domain\":\"https://www.example.com/login\",\"idp_domain\":\"accounts.example.com\"}"
+                }}),
+            )
+            .unwrap();
+        let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let handoff_request_id = loop {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["type"] == "operation.interrupted"
+                && event["operationId"] == operation_id
+                && event["reason"] == "waiting-user"
+            {
+                break event["handoffRequestId"].as_str().unwrap().to_string();
+            }
+            if event["type"] == "operation.failed" && event["operationId"] == operation_id {
+                panic!("request_box_help must park rather than fail: {event}");
+            }
+            assert!(std::time::Instant::now() < deadline, "box help turn must park");
+            if event.as_object().is_some_and(|object| object.is_empty()) {
+                thread::sleep(Duration::from_millis(10));
+            }
+        };
+
+        let pending = host
+            .box_handoff
+            .lock()
+            .unwrap()
+            .pending_for(&account_fence, "mahayana-assistant")
+            .unwrap()
+            .unwrap();
+        assert_eq!(pending.request_id, handoff_request_id);
+        assert_eq!(pending.reason.as_deref(), Some("auth"));
+        assert_eq!(pending.domain.as_deref(), Some("example.com"));
+        assert_eq!(pending.idp_domain.as_deref(), Some("accounts.example.com"));
+        let waiting = host
+            .turn_lifecycle
+            .lock()
+            .unwrap()
+            .awaiting_user_projection(&account_fence, "mahayana-assistant")
+            .expect("handoff must project durable awaiting-user state");
+        assert_eq!(waiting.operation_id, operation_id);
+        assert!(waiting.reason.starts_with(WAITING_USER_CANCELLATION_PREFIX));
+        let record = host
+            .turn_journal
+            .lock()
+            .unwrap()
+            .record("box-help-root-request")
+            .cloned()
+            .unwrap();
+        assert_eq!(record.state, DurableTurnState::Cancelled);
+        assert!(record.reason.as_deref().unwrap().starts_with(WAITING_USER_CANCELLATION_PREFIX));
+
+        drop(host);
+        let mut reopened = AndroidJsonHost::new(root, AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        let reopened_fence = reopened.current_turn_account_fence().unwrap();
+        assert!(reopened
+            .box_handoff
+            .lock()
+            .unwrap()
+            .pending_for(&reopened_fence, "mahayana-assistant")
+            .unwrap()
+            .is_some());
+        assert!(reopened
+            .turn_lifecycle
+            .lock()
+            .unwrap()
+            .awaiting_user_projection(&reopened_fence, "mahayana-assistant")
+            .unwrap()
+            .recovery_required);
+
+        let ended = reopened
+            .dispatch(
+                "feature.agent.handoff.end",
+                &json!({
+                    "agentId":"mahayana-assistant",
+                    "requestId":handoff_request_id,
+                    "resolution":"completed",
+                    "trigger":"user-returned"
+                }),
+            )
+            .unwrap();
+        assert_eq!(ended["ended"], true);
+        assert_eq!(ended["resumeQueued"], true);
+        assert!(reopened
+            .turn_lifecycle
+            .lock()
+            .unwrap()
+            .awaiting_user_projection(&reopened_fence, "mahayana-assistant")
+            .is_none());
+
+        let resume_request_id =
+            format!("box-handoff-resume:{handoff_request_id}:mahayana-assistant:user-returned");
+        let resume_deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if reopened
+                .turn_journal
+                .lock()
+                .unwrap()
+                .record(&resume_request_id)
+                .is_some()
+            {
+                break;
+            }
+            assert!(std::time::Instant::now() < resume_deadline, "handoff continuation must queue");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(reopened
+            .box_handoff
+            .lock()
+            .unwrap()
+            .pending_resumes_for_account(&reopened_fence)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

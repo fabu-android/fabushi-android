@@ -1,3 +1,6 @@
+use super::box_help_routed_tool::{
+    waiting_user_box_help_request_id, WAITING_USER_CANCELLATION_PREFIX,
+};
 use super::{
     agent_v1_wire::{
         encode_routed_tool_call_initial_observation, encode_routed_tool_call_observation,
@@ -419,6 +422,14 @@ impl AndroidHostInferenceProvider {
                                 first_token_stall: false,
                                 stream_output_produced: true,
                             })?;
+                        if let Some(request_id) = waiting_user_box_help_request_id(&result) {
+                            return Err(ProviderFailure {
+                                message: format!("{WAITING_USER_CANCELLATION_PREFIX}{request_id}"),
+                                retry_after_ms: None,
+                                first_token_stall: false,
+                                stream_output_produced: true,
+                            });
+                        }
                         let text = format!("tool_result:{}", result);
                         on_chunk(&text).map_err(ProviderFailure::new)?;
                         return Ok(StreamGeneration {
@@ -769,6 +780,14 @@ impl AndroidHostInferenceProvider {
                     first_token_stall: false,
                     stream_output_produced: true,
                 })?;
+                if let Some(request_id) = waiting_user_box_help_request_id(&result) {
+                    return Err(ProviderFailure {
+                        message: format!("{WAITING_USER_CANCELLATION_PREFIX}{request_id}"),
+                        retry_after_ms: None,
+                        first_token_stall: false,
+                        stream_output_produced: true,
+                    });
+                }
                 outputs.push(json!({
                     "type":"function_call_output",
                     "call_id":call_id,
