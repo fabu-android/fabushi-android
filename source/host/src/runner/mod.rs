@@ -76,7 +76,8 @@ pub use transient_stream_error::{
 
 pub use android_system_prompt::{
     android_root_system_instructions, append_android_agent_profile_system_instructions,
-    build_android_root_system_instructions, ANDROID_ROOT_SYSTEM_INSTRUCTIONS,
+    append_android_team_rules_system_instructions, build_android_root_system_instructions,
+    ANDROID_ROOT_SYSTEM_INSTRUCTIONS,
 };
 
 pub use android_host_inference::{

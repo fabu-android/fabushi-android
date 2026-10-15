@@ -1,3 +1,5 @@
+use serde_json::Value;
+
 /// Android-adapted root Agent instructions.
 ///
 /// Desktop owns a larger dynamic prompt assembly surface. Android keeps the
@@ -36,6 +38,48 @@ pub fn build_android_root_system_instructions(
         sections.push(format!("## Runtime context\nUser time zone: {time_zone}"));
     }
     sections.join("\n\n")
+}
+
+pub fn append_android_team_rules_system_instructions(
+    instructions: &mut String,
+    rules: &[Value],
+) {
+    let mut rendered = Vec::new();
+    for rule in rules {
+        let Some(content) = rule
+            .get("content")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let name = rule
+            .get("fullPath")
+            .or_else(|| rule.get("name"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("team rule");
+        let required = rule
+            .get("isRequired")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        rendered.push(format!(
+            "### {name}{}\n{content}",
+            if required { " (required)" } else { "" }
+        ));
+    }
+    if rendered.is_empty() {
+        return;
+    }
+    if !instructions.trim().is_empty() {
+        instructions.push_str("\n\n");
+    }
+    instructions.push_str(
+        "## Team rules\nApply the following organization rules to this turn.\n\n",
+    );
+    instructions.push_str(&rendered.join("\n\n"));
 }
 
 pub fn append_android_agent_profile_system_instructions(
@@ -101,6 +145,28 @@ mod tests {
 
         let base_only = build_android_root_system_instructions("   ", Some("   "));
         assert_eq!(base_only, ANDROID_ROOT_SYSTEM_INSTRUCTIONS);
+    }
+
+    #[test]
+    fn managed_team_rules_match_desktop_rendering_and_skip_empty_content() {
+        let mut prompt = build_android_root_system_instructions("", None);
+        append_android_team_rules_system_instructions(
+            &mut prompt,
+            &[
+                serde_json::json!({
+                    "fullPath":"Security / Read only",
+                    "content":"Never mutate production without approval.",
+                    "isRequired":true
+                }),
+                serde_json::json!({"name":"empty","content":"   "}),
+                serde_json::json!({"content":"Use least privilege."}),
+            ],
+        );
+        assert!(prompt.contains("## Team rules"));
+        assert!(prompt.contains("### Security / Read only (required)"));
+        assert!(prompt.contains("Never mutate production without approval."));
+        assert!(prompt.contains("### team rule\nUse least privilege."));
+        assert!(!prompt.contains("### empty"));
     }
 
     #[test]

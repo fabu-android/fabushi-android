@@ -166,7 +166,8 @@ use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
 use crate::runner::{
-    append_android_agent_profile_system_instructions, build_android_root_system_instructions,
+    append_android_agent_profile_system_instructions,
+    append_android_team_rules_system_instructions, build_android_root_system_instructions,
     AndroidHostInferenceProvider, AndroidInferenceMode,
     AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
@@ -12030,6 +12031,15 @@ impl AndroidJsonHost {
             &memory_prompt,
             effective_time_zone.as_deref(),
         );
+        if let Some(team_rules) = self
+            .managed_team_rules
+            .snapshot(&account_fence_for_attachment)?
+        {
+            append_android_team_rules_system_instructions(
+                &mut system_instructions,
+                &team_rules,
+            );
+        }
         if let Some(existing) = self
             .turn_journal
             .lock()
