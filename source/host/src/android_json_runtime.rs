@@ -12020,6 +12020,14 @@ impl AndroidJsonHost {
                 &attachments,
             )?;
         let mut prompt = prompt_with_agent_attachments(&message_text, &attachments);
+        let memory_prompt = self
+            .memory
+            .render_agent_turn_prompt(&account_fence_for_attachment, &agent_id)?;
+        if !memory_prompt.is_empty() {
+            prompt.push_str("\n\n<system_reminder>\n");
+            prompt.push_str(&memory_prompt);
+            prompt.push_str("\n</system_reminder>");
+        }
         if let Some(time_zone) = self.effective_time_zone()? {
             prompt.push_str("\n\n<system_reminder>\nUser time zone: ");
             prompt.push_str(&time_zone);
