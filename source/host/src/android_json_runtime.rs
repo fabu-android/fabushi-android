@@ -166,7 +166,7 @@ use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
 use crate::runner::{
-    android_root_system_instructions, AndroidHostInferenceProvider, AndroidInferenceMode,
+    build_android_root_system_instructions, AndroidHostInferenceProvider, AndroidInferenceMode,
     AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
@@ -12020,20 +12020,15 @@ impl AndroidJsonHost {
                 &agent_id,
                 &attachments,
             )?;
-        let mut prompt = prompt_with_agent_attachments(&message_text, &attachments);
+        let prompt = prompt_with_agent_attachments(&message_text, &attachments);
         let memory_prompt = self
             .memory
             .render_combined_turn_prompt(&account_fence_for_attachment, &agent_id)?;
-        if !memory_prompt.is_empty() {
-            prompt.push_str("\n\n<system_reminder>\n");
-            prompt.push_str(&memory_prompt);
-            prompt.push_str("\n</system_reminder>");
-        }
-        if let Some(time_zone) = self.effective_time_zone()? {
-            prompt.push_str("\n\n<system_reminder>\nUser time zone: ");
-            prompt.push_str(&time_zone);
-            prompt.push_str("\n</system_reminder>");
-        }
+        let effective_time_zone = self.effective_time_zone()?;
+        let system_instructions = build_android_root_system_instructions(
+            &memory_prompt,
+            effective_time_zone.as_deref(),
+        );
         if let Some(existing) = self
             .turn_journal
             .lock()
@@ -12605,6 +12600,7 @@ impl AndroidJsonHost {
         let group_context_owned = group_context.clone();
         let group_send_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let model_owned = model.clone();
+        let system_instructions_owned = system_instructions.clone();
         let summarization_token = bearer_token.clone();
         let profile_revision_owned = profile_revision.clone();
         let subagent_owner = Arc::clone(&self.subagent_owner);
@@ -13259,7 +13255,7 @@ impl AndroidJsonHost {
                 let provider = match mode {
                     AndroidHostMode::Test => {
                         AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
-                            .with_system_instructions(android_root_system_instructions())
+                            .with_system_instructions(system_instructions_owned.clone())
                             .with_turn_tool_session_reminders(true)
                             .with_silence_allowed(false)
                             .with_routed_tools(Arc::clone(&routed_subagent_tools))
@@ -13296,7 +13292,7 @@ impl AndroidJsonHost {
                         };
                         match AndroidHostInferenceProvider::production(token, cancelled.clone()) {
                             Ok(provider) => provider
-                                .with_system_instructions(android_root_system_instructions())
+                                .with_system_instructions(system_instructions_owned.clone())
                                 .with_turn_tool_session_reminders(true)
                                 .with_silence_allowed(false)
                                 .with_routed_tools(Arc::clone(&routed_subagent_tools))

@@ -21,6 +21,23 @@ pub fn android_root_system_instructions() -> &'static str {
     ANDROID_ROOT_SYSTEM_INSTRUCTIONS
 }
 
+pub fn build_android_root_system_instructions(
+    memory_prompt: &str,
+    time_zone: Option<&str>,
+) -> String {
+    let mut sections = vec![ANDROID_ROOT_SYSTEM_INSTRUCTIONS.to_string()];
+    let memory_prompt = memory_prompt.trim();
+    if !memory_prompt.is_empty() {
+        sections.push(format!(
+            "## Durable memory context\n{memory_prompt}"
+        ));
+    }
+    if let Some(time_zone) = time_zone.map(str::trim).filter(|value| !value.is_empty()) {
+        sections.push(format!("## Runtime context\nUser time zone: {time_zone}"));
+    }
+    sections.join("\n\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -33,5 +50,20 @@ mod tests {
         assert!(prompt.contains("Remote Runner"));
         assert!(prompt.contains("outcome-unknown"));
         assert!(prompt.contains("Never bypass"));
+    }
+
+    #[test]
+    fn dynamic_memory_and_timezone_are_system_owned_and_optional() {
+        let prompt = build_android_root_system_instructions(
+            "User memory: prefers concise replies.",
+            Some(" America/Los_Angeles "),
+        );
+        assert!(prompt.starts_with(ANDROID_ROOT_SYSTEM_INSTRUCTIONS));
+        assert!(prompt.contains("## Durable memory context"));
+        assert!(prompt.contains("prefers concise replies"));
+        assert!(prompt.contains("User time zone: America/Los_Angeles"));
+
+        let base_only = build_android_root_system_instructions("   ", Some("   "));
+        assert_eq!(base_only, ANDROID_ROOT_SYSTEM_INSTRUCTIONS);
     }
 }
