@@ -16839,8 +16839,8 @@
       ],
       "android_owner": "Rust Host RemoteRoutedTools + CapabilityBroker + AuthenticatedRemoteHostRunner; bounded Local Runner remains separate; Presentation owns no execution authority",
       "platform_delta": "Desktop loopback/VNC/process-spawn/window mechanisms are forbidden as the Android local product architecture. Android may execute only bounded local actions or route to an explicitly enrolled Remote Runner with separate credentials and reconciliation.",
-      "implementation_status": "implemented",
-      "production_wiring": "Implemented in the shipping Rust Host. AndroidJsonHost parses only protected authorized-remote-runner-v1 bindings, validates current account fence/epoch, expiry, HTTPS transport and explicit executor capabilities, constructs AuthenticatedRemoteHostRunner with the durable remote journal, and projects readiness from that bound runner. Root Agent turns wrap their real tool graph with with_remote_routed_tools only when the trusted turn capability projection reports remote_box_available. Remote tools request/consume durable CapabilityBroker approval before dispatch; side-effecting execute is sent exactly once and transport ambiguity becomes outcome-unknown followed only by idempotent reconcile/cancel, never blind replay. Shell/read/write/computer/screenshot/browser/external/cloud-agent executor scopes are explicit and unsupported scopes fail closed.",
+      "implementation_status": "mapped",
+      "production_wiring": "Implemented in the shipping Rust Host. AndroidJsonHost parses only protected authorized-remote-runner-v1 bindings, validates current account fence/epoch, expiry, HTTPS transport and explicit executor capabilities, constructs AuthenticatedRemoteHostRunner with the durable remote journal, and projects readiness from that bound runner. Root Agent turns wrap their real tool graph with with_remote_routed_tools only when the trusted turn capability projection reports remote_box_available. Remote tools request/consume durable CapabilityBroker approval before dispatch; side-effecting execute is sent exactly once and transport ambiguity becomes outcome-unknown followed only by idempotent reconcile/cancel, never blind replay. Shell/read/write/computer/screenshot/browser/external/cloud-agent executor scopes are explicit and unsupported scopes fail closed. Audit correction at 43d15e4d53620f972dca79fc8bd9b6149a93f552: Remote shell/read/write/computer/browser routing is shipping, but Desktop CopyToBox/CopyFromBox 100 MiB user-computer↔Agent-Box transfer is not production-wired. The AndroidLocal staged upload handlers are test-only and are not a Remote Box substitute.",
       "unit_test": "Focused Rust coverage in remote_routed_tools.rs and remote_execution.rs covers wrong account epoch, unrelated credential planes, expired/not-yet-active credentials, plaintext endpoint rejection, explicit executor scope, bounded write input, permission=never, approval identity/consumption, pre-dispatch grant cancellation, and outcome-unknown reconciliation. Same-final-head Actions are still required.",
       "contract_test": "Production transport and Host composition implement separate authorized Remote Runner credentials, stable operation/request/grant/device/account identity, capability consumption, exactly-once side-effect dispatch and outcome-unknown reconciliation. Same exact-head GitHub Actions plus deployed executor compatibility remain required.",
       "integration_test": "Client-side production composition is wired through AndroidJsonHost -> real turn tool graph -> RemoteRoutedTools -> AuthenticatedRemoteHostRunner -> AuthenticatedRemoteHttpTransport. Live integration still requires an externally enrolled authorized Runner and therefore remains not-verified.",
@@ -16848,7 +16848,7 @@
       "device_test": "required for pairing/revoke/reconnect/viewport/file-transfer/computer-use on supported Android devices",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production Android client/Host execution path is implemented; the prior note claiming no outbound Remote Runner adapter was stale and has been removed. Do not mark verified until a real enrolled Runner proves shell/read/write/computer/browser/file/lifecycle behavior on the same exact Android HEAD, followed by packaged/device evidence. Release signing and protected-account blockers remain independent. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/box.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop box port centralizes readiness/no-monitor/unsupported errors and primary/fork monitor identity. Android replacement lives behind authorized Box/Remote Runner routing; exact no-monitor/readiness taxonomy is only mapped pending parity review.",
+      "notes": "Production Android client/Host execution path is implemented; the prior note claiming no outbound Remote Runner adapter was stale and has been removed. Do not mark verified until a real enrolled Runner proves shell/read/write/computer/browser/file/lifecycle behavior on the same exact Android HEAD, followed by packaged/device evidence. Release signing and protected-account blockers remain independent. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/box.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop box port centralizes readiness/no-monitor/unsupported errors and primary/fork monitor identity. Android replacement lives behind authorized Box/Remote Runner routing; exact no-monitor/readiness taxonomy is only mapped pending parity review. 1 MiB Remote Write and test-only AndroidLocal staged upload do not prove Desktop large-file transfer parity.",
       "desktop_sources": [
         {
           "path": "source/host/src/ports/box.rs",
@@ -16866,7 +16866,8 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d"
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "android_head_at_update": "43d15e4d53620f972dca79fc8bd9b6149a93f552"
     },
     {
       "responsibility_id": "CLOUD-AGENT-RUNTIME-ANDROID-001",
@@ -57747,6 +57748,101 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "0a5cad523f602d3ea6b5276fc10514f7beefc851 reviewed all 16 remaining mahayana-agent-codex + mahayana-cli source rows. codex-compat has no current shipping enablement; CLI/TUI/test-driver/plugin-dev are desktop/developer mechanisms. All are N/A-with-replacement, not verified."
+    },
+    {
+      "responsibility_id": "BOX-FILE-TRANSFER-ANDROID-001",
+      "domain": "runner-box-file-transfer",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/local_exec/gateway_local_exec_sand_box.rs",
+          "blob_sha": "1e3f87fec9e811b31f40c4cefcf63eccf8c9e7d2",
+          "symbols": [
+            "GatewayLocalExecSandBox",
+            "LocalExecTransferContext",
+            "upload_file_with_scope",
+            "download_file_with_scope"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/host_file_transfer_dependencies.rs",
+          "blob_sha": "9aef047dc7611f1f3de3400650f3e1c93c6a69e9",
+          "symbols": [
+            "ProductionFileTransferExecutor"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_file_transfer_tools.rs",
+          "blob_sha": "ae5d0e9242f035501c5a96d8dee2f4ebe4267167",
+          "symbols": [
+            "CopyToBox",
+            "CopyFromBox",
+            "FileTransferController"
+          ]
+        }
+      ],
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "responsibility": "Preserve shipping CopyToBox/CopyFromBox Agent tools that move bounded files between the selected user computer and Agent Box with tool-call-scoped approval, 100 MiB bounds, chunked digest verification, explicit offline/missing errors, and no blind replay of ambiguous side effects.",
+      "source_owner": "Desktop ProductionFileTransferExecutor + GatewayLocalExecSandBox + Agent Box TransferBox",
+      "direct_callers": [
+        "SandFileTransferToolBridge",
+        "ProductionFileTransferExecutor"
+      ],
+      "downstream_dependencies": [
+        "connected user computer provider",
+        "Agent Box file owner",
+        "local-tool approval",
+        "tool-call identity"
+      ],
+      "state_owner": "Rust Host transfer orchestrator; authorized external Runner owns user-computer mutation; Agent Box service owns Agent-side file state.",
+      "persistent_state": [
+        "operation/request id",
+        "account fence/epoch",
+        "device/computer id",
+        "tool-call id",
+        "transfer id",
+        "digest/version",
+        "dispatch/reconciliation state"
+      ],
+      "protocol_wire_contract": [
+        "CopyToBox/CopyFromBox arguments",
+        "staged upload start/chunk/commit",
+        "bounded download",
+        "authorized Remote execute/reconcile"
+      ],
+      "visible_effect": "Agent can copy files between a connected user computer and its Box without Android gaining arbitrary desktop filesystem authority.",
+      "failure_behavior": [
+        "offline/unknown computer explicit failure",
+        "oversize preflight rejection",
+        "digest/version mismatch fail closed",
+        "ambiguous post-dispatch outcome-unknown"
+      ],
+      "cancellation_behavior": "pre-dispatch cancel; dispatched mutation requires remote settlement/reconciliation",
+      "retry_semantics": "never blindly replay ambiguous write/commit",
+      "idempotency_semantics": "stable operation/request/transfer identity plus expected digest/version",
+      "process_death_recovery": "unsent prepared work may cancel; maybe-sent transfer reopens outcome-unknown and reconciles",
+      "account_fencing": "current account fence/epoch plus selected device identity",
+      "security_boundary": "user-computer mutation only in authorized external Runner; AndroidLocal app-private storage is not a substitute.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/src/host_runner_composition.rs",
+        "source/host/src/remote_execution.rs",
+        "source/local-exec-daemon/src/bounded_file_handlers.rs",
+        "source/box-exec-daemon"
+      ],
+      "android_owner": "Rust Host + CapabilityBroker + authenticated external Runner + Agent Box service",
+      "platform_delta": "Desktop co-resident local-exec becomes authorized Remote Runner for user-computer endpoint.",
+      "implementation_status": "mapped",
+      "production_wiring": "Remote shell/read/write and durable reconciliation exist. 100 MiB staged upload exists only under AndroidLocal tests with no production caller. CopyToBox/CopyFromBox and Agent-Box↔Remote composition remain missing.",
+      "unit_test": "bounded_file_handlers covers staged upload order/digest/version/overwrite only as supporting evidence",
+      "contract_test": "Open: authorized Remote transfer + CopyToBox/CopyFromBox contract",
+      "integration_test": "Open: Host→CapabilityBroker→authorized Remote user computer↔Agent Box",
+      "packaged_test": "Open exact-head packaged transfer journey",
+      "device_test": "Open selected-device protected-account transfer acceptance",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Created by semantic audit at Android 43d15e4d53620f972dca79fc8bd9b6149a93f552; prevents test-only AndroidLocal staged upload from being counted as Remote Box parity.",
+      "android_head_at_update": "43d15e4d53620f972dca79fc8bd9b6149a93f552"
     }
   ],
   "traceability": {
