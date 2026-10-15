@@ -4024,6 +4024,16 @@
             "platform-worker",
             "renderer"
           ]
+        },
+        {
+          "path": "source/local-exec-daemon/main.ts",
+          "blob_sha": "6ed3c317002ffcc0c6d745cb4751491ed81e82e0",
+          "symbols": [
+            "runLocalExecDaemonMain",
+            "reportLocalExecDaemonFatal",
+            "composeLocalExecDaemonOptions",
+            "runLocalExecDaemonEntrypoint"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -16300,6 +16310,23 @@
             "local exec transport bridge",
             "file upload/download bridge"
           ]
+        },
+        {
+          "path": "source/local-exec-daemon/main.ts",
+          "blob_sha": "6ed3c317002ffcc0c6d745cb4751491ed81e82e0",
+          "symbols": [
+            "composeLocalExecDaemonOptions",
+            "runLocalExecDaemonEntrypoint"
+          ]
+        },
+        {
+          "path": "source/local-exec-daemon/production-executor.ts",
+          "blob_sha": "ab36e8824bd960750bcf6e0f7b386ed524609244",
+          "symbols": [
+            "createProductionLocalExecExecutor",
+            "createDefaultProductionLocalExecExecutor",
+            "PRODUCTION_LOCAL_EXEC_RUNTIME_BINDINGS"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
@@ -16354,7 +16381,7 @@
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production wiring gap is closed in source by 3a43094f584c2f4ac74aaf76ef04ed155870ac45 and baba70fdf426dcdc75c87623e58ceca87d3bba93. Keep not-verified until a descendant exact HEAD passes Rust/Android/package/device evidence; this still does not claim unrestricted Desktop local-exec parity. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps."
+      "notes": "Production wiring gap is closed in source by 3a43094f584c2f4ac74aaf76ef04ed155870ac45 and baba70fdf426dcdc75c87623e58ceca87d3bba93. Keep not-verified until a descendant exact HEAD passes Rust/Android/package/device evidence; this still does not claim unrestricted Desktop local-exec parity. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps. Desktop local-exec daemon production executor/main audit: Android replacement intentionally narrows in-app local execution to bounded app-private file tools; Desktop arbitrary shell/background-shell/list process daemon behavior must route through the already-authorized Remote Runner when needed, preserving generated protocol/cancellation semantics without shipping a Node daemon."
     },
     {
       "responsibility_id": "AGENT-SESSION-DB-CONTRACTS-ANDROID-001",
@@ -16509,6 +16536,14 @@
           "blob_sha": "068e13c68951ff062726771df05c04ddb36b69c2",
           "symbols": [
             "module responsibilities audited at current Desktop authority"
+          ]
+        },
+        {
+          "path": "source/local-exec-daemon/production-executor.ts",
+          "blob_sha": "ab36e8824bd960750bcf6e0f7b386ed524609244",
+          "symbols": [
+            "createDefaultProductionLocalExecExecutor",
+            "shell/background-shell/read/list resource graph"
           ]
         }
       ],
@@ -21075,6 +21110,14 @@
             "install_invariant_reporter",
             "invariant_failure"
           ]
+        },
+        {
+          "path": "source/local-exec-daemon/invariant-violation-log.ts",
+          "blob_sha": "be19a2eefaba7bd0b736fc4ec25f0bc00ff45996",
+          "symbols": [
+            "DAEMON_INVARIANT_VIOLATION_EVENT",
+            "writeInvariantViolationLog"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -21270,6 +21313,16 @@
           "blob_sha": "c01cd91c2996b6e63bda09cd6cdf344644d9e3c4",
           "symbols": [
             "module responsibilities audited at current Desktop authority"
+          ]
+        },
+        {
+          "path": "source/internal/host-extensions.ts",
+          "blob_sha": "ca6e7e4e0816cd9e31f57b44a8953b93d0425a8c",
+          "symbols": [
+            "defineHostExtension",
+            "createHostEvents",
+            "resolveHostExtensionBootOrder",
+            "startHostExtensions"
           ]
         }
       ],
@@ -21521,6 +21574,82 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Focused composition tests exist, but shipping constructor/call chain is not yet proven on this head. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/user_computer.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop SingleUserComputer exposes this-computer selection/connectivity. Android coordinator provider policy preserves the canonical this-computer id and explicitly chooses bounded local versus authorized remote execution; no second computer owner is introduced."
+    },
+    {
+      "responsibility_id": "HOST-SCHEDULING-POLICIES-ANDROID-001",
+      "domain": "host-scheduling-policies",
+      "desktop_sources": [
+        {
+          "path": "source/internal/scheduling.ts",
+          "blob_sha": "68565201ee278fa935ccbdc74a0286db77f1ec18",
+          "symbols": [
+            "DeadlineExceededError",
+            "Clock",
+            "createDebouncePolicy",
+            "createRetryPolicy",
+            "createIdleWatchdogPolicy",
+            "createPollingPolicy",
+            "createExpiryPolicy",
+            "createDeadlinePolicy"
+          ]
+        }
+      ],
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "responsibility": "Preserve the reusable scheduling-policy semantics used by shipping Host domains: cancellable deadlines, bounded exponential retry, serialized polling, keyed expiry, idle watchdog and debounce, with one monotonic/real-time clock abstraction and deterministic disposal.",
+      "source_owner": "Desktop source/internal/scheduling.ts",
+      "direct_callers": [
+        "Host extension/domain runtimes that need timeout, retry, polling, expiry, watchdog or debounce"
+      ],
+      "downstream_dependencies": [
+        "domain-specific Host owners",
+        "process/account lifecycle",
+        "OS background scheduling adapters where long-lived execution is required"
+      ],
+      "state_owner": "Each domain remains canonical owner of its business state; scheduling policy owns only timer/cancellation lifecycle.",
+      "persistent_state": [
+        "none in the policy layer; durable retries/schedules remain domain-owned"
+      ],
+      "protocol_wire_contract": [
+        "DeadlineExceededError code=deadline_exceeded",
+        "AbortSignal cancellation propagation",
+        "bounded retry attempts/backoff",
+        "non-overlapping polling tick lifecycle",
+        "keyed expiry replacement",
+        "explicit dispose"
+      ],
+      "visible_effect": "Timeouts, retries, polling and debounce remain deterministic and cancellable without duplicate side effects when Android process/account lifecycle changes.",
+      "failure_behavior": [
+        "invalid policy configuration fails closed",
+        "tick rejection stops polling rather than spinning",
+        "deadline aborts work with typed deadline error",
+        "retry does not exceed configured attempts or retry predicate"
+      ],
+      "cancellation_behavior": "Abort/dispose cancels timers and propagates cancellation to work; no late callback may mutate disposed state.",
+      "retry_semantics": "Only caller-approved work is retried; policy provides bounded backoff and does not decide side-effect safety.",
+      "idempotency_semantics": "Timer policies never create business identities; caller/domain owns idempotency and outcome-unknown reconciliation.",
+      "process_death_recovery": "In-memory timers are not treated as durable truth; durable domain schedules/runs must reopen from their canonical store and OS scheduling adapter.",
+      "account_fencing": "Account-scoped domain callback must revalidate current generation before applying timer completion.",
+      "security_boundary": "Scheduling utilities cannot bypass Host/Capability Broker authorization or replay uncertain side effects.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/automation_schedule.rs",
+        "source/host/src/automation_runtime.rs",
+        "source/host/src/extensions/cross_user_sharing/xuser_relay.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+      ],
+      "android_owner": "Domain-specific Rust Host owners plus Android lifecycle/WorkManager adapters; no UI-owned canonical scheduler.",
+      "platform_delta": "Desktop Node timers/AbortSignal are not copied mechanically. Android currently has domain-specific Rust/Kotlin timer/retry implementations; a single audited equivalent policy layer and lifecycle proof is not yet established.",
+      "implementation_status": "mapped",
+      "production_wiring": "Mapped gap: scheduling semantics exist piecemeal in automation, relay and Coordinator code, but no source evidence yet proves a unified reusable owner or exhaustive caller-by-caller equivalence for deadline/retry/polling/expiry/watchdog/debounce.",
+      "unit_test": "required: deterministic fake-clock contracts for deadline/retry/polling/expiry/watchdog/debounce or explicit per-domain equivalent coverage",
+      "contract_test": "required: no retry of uncertain side effects; cancellation/dispose fences late callbacks",
+      "integration_test": "required on exact descendant GitHub Actions for long-lived Host domains and Android lifecycle transitions",
+      "packaged_test": "required where policy drives packaged background/runtime behavior",
+      "device_test": "required for OS background scheduling/process-death cases",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Created from Desktop b6a66fd2 source audit. This is a semantic policy responsibility, not a requirement to ship Node timers in the APK."
     }
   ],
   "traceability": {
@@ -21556,7 +21685,7 @@
   "metadata": {
     "android_head_at_update": "dc717afdc2851bb0d5262e46c7a102fcccd1feb4",
     "note": "Deterministic editor cursor now records the shipped suggestion boundary: Android has production-wired Agent/scheduled-automation projection with stale fencing, while Desktop PR/MCP providers are explicitly dormant in the current production adapter. Agent find-in-chat is now production-wired for message/widget semantic search and wrap navigation, while occurrence-span highlighting and richer searchable payloads remain mapped gaps. Native media viewer gallery is production-wired for Human conversations with navigation/zoom/stale-load fencing; in-app PDF rendering is now implemented at 499519f… and pending exact-head CI/device evidence, while Agent attachment/audio/focus semantics remain mapped. Spreadsheet preview responsibility is explicit; legacy .xls remains a deterministic gap. Signed-in onboarding rows are now explicitly mapped to native route/persona/create presentation and a separate unresolved computer-readiness/kickstart responsibility; neither is verified. Desktop permissions/local-tool renderer/store rows are now mapped to a dedicated unresolved Host-owned always/ask/never + team ceiling policy responsibility. Desktop plugins/overlay rows are now split across native overlay presentation, server-tool lifecycle, Git private-source auth recovery, and existing Skills/MCP owners; all remain mapped until production wiring/evidence closes. Settings instruction/router source and recovered cross-owner contract tests are now mapped to concrete responsibilities; provider/instruction production wiring remains explicitly open. Runtime/shell/state contracts plus root-resilience/roster source are now split across selection persistence, readiness, privacy-block, root connection, terminal projection and keyboard-shortcut responsibilities. Only roster selection is implemented; others remain mapped. Audited Desktop frontend TypeScript/Vite/recovered-renderer bootstrap rows now have explicit native Android replacements; transcript rich-content/reduced-motion/URL-card and hidden-chat evidence was reconciled to the 2b7859ac code head without verification inflation. Three recovered runtime Coordinator mechanism rows were source-read and mapped to COORDINATOR-PRESENTATION-CLIENT-ANDROID-001 as explicit Android replacements; async-action/snapshot/entrypoint registry rows remain open pending separate caller/owner proof. Audited native/mahayana-messaging/blob_store.rs is now a direct-port row to Host messaging_blob with stronger Android ownership/idempotency fences; the rest of the messaging crate remains individually open.",
-    "last_updated_android_head": "547d35d71c60347ee37a6a029508fd189536bb84",
-    "last_update_note": "Implemented Desktop workspace-ignore semantics in the external Remote BoxStore snapshot owner; verification remains pending exact-head CI."
+    "last_updated_android_head": "e9c6ec74e138f387967d5c474787b8799c5d4199",
+    "last_update_note": "Mapped Desktop host-extension/scheduling/local-exec daemon authority; added explicit Android scheduling-policy gap and replacement links."
   }
 }
