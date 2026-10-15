@@ -17,6 +17,7 @@ pub mod production_turn_agent_owner;
 pub mod production_turn_lifecycle;
 pub mod remote_routed_tools;
 pub mod local_routed_tools;
+pub mod listener_connect_cards;
 pub mod sand_labeling;
 pub mod web_routed_tools;
 pub mod generate_image_routed_tools;

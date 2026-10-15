@@ -14,6 +14,8 @@ use crate::automation_runtime::{
     run_json as automation_run_json, AutomationRuntime, AutomationSpec,
     AutomationSpendGuardDecision,
 };
+use crate::automation_trigger::trigger_listener_platforms;
+use crate::runner::listener_connect_cards::surface_listener_connect_cards;
 use crate::auto_review_settings::{AutoReviewInstructions, DurableAutoReviewSettings};
 use crate::runner::sand_auto_review::{
     resolve_sand_auto_review_modes, SandAutoReviewMode,
@@ -7569,7 +7571,49 @@ impl AndroidJsonHost {
             next_run_at_ms: None,
         };
         let time_zone = self.effective_time_zone()?;
+        let listener_platforms = spec.trigger.as_ref().map(trigger_listener_platforms).unwrap_or_default();
+        let listener_enabled = spec.enabled;
         self.automation_runtime.upsert_spec(spec, time_zone.as_deref())?;
+        if listener_enabled && !listener_platforms.is_empty() {
+            let store = self.agent_channel_store(&account_fence, agent_id)?;
+            let connected = store.list_connections();
+            let surfaced = surface_listener_connect_cards(
+                &listener_platforms,
+                Some(|platform: &str| -> Result<bool, String> {
+                    Ok(connected.iter().any(|connection| {
+                        connection.platform == platform && connection.status == "configured"
+                    }))
+                }),
+                |platform| match platform {
+                    "slack" => Some("Slack".to_string()),
+                    "github" => Some("GitHub".to_string()),
+                    _ => None,
+                },
+            );
+            for card in surfaced.cards {
+                let entry_id = format!("automation-listener-connect:{id}:{}", card.platform);
+                self.transcript
+                    .lock()
+                    .map_err(|_| "transcript lock poisoned".to_string())?
+                    .append_entry_if_absent(json!({
+                        "id":entry_id,
+                        "kind":"send-message",
+                        "role":"assistant",
+                        "agentId":agent_id,
+                        "accountFence":account_fence,
+                        "timestampMs":now_ms(),
+                        "message":{
+                            "type":card.message_type,
+                            "platform":card.platform,
+                            "reason":card.reason
+                        }
+                    }))
+                    .map_err(|error| format!("failed to persist listener connect card: {error}"))?;
+                self.transcript_extension
+                    .event_bridge()
+                    .listener_connect_card(agent_id, card.platform.as_str());
+            }
+        }
         self.record_automation_lifecycle_telemetry(&id, &account_fence, if existed { "updated" } else { "created" });
         Ok(json!({"id":id,"localId":local_id,"stored":true}))
     }
@@ -23748,6 +23792,56 @@ mod assistant_spend_guard_projection_tests {
 #[cfg(test)]
 mod automation_event_trigger_wiring_tests {
     use super::*;
+
+    #[test]
+    fn automation_upsert_persists_listener_connect_card_only_for_disconnected_platforms() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let created = host
+            .dispatch(
+                "createAgent",
+                &json!({"name":"Listener Agent","isIntroductionSuppressed":true}),
+            )
+            .unwrap();
+        let agent_id = created["agent"]["id"].as_str().unwrap().to_string();
+        let account_fence = host.current_turn_account_fence().unwrap();
+        host.dispatch(
+            "feature.agent.channels.writeMetadata",
+            &json!({
+                "accountFence":account_fence,
+                "agentId":agent_id,
+                "platform":"github",
+                "label":"GitHub"
+            }),
+        )
+        .unwrap();
+        host.dispatch(
+            "feature.automation.upsert",
+            &json!({
+                "id":"listener-routine",
+                "agentId":agent_id,
+                "name":"Listener routine",
+                "prompt":"Handle listener events",
+                "trigger":{"type":"group","listeners":[
+                    {"type":"github","repo":"owner/repo","events":["pr-opened"]},
+                    {"type":"slack","channel":"#ops","match":{"kind":"message"}}
+                ]},
+                "enabled":true
+            }),
+        )
+        .unwrap();
+        let transcript = host.dispatch("feature.transcript.snapshot", &json!({})).unwrap();
+        let cards = transcript
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["message"]["type"] == "listener-connect")
+            .collect::<Vec<_>>();
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0]["message"]["platform"], "slack");
+        assert_eq!(cards[0]["message"]["reason"], "so this routine can fire");
+    }
 
     #[test]
     fn event_trigger_route_rejects_unrelated_delivery() {
