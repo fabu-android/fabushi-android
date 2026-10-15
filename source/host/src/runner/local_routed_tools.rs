@@ -199,6 +199,7 @@ pub(crate) struct LocalRoutedTools {
     runtime_generation: u64,
     cancelled: Arc<AtomicBool>,
     auto_review_preflight: Option<RemoteAutoReviewPreflight>,
+    frozen_account_fence: Option<String>,
 }
 
 impl LocalRoutedTools {
@@ -276,6 +277,13 @@ impl AndroidRoutedToolBridge for LocalRoutedTools {
             "Write" => LOCAL_FILE_WRITE_CAPABILITY,
             _ => {
                 let result = self.delegate.call_tool(name, args, tool_call_id)?;
+                if self.cancelled.load(Ordering::Acquire) {
+                    return Err("routed tool result cancelled before large-output materialization".into());
+                }
+                let live_account_fence = self.current_account_fence()?;
+                if self.frozen_account_fence.as_deref() != Some(live_account_fence.as_str()) {
+                    return Err("routed tool result fenced by account switch".into());
+                }
                 // A spilled result is only useful when the same account may read it back.
                 // If local files are disabled or policy lookup fails, preserve the original
                 // inline result exactly; spill failure itself is also deliberately non-fatal.
@@ -497,6 +505,10 @@ pub(crate) fn with_local_file_tools(
     cancelled: Arc<AtomicBool>,
     auto_review_preflight: Option<RemoteAutoReviewPreflight>,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
+    let frozen_account_fence = live_account_fence
+        .lock()
+        .ok()
+        .and_then(|value| value.clone());
     Arc::new(LocalRoutedTools {
         delegate,
         broker,
@@ -511,6 +523,7 @@ pub(crate) fn with_local_file_tools(
         runtime_generation,
         cancelled,
         auto_review_preflight,
+        frozen_account_fence,
     })
 }
 
