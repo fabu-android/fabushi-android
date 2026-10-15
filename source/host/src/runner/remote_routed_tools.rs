@@ -2499,7 +2499,7 @@ mod tests {
         assert_eq!(
             validate_remote_tool_input(
                 "browser_cdp",
-                &json!({"method":"Runtime.evaluate","params":{"expression":"location.href"}}),
+                &json!({"method":"Runtime.evaluate","params":{"expression":"location.href"},"viewId":"view-a","expectedGeneration":"generation-7"}),
             )
             .unwrap(),
             REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
