@@ -6,6 +6,7 @@ use crate::box_store_hydration::{
     BOX_STORE_HYDRATION_HANDOFF_FILE_NAME, INCOMPLETE_LEGACY_HYDRATE_REASON,
 };
 use crate::box_store_workspace_ignore::{load_workspace_ignore, WorkspaceIgnore};
+use crate::box_store_pack_restore::read_pack_blob;
 use crate::server::{
     RemoteBackendCancelOutcome, RemoteBackendReconcileOutcome, RemoteBackendStartOutcome,
     RemoteExecutionBackend, RemoteRequestIdentity,
@@ -498,7 +499,13 @@ impl RemoteBoxStoreBackend {
                         )));
                     }
                     let object = objects.join(sha);
-                    let payload = read_bounded_file(&object)?;
+                    let payload = if object.exists() {
+                        read_bounded_file(&object)?
+                    } else {
+                        read_pack_blob(&self.store_dir(&input.store_id), sha, *size)
+                            .map_err(|error| ActionError::SafeReject(format!("read frozen pack object for {rel_path}: {error}")))?
+                            .ok_or_else(|| ActionError::SafeReject(format!("box-store object is missing for {rel_path}")))?
+                    };
                     if payload.len() as u64 != *size || sha256_bytes(&payload) != *sha {
                         return Err(ActionError::SafeReject(format!(
                             "box-store object integrity mismatch for {rel_path}"
@@ -1579,6 +1586,59 @@ mod tests {
             other => panic!("expected fail-closed rejection, got {other:?}"),
         }
         assert!(!config.sand_data_root.join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME).exists());
+    }
+
+    #[test]
+    fn frozen_v2_hydrate_restores_pack_only_member_on_shipping_backend() {
+        use flate2::{Compression, write::GzEncoder};
+        use std::io::Write as _;
+        let config = config("frozen-pack-only");
+        let store = config.store_root.join("store-a");
+        fs::create_dir_all(store.join("packs")).unwrap();
+        let payload = b"packed-desktop-member\n";
+        let digest = sha256_bytes(payload);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(payload).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let pack_id = sha256_bytes(&compressed);
+        fs::write(store.join("packs").join(&pack_id), &compressed).unwrap();
+        fs::write(store.join("packs/index.json"), serde_json::to_vec(&serde_json::json!({
+            "version": 1, "maxVmtime": 1,
+            "packs": [{ "id": pack_id, "bytes": compressed.len(), "members": [{
+                "sha": digest, "size": payload.len(), "offset": 0, "clen": compressed.len(), "vmtime": 1
+            }]}]
+        })).unwrap()).unwrap();
+        fs::write(store.join("manifest.json"), serde_json::to_vec(&serde_json::json!({
+            "version": 2, "updatedAtMs": 1, "writerWindowId": "desktop-pack", "fullyHydrated": true,
+            "entries": { "workspace/packed.txt": { "kind":"file", "sha": digest, "size": payload.len(), "mode": 384 } }
+        })).unwrap()).unwrap();
+        assert!(!store.join("blobs").join(&digest).exists());
+        let mut backend=RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        completed(backend.start(&identity("pack-hydrate","pack-request"),&request("pack-hydrate","hydrate",None)).unwrap());
+        assert_eq!(fs::read(config.workspace_root.join("packed.txt")).unwrap(),payload);
+    }
+
+    #[test]
+    fn frozen_v2_missing_pack_falls_back_to_loose_blob() {
+        let config=config("frozen-pack-fallback");
+        let store=config.store_root.join("store-a");
+        fs::create_dir_all(store.join("blobs")).unwrap();
+        fs::create_dir_all(store.join("packs")).unwrap();
+        let payload=b"loose-fallback\n";
+        let digest=sha256_bytes(payload);
+        fs::write(store.join("blobs").join(&digest),payload).unwrap();
+        fs::write(store.join("packs/index.json"),serde_json::to_vec(&serde_json::json!({
+            "version":1,"maxVmtime":1,"packs":[{"id":"missing-pack","bytes":16,"members":[{
+                "sha":digest,"size":payload.len(),"offset":0,"clen":1,"vmtime":1
+            }]}]
+        })).unwrap()).unwrap();
+        fs::write(store.join("manifest.json"),serde_json::to_vec(&serde_json::json!({
+            "version":2,"updatedAtMs":1,"fullyHydrated":true,
+            "entries":{"workspace/fallback.txt":{"kind":"file","sha":digest,"size":payload.len(),"mode":384}}
+        })).unwrap()).unwrap();
+        let mut backend=RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        completed(backend.start(&identity("fallback-hydrate","fallback-request"),&request("fallback-hydrate","hydrate",None)).unwrap());
+        assert_eq!(fs::read(config.workspace_root.join("fallback.txt")).unwrap(),payload);
     }
 
 }
