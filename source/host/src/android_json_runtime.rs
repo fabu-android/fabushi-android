@@ -48,6 +48,7 @@ use crate::remote_box_store_sync::{
 };
 use crate::messaging_service::AndroidMessagingService;
 use crate::mcp_server_tool_settings::McpServerToolSettings;
+use crate::workflows::workflow_library::GlobalWorkflowLibrary;
 use crate::composer_draft::DurableComposerDraftOwner;
 use crate::send_acknowledgement::{
     DurableSendAcknowledgementOwner, SendAcknowledgementEntry, SendAcknowledgementPhase,
@@ -167,9 +168,13 @@ use crate::extensions::webauthn_proxy::{
 };
 use crate::runner::{
     append_android_agent_profile_system_instructions,
+    append_android_dynamic_runtime_system_instructions,
     append_android_remote_runtime_system_instructions,
     append_android_team_rules_system_instructions, build_android_root_system_instructions,
-    AndroidHostInferenceProvider, AndroidInferenceMode, AndroidRemotePromptState,
+    ensure_android_prompt_account_snapshot_current, AndroidAgentPromptAddress,
+    AndroidAgentPromptGroup, AndroidAutomationPromptItem, AndroidChannelPromptItem,
+    AndroidDynamicPromptSnapshot, AndroidHostInferenceProvider, AndroidInferenceMode,
+    AndroidMcpPromptServer, AndroidRemotePromptState, AndroidSkillPromptItem,
     AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
@@ -1332,6 +1337,9 @@ pub struct AndroidJsonHost {
     process_crash_recent: VecDeque<Value>,
     unclean_exit: AndroidUncleanExitMarker,
     agents: Arc<Mutex<AndroidAgentRoster>>,
+    agent_roster_path: PathBuf,
+    workflow_library: GlobalWorkflowLibrary,
+    automation_prompt_path: PathBuf,
     sidebar_sections: Arc<Mutex<AndroidSidebarSections>>,
     contact_groups: Arc<Mutex<AndroidContactGroups>>,
     user_settings: Arc<Mutex<AndroidUserSettings>>,
@@ -2213,6 +2221,9 @@ impl AndroidJsonHost {
             process_crash_recent,
             unclean_exit,
             agents,
+            agent_roster_path: app_data_dir.join("agents.json"),
+            workflow_library: GlobalWorkflowLibrary::new(app_data_dir.join("workflows")),
+            automation_prompt_path: app_data_dir.join("automation-runtime.json"),
             sidebar_sections,
             contact_groups,
             user_settings,
@@ -6198,6 +6209,226 @@ impl AndroidJsonHost {
             *live = None;
         }
         resolved
+    }
+
+    fn dynamic_prompt_snapshot_for_root_turn(
+        &self,
+        expected_account_fence: &str,
+        agent_id: &str,
+    ) -> Result<AndroidDynamicPromptSnapshot, String> {
+        let current = self.current_turn_account_fence()?;
+        ensure_android_prompt_account_snapshot_current(expected_account_fence, &current)?;
+
+        let mut automations = self
+            .automation_runtime
+            .list_for_agent(expected_account_fence, agent_id)
+            .into_iter()
+            .filter_map(|value| {
+                let id = value.get("id")?.as_str()?.trim();
+                let name = value.get("name")?.as_str()?.trim();
+                if id.is_empty() || name.is_empty() {
+                    return None;
+                }
+                Some(AndroidAutomationPromptItem {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                    schedule: value
+                        .get("schedule")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    trigger_description: value
+                        .get("trigger_description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    enabled: value
+                        .get("enabled")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+            })
+            .collect::<Vec<_>>();
+        automations.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let mut skills = self
+            .workflow_library
+            .list()
+            .into_iter()
+            .map(|workflow| AndroidSkillPromptItem {
+                full_path: workflow.file_path.to_string_lossy().to_string(),
+                description: (!workflow.description.trim().is_empty())
+                    .then(|| workflow.description.trim().to_string()),
+            })
+            .collect::<Vec<_>>();
+        if let Some(service) = self.managed_skills.as_ref() {
+            skills.extend(
+                service
+                    .cached_skill_prompt_files()
+                    .into_iter()
+                    .map(|(path, description)| AndroidSkillPromptItem {
+                        full_path: path.to_string_lossy().to_string(),
+                        description: (!description.trim().is_empty())
+                            .then(|| description.trim().to_string()),
+                    }),
+            );
+        }
+
+        let current_agent_exists = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .get(agent_id)
+            .is_some();
+        let (channels_location, channels) = if current_agent_exists {
+            let channel_store = self.agent_channel_store(expected_account_fence, agent_id)?;
+            let location = channel_store.get_location().to_string_lossy().to_string();
+            let channels = channel_store
+                .list_connections()
+                .into_iter()
+                .filter(|connection| connection.status == "configured")
+                .map(|connection| AndroidChannelPromptItem {
+                    platform: connection.platform,
+                    label: connection.label,
+                    status: connection.status.to_string(),
+                })
+                .collect::<Vec<_>>();
+            (Some(location), channels)
+        } else {
+            (None, Vec::new())
+        };
+
+        let roster = self
+            .agents
+            .lock()
+            .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
+            .list();
+        let by_id = roster
+            .iter()
+            .map(|record| (record.id.as_str(), record))
+            .collect::<BTreeMap<_, _>>();
+        let mut other_agents = roster
+            .iter()
+            .filter(|record| !record.is_group && record.id != agent_id)
+            .map(|record| AndroidAgentPromptAddress {
+                id: record.id.clone(),
+                name: record.name.clone(),
+                description: (!record.description.trim().is_empty())
+                    .then(|| record.description.clone()),
+                is_group: false,
+            })
+            .collect::<Vec<_>>();
+        other_agents.sort_by(|left, right| left.id.cmp(&right.id));
+
+        let mut groups = roster
+            .iter()
+            .filter(|record| record.is_group)
+            .filter(|record| record.member_ids.iter().any(|member| member == agent_id))
+            .map(|record| AndroidAgentPromptGroup {
+                address: AndroidAgentPromptAddress {
+                    id: record.id.clone(),
+                    name: record.name.clone(),
+                    description: (!record.description.trim().is_empty())
+                        .then(|| record.description.clone()),
+                    is_group: true,
+                },
+                members: record
+                    .member_ids
+                    .iter()
+                    .filter_map(|member_id| by_id.get(member_id.as_str()).copied())
+                    .map(|member| AndroidAgentPromptAddress {
+                        id: member.id.clone(),
+                        name: member.name.clone(),
+                        description: (!member.description.trim().is_empty())
+                            .then(|| member.description.clone()),
+                        is_group: member.is_group,
+                    })
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        groups.sort_by(|left, right| left.address.id.cmp(&right.address.id));
+
+        let mut mcp_servers = Vec::new();
+        let mut mcp_discovery_unavailable = false;
+        if let Some(backend) = self.mcp_dashboard_backend.as_ref() {
+            match backend.list_server_snapshots() {
+                Ok(mut servers) => {
+                    servers.sort_by(|left, right| {
+                        left.server_name
+                            .cmp(&right.server_name)
+                            .then_with(|| left.server_id.cmp(&right.server_id))
+                    });
+                    for server in servers {
+                        let server_id = match server.server_id.parse::<i32>() {
+                            Ok(server_id) => server_id,
+                            Err(_) => {
+                                mcp_discovery_unavailable = true;
+                                mcp_servers.clear();
+                                break;
+                            }
+                        };
+                        let auth = match backend.check_auth_status(
+                            server_id,
+                            "default",
+                            "fabushi://mcp/oauth/callback",
+                            false,
+                        ) {
+                            Ok(auth) => auth,
+                            Err(_) => {
+                                mcp_discovery_unavailable = true;
+                                mcp_servers.clear();
+                                break;
+                            }
+                        };
+                        let connected =
+                            auth.has_valid_token || (auth.is_available && !auth.requires_auth);
+                        let custom_instructions = if connected {
+                            self.mcp_server_tool_settings
+                                .lock()
+                                .map_err(|_| {
+                                    "MCP server tool settings lock poisoned".to_string()
+                                })?
+                                .resolved_custom_instructions(
+                                    expected_account_fence,
+                                    &server.server_id,
+                                    &server.server_name,
+                                )?
+                        } else {
+                            String::new()
+                        };
+                        mcp_servers.push(AndroidMcpPromptServer {
+                            name: server.server_name,
+                            connected,
+                            custom_instructions,
+                        });
+                    }
+                }
+                Err(_) => {
+                    mcp_discovery_unavailable = true;
+                }
+            }
+        }
+
+        let current = self.current_turn_account_fence()?;
+        ensure_android_prompt_account_snapshot_current(expected_account_fence, &current)?;
+
+        Ok(AndroidDynamicPromptSnapshot {
+            automations_location: Some(
+                self.automation_prompt_path.to_string_lossy().to_string(),
+            ),
+            automations,
+            workflows_location: Some(
+                self.workflow_library.get_location().to_string_lossy().to_string(),
+            ),
+            skills,
+            channels_location,
+            channels,
+            agents_location: Some(self.agent_roster_path.to_string_lossy().to_string()),
+            other_agents,
+            groups,
+            mcp_servers,
+            mcp_discovery_unavailable,
+        })
     }
 
     fn current_messaging_identity(
@@ -12067,6 +12298,16 @@ impl AndroidJsonHost {
                 &team_rules,
             );
         }
+        let dynamic_prompt = self.dynamic_prompt_snapshot_for_root_turn(
+            &account_fence_for_attachment,
+            &agent_id,
+        )?;
+        append_android_dynamic_runtime_system_instructions(
+            &mut system_instructions,
+            &dynamic_prompt,
+            effective_time_zone.as_deref(),
+            SAND_AGENT_TOKEN_LIMIT,
+        );
         let remote_prompt_state = self.remote_prompt_state();
         append_android_remote_runtime_system_instructions(
             &mut system_instructions,
@@ -16443,6 +16684,173 @@ fn sign_in_test_account(host: &mut AndroidJsonHost) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dynamic_prompt_snapshot_reopens_canonical_owners_and_fences_stale_accounts() {
+        use crate::automation_runtime::AutomationSpec;
+        use crate::workflows::workflow_library::WorkflowSpec;
+
+        let root = tempfile::tempdir().unwrap();
+        let agent_id;
+        let peer_id;
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
+            let account_fence = host.current_turn_account_fence().unwrap();
+            let (created_agent, created_peer) = {
+                let mut roster = host.agents.lock().unwrap();
+                let created_agent = roster.create("Root", "Primary").unwrap();
+                let created_peer = roster.create("Peer", "Research").unwrap();
+                roster
+                    .create_group(
+                        "Pair",
+                        "Shared",
+                        &[created_agent.id.clone(), created_peer.id.clone()],
+                    )
+                    .unwrap();
+                (created_agent, created_peer)
+            };
+            agent_id = created_agent.id.clone();
+            peer_id = created_peer.id.clone();
+
+            host.automation_runtime
+                .upsert_spec(
+                    AutomationSpec {
+                        id: "daily".into(),
+                        name: "Daily digest".into(),
+                        prompt: "Summarize.".into(),
+                        schedule: "0 9 * * *".into(),
+                        trigger: None,
+                        agent_id: agent_id.clone(),
+                        trigger_description: "Scheduled".into(),
+                        enabled: true,
+                        account_fence: account_fence.clone(),
+                        created_at_ms: 1,
+                        last_run_at_ms: None,
+                        next_run_at_ms: None,
+                    },
+                    Some("UTC"),
+                )
+                .unwrap();
+            host.workflow_library
+                .create(&WorkflowSpec {
+                    name: "Review".into(),
+                    description: "Review current changes.".into(),
+                    body: "Review the current change carefully.".into(),
+                    trigger: None,
+                    source_ref: None,
+                })
+                .unwrap()
+                .unwrap();
+            host.agent_channel_store(&account_fence, &agent_id)
+                .unwrap()
+                .write_metadata("slack", "Ops")
+                .unwrap();
+
+            let snapshot = host
+                .dynamic_prompt_snapshot_for_root_turn(&account_fence, &agent_id)
+                .unwrap();
+            assert_eq!(snapshot.automations.len(), 1);
+            assert!(snapshot.skills.iter().any(|skill| skill.full_path.ends_with("/review/SKILL.md")));
+            assert_eq!(snapshot.channels.len(), 1);
+            assert!(snapshot.other_agents.iter().any(|agent| agent.id == peer_id));
+            assert_eq!(snapshot.groups.len(), 1);
+
+            let before = host.transcript.lock().unwrap().get_transcript().len();
+            let stale = host
+                .dynamic_prompt_snapshot_for_root_turn("session:test:stale", &agent_id)
+                .unwrap_err();
+            assert!(stale.contains("stale"));
+            assert_eq!(
+                host.transcript.lock().unwrap().get_transcript().len(),
+                before,
+                "stale prompt snapshots must fail before a transcript side effect",
+            );
+        }
+
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        let account_fence = reopened.current_turn_account_fence().unwrap();
+        let snapshot = reopened
+            .dynamic_prompt_snapshot_for_root_turn(&account_fence, &agent_id)
+            .unwrap();
+        assert_eq!(snapshot.automations.len(), 1);
+        assert!(snapshot.skills.iter().any(|skill| skill.full_path.ends_with("/review/SKILL.md")));
+        assert_eq!(snapshot.channels.len(), 1);
+        assert!(snapshot.other_agents.iter().any(|agent| agent.id == peer_id));
+        assert_eq!(snapshot.groups.len(), 1);
+    }
+
+    #[test]
+    fn queue_chat_turn_passes_dynamic_sections_to_the_real_android_provider_path() {
+        use crate::automation_runtime::AutomationSpec;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        let agent = host.agents.lock().unwrap().create("Prompt Root", "").unwrap();
+        host.automation_runtime
+            .upsert_spec(
+                AutomationSpec {
+                    id: "provider-proof".into(),
+                    name: "Provider proof".into(),
+                    prompt: "No-op".into(),
+                    schedule: "0 7 * * *".into(),
+                    trigger: None,
+                    agent_id: agent.id.clone(),
+                    trigger_description: "Scheduled".into(),
+                    enabled: true,
+                    account_fence,
+                    created_at_ms: 1,
+                    last_run_at_ms: None,
+                    next_run_at_ms: None,
+                },
+                Some("UTC"),
+            )
+            .unwrap();
+
+        host.queue_chat_turn(
+            "prompt-provider-op",
+            "prompt-provider-request",
+            &json!({
+                "text":"[[test:system-instructions]]",
+                "agentId":agent.id,
+                "clientNonce":"prompt-provider-nonce"
+            }),
+            None,
+        )
+        .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut assistant_text = None;
+        while Instant::now() < deadline {
+            assistant_text = host
+                .turn_events
+                .lock()
+                .unwrap()
+                .iter()
+                .find_map(|event| {
+                    (event.get("type").and_then(Value::as_str) == Some("chat.message")
+                        && event.get("operationId").and_then(Value::as_str)
+                            == Some("prompt-provider-op")
+                        && event.get("role").and_then(Value::as_str) == Some("assistant"))
+                    .then(|| event.get("text").and_then(Value::as_str).map(str::to_string))
+                    .flatten()
+                });
+            if assistant_text.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let assistant_text = assistant_text.expect("provider must return its owned system prompt");
+        assert!(assistant_text.contains("## Routines"));
+        assert!(assistant_text.contains("Provider proof"));
+        assert!(assistant_text.contains("Workflows are a GLOBAL"));
+        assert!(assistant_text.contains("Your teammates: the other agents"));
+        assert!(assistant_text.contains("## Remote computer"));
+    }
+
 
     #[test]
     fn human_call_ice_projection_matches_desktop_bounds_and_fails_closed() {

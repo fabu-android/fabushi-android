@@ -4,7 +4,10 @@ use std::{path::PathBuf, thread};
 
 use crate::sha256::sha256_hex;
 
-use super::managed_skills_cache::{ManagedSkill, read_managed_skills_cache, write_managed_skills_cache};
+use super::managed_skills_cache::{
+    ManagedSkill, get_managed_skill_file_path, read_managed_skills_cache,
+    write_managed_skills_cache,
+};
 use super::sand_managed_skills::{FetchedManagedSkill, fetched_managed_skill_to_sand_skill};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,6 +143,30 @@ impl SandManagedSkillsService {
             .and_then(read_managed_skills_cache)
             .map(|cache| cache.skills)
             .unwrap_or_default()
+    }
+
+    /// Returns the account-fenced, materialized managed-skill files used by the
+    /// root-Agent prompt projection. The service remains the single owner of
+    /// account scope and cache layout; callers receive a read-only snapshot.
+    pub fn cached_skill_prompt_files(&self) -> Vec<(PathBuf, String)> {
+        let Some(cache_dir) = self.active_cache_dir() else {
+            return Vec::new();
+        };
+        let Some(cache) = read_managed_skills_cache(&cache_dir) else {
+            return Vec::new();
+        };
+        let mut entries = cache
+            .skills
+            .into_iter()
+            .map(|skill| {
+                (
+                    get_managed_skill_file_path(&cache_dir, &skill.id),
+                    skill.description,
+                )
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| left.0.cmp(&right.0));
+        entries
     }
 
     pub fn dispose(&self) {

@@ -391,6 +391,15 @@ impl AndroidHostInferenceProvider {
             return Err(ProviderFailure::new("prompt is required"));
         }
         if self.mode == AndroidInferenceMode::Test {
+            if input.prompt.trim() == "[[test:system-instructions]]" {
+                let text = self.system_instructions.clone().unwrap_or_default();
+                on_chunk(&text).map_err(ProviderFailure::new)?;
+                return Ok(StreamGeneration {
+                    first_token_delay_ms: 1,
+                    chunks: vec![text],
+                    finish_reason: "stop".into(),
+                });
+            }
             if let Some(bridge) = self.routed_tools.as_ref() {
                 if let Some(script) = input.prompt.strip_prefix("[[tool:") {
                     if let Some((name, rest)) = script.split_once("]]") {
@@ -1191,6 +1200,28 @@ mod tests {
                 reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
             }
         );
+    }
+
+    #[test]
+    fn test_transport_can_expose_exact_owned_system_instructions_for_host_wiring_contract() {
+        let mut provider = AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+            .with_system_instructions("## Routines\nCurrent routines:\n- Daily");
+        let input = StreamAttemptInput {
+            operation_id: "system-prompt-test".into(),
+            agent_id: "agent-test".into(),
+            model: "default".into(),
+            prompt: "[[test:system-instructions]]".into(),
+            resume_checkpoint_available: false,
+        };
+        let mut streamed = String::new();
+        let generation = provider
+            .run_stream(&input, &mut |chunk| {
+                streamed.push_str(chunk);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(streamed, "## Routines\nCurrent routines:\n- Daily");
+        assert_eq!(generation.chunks, vec![streamed]);
     }
 
     #[test]
