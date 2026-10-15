@@ -59456,6 +59456,81 @@
       "verification_status": "not-verified",
       "notes": "Status intentionally reflects actual production wiring, not helper/file presence.",
       "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "BOX-EXEC-DAEMON-PROCESS-ANDROID-001",
+      "domain": "runner-deployment",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/box_exec_daemon_process_contract.rs",
+          "blob_sha": "06506be3ce37c43ff02dff1da820859cab86eb3b",
+          "symbols": [
+            "box_exec_daemon_binary_name sibling resolution",
+            "BoxExecDaemonProcess::start contaminated-port refusal",
+            "real loopback daemon lifecycle and shutdown contract"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Preserve the Desktop Box execution user capability without copying the co-resident sibling loopback daemon process into the Android APK: deployment moves arbitrary desktop OS execution to a separately authenticated authorized external Runner while Host authorization and durable execution identity remain canonical.",
+      "source_owner": "Desktop Host BoxExecDaemonProcess supervisor plus sibling box-exec-daemon listener",
+      "direct_callers": [
+        "Desktop Host Box execution composition",
+        "ProductionBoxTransport authenticated loopback client"
+      ],
+      "downstream_dependencies": [
+        "shell/read/computer Box tools",
+        "Host capability authorization",
+        "exec-daemon transport",
+        "packaging/resources"
+      ],
+      "state_owner": "Android Rust Host owns account/device/executor/grant identity and the durable operation journal; the authorized external Runner owns actual desktop resource execution.",
+      "persistent_state": [
+        "remote operation/request identity",
+        "account fence/epoch",
+        "device id",
+        "executor scope",
+        "one-time approval grant",
+        "Remote Runner durable outcome journal"
+      ],
+      "protocol_wire_contract": [
+        "authorized-remote-runner-v1 protected binding",
+        "authenticated execute/reconcile/cancel",
+        "stable operation/request/grant/device/account identity"
+      ],
+      "visible_effect": "Android Agent retains the user's authorized desktop shell/read/computer capability through a paired external Runner; the capability is not deleted merely because the Desktop sibling-daemon topology is inapplicable.",
+      "failure_behavior": [
+        "Android app never opens the Desktop exec-daemon listener",
+        "unsupported executor or stale account/device fails closed",
+        "external Runner independently rejects invalid bearer/identity",
+        "transport ambiguity becomes outcome-unknown and requires reconciliation"
+      ],
+      "cancellation_behavior": "Unsent prepared work cancels before the side effect; dispatched work uses Remote cancel/reconcile and never assumes timeout means not executed.",
+      "retry_semantics": "No blind retry after an ambiguous remote side effect.",
+      "idempotency_semantics": "Stable operation/request identity plus durable Host and Runner journals fence duplicates.",
+      "process_death_recovery": "Prepared-but-never-sent work reopens cancelled; maybe-sent work reopens outcome-unknown and reconciles against the original operation.",
+      "account_fencing": "Every protected binding and operation is fenced by current account fence/epoch plus selected device and executor scope.",
+      "security_boundary": "ANDROID_APP_LISTENER_APPLICABLE=false. The external Runner uses independent authentication; Android Host consumes the matching one-time approval before dispatch and cannot widen executor scope.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/box-exec-daemon/src/deployment_contract.rs",
+        "source/host/src/host_runner_composition.rs",
+        "source/host/src/runner/remote_routed_tools.rs",
+        "source/host/tests/box_exec_daemon_process_contract.rs",
+        "tests/test_remote_runner_deployment_contract.py"
+      ],
+      "android_owner": "Rust Host Capability Broker plus AuthenticatedRemoteHostRunner plus independently authenticated AuthorizedExternalRunner",
+      "platform_delta": "Desktop packages and supervises a sibling loopback daemon on the same computer. Android does not package/start that daemon; the same user capability crosses an explicit protected Remote Runner boundary.",
+      "implementation_status": "not-applicable",
+      "production_wiring": "Replacement is present in production source: deployment_contract.rs freezes AuthorizedExternalRunner and no Android listener; AndroidJsonHost creates AuthenticatedRemoteHostRunner only from a protected authorized-remote-runner-v1 binding; RemoteRoutedTools consumes account/device/executor-scoped one-time approvals before authenticated dispatch. The APK/JNI packaging contract excludes the Desktop daemon binary.",
+      "unit_test": "deployment_contract::tests::android_never_claims_an_in_apk_remote_execution_listener plus Host remote execution journal tests cover the replacement boundary and process-reopen semantics.",
+      "contract_test": "source/host/tests/box_exec_daemon_process_contract.rs and tests/test_remote_runner_deployment_contract.py freeze no in-APK listener/binary, preserved user capability, Host fencing, and independent Runner authentication.",
+      "integration_test": "Client composition exists; live executor enrollment/authentication acceptance remains blocked by REMOTE-RUNNER-ENROLLMENT-001.",
+      "packaged_test": "Pending final exact-head APK/AAB inspection and protected Runner journey; the static packaging contract already forbids a daemon artifact.",
+      "device_test": "Pending enrolled external Runner pairing/revoke/reconnect acceptance on a supported Android device.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "This is a mechanism-level not-applicable-with-replacement, not deletion of Desktop shell/read/computer capability. Do not promote to verified until a descendant exact HEAD passes required source/Rust/package/device evidence and a real independently authenticated external Runner is available."
     }
   ],
   "traceability": {
