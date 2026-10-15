@@ -1471,6 +1471,43 @@
             "requireExpectedGeneration",
             "freshViewGeneration"
           ]
+        },
+        {
+          "path": ".github/scripts/fdn-g11-real-browser.mjs",
+          "blob_sha": "a86c8329e1c3095f6b13e528f07d630876d5c46d",
+          "symbols": [
+            "G11 real-browser GitHub Actions driver",
+            "refresh/back/forward generation-fence acceptance"
+          ]
+        },
+        {
+          "path": ".github/workflows/fdn-g11-real-browser.yml",
+          "blob_sha": "c4d2532708e04fd8459120018950dbef86c5c48c",
+          "symbols": [
+            "G11 real-browser workflow",
+            "exact-source browser acceptance"
+          ]
+        },
+        {
+          "path": "docs/specs/fdn-g11-real-browser-actions.md",
+          "blob_sha": "81a50029d791fc901381cb0ecf4534cbb1050f5c",
+          "symbols": [
+            "G11 real-browser Actions acceptance contract"
+          ]
+        },
+        {
+          "path": "source/host/tests/browser_driver_source_contract.rs",
+          "blob_sha": "6cd2ee271bee681fd62b469115698a4420428ee8",
+          "symbols": [
+            "browser driver source generation-fence contract"
+          ]
+        },
+        {
+          "path": "source/host/tests/sand_browser_tools_contract.rs",
+          "blob_sha": "07ff9ce3b24c69623d1cbe0cbc01534afac09d6c",
+          "symbols": [
+            "browser tools refresh/back/forward generation contract"
+          ]
         }
       ],
       "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
