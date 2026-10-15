@@ -1318,6 +1318,72 @@ mod tests {
         format!("http://{address}")
     }
 
+
+    fn spawn_recording_sse_server(
+        responses: Vec<String>,
+    ) -> (String, Arc<Mutex<Vec<Value>>>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let recorded = Arc::clone(&requests);
+        std::thread::spawn(move || {
+            for body in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                let mut header_end = None;
+                loop {
+                    let read = stream.read(&mut buffer).unwrap_or(0);
+                    if read == 0 {
+                        break;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    if header_end.is_none() {
+                        header_end = request
+                            .windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                            .map(|position| position + 4);
+                    }
+                    if let Some(end) = header_end {
+                        let headers = String::from_utf8_lossy(&request[..end]);
+                        let content_length = headers
+                            .lines()
+                            .find_map(|line| {
+                                line.split_once(':').and_then(|(name, value)| {
+                                    name.eq_ignore_ascii_case("content-length")
+                                        .then(|| value.trim().parse::<usize>().ok())
+                                        .flatten()
+                                })
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= end + content_length {
+                            if let Ok(value) =
+                                serde_json::from_slice::<Value>(&request[end..end + content_length])
+                            {
+                                recorded.lock().unwrap().push(value);
+                            }
+                            break;
+                        }
+                    }
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        (format!("http://{address}"), requests)
+    }
+
     fn tool_sse(name: &str, call_id: &str, arguments_json: &str) -> String {
         let item = json!({
             "type":"response.output_item.done",
@@ -1762,4 +1828,183 @@ mod tests {
         provider.cancel("op").unwrap();
         assert!(cancel.load(Ordering::Acquire));
     }
+
+    struct ReminderTools {
+        calls: Arc<AtomicUsize>,
+        cancelled: Option<Arc<AtomicBool>>,
+    }
+
+    impl AndroidRoutedToolBridge for ReminderTools {
+        fn list_tools(&self) -> Result<Vec<Value>, String> {
+            Ok(["Read", "Shell", "SendMessage"]
+                .into_iter()
+                .map(|name| json!({
+                    "type":"function",
+                    "name":name,
+                    "parameters":{"type":"object"}
+                }))
+                .collect())
+        }
+
+        fn call_tool(
+            &self,
+            name: &str,
+            _args: Value,
+            _tool_call_id: &str,
+        ) -> Result<Value, String> {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            if let Some(cancelled) = self.cancelled.as_ref() {
+                cancelled.store(true, Ordering::Release);
+            }
+            if name == "SendMessage" {
+                Ok(json!({"sent":true,"messageId":"reminder-test-message"}))
+            } else {
+                Ok(json!({"ok":true}))
+            }
+        }
+    }
+
+    fn request_contains_user_reminder(request: &Value, reminder: &str) -> bool {
+        request
+            .get("input")
+            .and_then(Value::as_array)
+            .is_some_and(|items| {
+                items.iter().any(|item| {
+                    item.get("role").and_then(Value::as_str) == Some("user")
+                        && item.get("content").and_then(Value::as_str) == Some(reminder)
+                })
+            })
+    }
+
+    #[test]
+    fn production_loop_injects_start_ack_into_third_provider_request() {
+        use super::super::turn_tool_session_reminders::START_OF_TURN_ACK_REMINDER_MESSAGE;
+
+        let (endpoint, requests) = spawn_recording_sse_server(vec![
+            tool_sse("Read", "read-1", "{}"),
+            tool_sse("Shell", "shell-2", "{}"),
+            final_sse(),
+        ]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::clone(&calls),
+            cancelled: None,
+        }));
+
+        let output = provider.start_stream(&input(), 1).unwrap();
+        assert_eq!(output.chunks.concat(), "done");
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 2);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(!request_contains_user_reminder(
+            &requests[1],
+            START_OF_TURN_ACK_REMINDER_MESSAGE
+        ));
+        assert!(request_contains_user_reminder(
+            &requests[2],
+            START_OF_TURN_ACK_REMINDER_MESSAGE
+        ));
+    }
+
+    #[test]
+    fn production_loop_text_send_message_clears_start_ack_condition() {
+        use super::super::turn_tool_session_reminders::{
+            EARLY_RESULT_REMINDER_MESSAGE, START_OF_TURN_ACK_REMINDER_MESSAGE,
+        };
+
+        let (endpoint, requests) = spawn_recording_sse_server(vec![
+            tool_sse("Read", "read-1", "{}"),
+            tool_sse(
+                "SendMessage",
+                "send-2",
+                r#"{"type":"text","content":"Checking now."}"#,
+            ),
+            tool_sse("Read", "read-3", "{}"),
+            final_sse(),
+        ]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::new(RecordingObservationSink::default());
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::clone(&calls),
+            cancelled: None,
+        }))
+        .with_tool_call_observation_sink(sink);
+
+        provider.start_stream(&input(), 1).unwrap();
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 3);
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(!requests.iter().any(|request| {
+            request_contains_user_reminder(request, START_OF_TURN_ACK_REMINDER_MESSAGE)
+        }));
+        assert!(request_contains_user_reminder(
+            &requests[3],
+            EARLY_RESULT_REMINDER_MESSAGE
+        ));
+    }
+
+    #[test]
+    fn production_loop_generated_subagent_configuration_does_not_inject_reminders() {
+        use super::super::turn_tool_session_reminders::START_OF_TURN_ACK_REMINDER_MESSAGE;
+
+        let (endpoint, requests) = spawn_recording_sse_server(vec![
+            tool_sse("Read", "read-1", "{}"),
+            tool_sse("Shell", "shell-2", "{}"),
+            final_sse(),
+        ]);
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(false)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::new(AtomicUsize::new(0)),
+            cancelled: None,
+        }));
+
+        provider.start_stream(&input(), 1).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(!requests.iter().any(|request| {
+            request_contains_user_reminder(request, START_OF_TURN_ACK_REMINDER_MESSAGE)
+        }));
+    }
+
+    #[test]
+    fn cancellation_after_tool_dispatch_does_not_repeat_side_effect_or_send_reminder_request() {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (endpoint, requests) =
+            spawn_recording_sse_server(vec![tool_sse("Read", "read-1", "{}")]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::clone(&cancelled),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::clone(&calls),
+            cancelled: Some(cancelled),
+        }));
+
+        let error = provider.start_stream(&input(), 1).unwrap_err();
+        assert_eq!(error.message, "cancelled");
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+        assert_eq!(requests.lock().unwrap().len(), 1);
+    }
+
+
 }
