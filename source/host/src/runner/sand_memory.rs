@@ -276,6 +276,91 @@ pub fn render_user_memory_system_prompt(
     lines.join("\n")
 }
 
+pub fn render_user_memory_system_prompt_without_location(recall: &UserMemoryRecall) -> String {
+    if recall.profile.is_empty() && recall.recent.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec![
+        "User memory: durable facts shared across every assistant this user runs — their name, timezone, lasting preferences, and anything all of the user's assistants should know. This is separate from your own memory and is visible to all of them.".to_string(),
+        "Precedence: when a shared user fact conflicts with your OWN memory, prefer your own — it is curated for your role and may deliberately override a shared default.".to_string(),
+        "Shared facts are tagged [via <assistant>] so you can tell which assistant learned each one.".to_string(),
+    ];
+    if !recall.profile.is_empty() {
+        lines.push("About the user (shared):".to_string());
+        append_budgeted_provenanced_facts_without_location(
+            &mut lines, &recall.profile, MEMORY_USER_PROFILE_CHAR_BUDGET, "profile facts",
+        );
+    }
+    if !recall.recent.is_empty() {
+        lines.push("Recently (shared):".to_string());
+        append_budgeted_provenanced_facts_without_location(
+            &mut lines, &recall.recent, MEMORY_USER_RECENT_CHAR_BUDGET, "log facts",
+        );
+    }
+    lines.join("\n")
+}
+
+fn append_budgeted_provenanced_facts_without_location(
+    lines: &mut Vec<String>,
+    records: &[ScopedMemoryRecord],
+    char_budget: usize,
+    more_label: &str,
+) {
+    let mut budget = char_budget;
+    let mut shown = 0usize;
+    for record in records {
+        let line = provenanced_line(record);
+        if shown > 0 && line.len() > budget { break; }
+        budget = budget.saturating_sub(line.len());
+        shown += 1;
+        lines.push(line);
+    }
+    let omitted = records.len().saturating_sub(shown);
+    if omitted > 0 {
+        lines.push(format!("({omitted} more shared {more_label} not shown.)"));
+    }
+}
+
+pub fn render_project_memory_system_prompt_without_location(
+    recall: &ProjectMemoryPromptRecall,
+) -> String {
+    if recall.injected.is_empty() && recall.also_member_of.is_empty() {
+        return String::new();
+    }
+    let mut lines = vec![
+        "Project memory: durable facts shared by every assistant that has joined a project — the project's decisions, conventions, and state. Projects are optional and opt-in; joining one lets its memory into your prompt below.".to_string(),
+        "Precedence across memory tiers: on conflict prefer your OWN memory first, then project memory, then user memory — the most specific wins.".to_string(),
+    ];
+    for block in &recall.injected {
+        lines.push(format!("Project \"{}\" ({}):", block.name, block.slug));
+        if !block.recall.profile.is_empty() {
+            lines.push("About this project (shared):".to_string());
+            append_budgeted_provenanced_facts_without_location(
+                &mut lines, &block.recall.profile, MEMORY_PROJECT_PROFILE_CHAR_BUDGET, "profile facts",
+            );
+        }
+        if !block.recall.recent.is_empty() {
+            lines.push("Recently (shared):".to_string());
+            append_budgeted_provenanced_facts_without_location(
+                &mut lines, &block.recall.recent, MEMORY_PROJECT_RECENT_CHAR_BUDGET, "log facts",
+            );
+        }
+        if block.recall.profile.is_empty() && block.recall.recent.is_empty() {
+            lines.push("No shared facts recorded yet for this project.".to_string());
+        }
+    }
+    if !recall.also_member_of.is_empty() {
+        lines.push(format!(
+            "Also a member of: {}.",
+            recall.also_member_of.iter()
+                .map(|project| format!("{} ({})", project.name, project.slug))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    lines.join("\n")
+}
+
 pub fn render_project_memory_system_prompt(
     recall: &ProjectMemoryPromptRecall,
     projects_root_dir: Option<&str>,

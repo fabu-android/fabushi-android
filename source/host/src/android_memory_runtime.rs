@@ -6,7 +6,8 @@ use crate::{
     extensions::memory::{
         memory_service::{
             get_project_dir, get_project_memory_shard_dir, get_user_memory_shard_dir,
-            project_dir_exists, FileMemoryStore, MemoryKind, MemoryRecord,
+            project_dir_exists, FileMemoryStore, MemoryKind, MemoryRecord, ProjectMemoryStore,
+            UserMemoryStore,
         },
         memory_synthesis_service::{
             parse_json_object, synthesis_request_json, synthesis_system_prompt,
@@ -17,7 +18,13 @@ use crate::{
         project_membership::{is_safe_project_slug, AgentProjectMembership},
     },
     runner::{
-        sand_memory::{render_memory_system_prompt, MEMORY_RECENT_PROMPT_LIMIT},
+        sand_memory::{
+            render_memory_system_prompt, render_project_memory_system_prompt_without_location,
+            render_user_memory_system_prompt_without_location, MEMORY_PROJECT_INJECTED_CAP,
+            MEMORY_PROJECT_PROFILE_PROMPT_LIMIT, MEMORY_PROJECT_RECENT_PROMPT_LIMIT,
+            MEMORY_RECENT_PROMPT_LIMIT, MEMORY_USER_PROFILE_PROMPT_LIMIT,
+            MEMORY_USER_RECENT_PROMPT_LIMIT,
+        },
         AndroidHostInferenceProvider, AndroidInferenceMode,
     },
     sha256::sha256_hex,
@@ -94,6 +101,44 @@ impl AndroidMemoryOwner {
         // bounded Local Runner. Do not advertise a filesystem location the Agent
         // cannot actually read; inject the canonical recalled facts themselves.
         Ok(render_memory_system_prompt(&recall, None))
+    }
+
+    pub fn render_combined_turn_prompt(
+        &self,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<String, String> {
+        let (account_root, agent_key) = self.account_agent_root(account_fence, agent_id)?;
+        let resolver: Arc<dyn Fn(&str) -> String + Send + Sync> = Arc::new(|key| {
+            format!("assistant-{}", key.chars().take(8).collect::<String>())
+        });
+        let user_recall = UserMemoryStore::new(
+            &account_root,
+            &agent_key,
+            Arc::clone(&resolver),
+        )
+        .recall(MEMORY_USER_PROFILE_PROMPT_LIMIT, MEMORY_USER_RECENT_PROMPT_LIMIT);
+        let project_recall = ProjectMemoryStore::new(
+            &account_root,
+            &agent_key,
+            self.membership(&account_root, &agent_key),
+            resolver,
+        )
+        .recall_for_prompt(
+            MEMORY_PROJECT_PROFILE_PROMPT_LIMIT,
+            MEMORY_PROJECT_RECENT_PROMPT_LIMIT,
+            MEMORY_PROJECT_INJECTED_CAP,
+        );
+        let agent_recall = self.store(account_fence, agent_id)?.recall(MEMORY_RECENT_PROMPT_LIMIT);
+
+        let mut parts = Vec::new();
+        let user = render_user_memory_system_prompt_without_location(&user_recall);
+        if !user.is_empty() { parts.push(user); }
+        let project = render_project_memory_system_prompt_without_location(&project_recall);
+        if !project.is_empty() { parts.push(project); }
+        let agent = render_memory_system_prompt(&agent_recall, None);
+        if !agent.is_empty() { parts.push(agent); }
+        Ok(parts.join("\n\n"))
     }
 
     pub fn recall_scoped(
@@ -480,6 +525,31 @@ mod tests {
             .render_agent_turn_prompt("session:account-b", "agent-a")
             .unwrap();
         assert!(other_account_prompt.is_empty());
+    }
+
+    #[test]
+    fn combined_turn_prompt_injects_user_project_and_agent_memory_without_private_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let owner = AndroidMemoryOwner::new(root.path());
+        let account = "session:account-a";
+        let agent = "agent-a";
+        owner.add(account, agent, "Agent-specific fact", "profile", 1_700_000_000_000).unwrap();
+        owner.add_scoped(
+            account, agent, AndroidMemoryScope::User, "Shared user fact", "profile", 1_700_000_000_100,
+        ).unwrap();
+        owner.create_project(account, agent, "alpha", "Alpha", None).unwrap();
+        owner.add_scoped(
+            account, agent, AndroidMemoryScope::Project("alpha"), "Shared project fact", "profile", 1_700_000_000_200,
+        ).unwrap();
+
+        let prompt = owner.render_combined_turn_prompt(account, agent).unwrap();
+        assert!(prompt.contains("Shared user fact"));
+        assert!(prompt.contains("Shared project fact"));
+        assert!(prompt.contains("Agent-specific fact"));
+        assert!(prompt.find("Shared user fact").unwrap() < prompt.find("Shared project fact").unwrap());
+        assert!(prompt.find("Shared project fact").unwrap() < prompt.find("Agent-specific fact").unwrap());
+        assert!(!prompt.contains(root.path().to_string_lossy().as_ref()));
+        assert!(owner.render_combined_turn_prompt("session:account-b", agent).unwrap().is_empty());
     }
 
     #[test]
