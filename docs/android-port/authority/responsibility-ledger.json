@@ -568,7 +568,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Own Agent run lifecycle, provider/inference, streaming, cancellation, recovery and canonical transcript projection.",
       "source_owner": "Desktop Rust Host",
       "direct_callers": [
@@ -620,7 +620,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Umbrella remains mapped/not-verified. Current slice now includes frozen child identity, pre-mutation review ordering, type scoping, same-provider summarization, and a bounded provider tool/result loop; full Desktop tool graph breadth, auto-review classifier/approval parity, source closure, final APK/AAB provenance and protected device acceptance remain open. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+      "notes": "Umbrella remains mapped/not-verified. Current slice now includes frozen child identity, pre-mutation review ordering, type scoping, same-provider summarization, and a bounded provider tool/result loop; full Desktop tool graph breadth, auto-review classifier/approval parity, source closure, final APK/AAB provenance and protected device acceptance remain open. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/lib.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop crate root composes Host/Runner plus current network enrollment/worker, native remote target and sensitive challenge modules. Android crate root composes Android Host production modules but does not yet export equivalent latest network/sensitive modules, so this row is mapped with an explicit production gap."
     },
     {
       "responsibility_id": "AGENT-VISIBLE-ACK-ANDROID-001",
@@ -3317,9 +3317,16 @@
             "DesktopMcpManager.listServers",
             "DesktopMcpManager.listEffectivePlugins"
           ]
+        },
+        {
+          "path": "source/host/src/ports/mcp_state_executor.rs",
+          "blob_sha": "a10ca73079bfbb8bee93f8b82211285ded01c4c1",
+          "symbols": [
+            "module responsibilities audited at current Desktop authority"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Project the authenticated account's enabled MCP server catalog as bounded typed metadata without exposing credentials or creating a second connector-session owner.",
       "source_owner": "DesktopMcpManager account-scoped MCP registry/catalog",
       "direct_callers": [
@@ -3373,7 +3380,7 @@
       "device_test": "required with protected authenticated connector account",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "This closes only the server-catalog slice of DesktopMcpManager. Server add/remove/rename/logout, effective-plugin mutation, routed tool discovery/execute and install backfill remain separate/open; do not upgrade the aggregate source row beyond mapped."
+      "notes": "This closes only the server-catalog slice of DesktopMcpManager. Server add/remove/rename/logout, effective-plugin mutation, routed tool discovery/execute and install backfill remain separate/open; do not upgrade the aggregate source row beyond mapped. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/mcp_state_executor.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop MCP state executor projects canonical agent.v1 server/tool state. Android Host uses typed dashboard MCP catalog/tool definitions plus durable per-server tool settings; wire-equivalence is mapped, not claimed fully verified."
     },
     {
       "responsibility_id": "MCP-PLUGIN-VARIABLES-001",
@@ -6273,9 +6280,23 @@
             "AutomationRunAnalyticsTelemetry",
             "product_analytics_event"
           ]
+        },
+        {
+          "path": "source/host/src/ports/product_analytics.rs",
+          "blob_sha": "e1a8a0df883fdeecc8f3693bdaf64a1334f84512",
+          "symbols": [
+            "module responsibilities audited at current Desktop authority"
+          ]
+        },
+        {
+          "path": "source/host/src/ports/sand_analytics_types.rs",
+          "blob_sha": "7d4b068299faf5ed0ca9f2628c7d022698823f2f",
+          "symbols": [
+            "module responsibilities audited at current Desktop authority"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Send only explicitly allowlisted product analytics through the authenticated Sand analytics endpoint with feature-gate/opt-out semantics, bounded buffering, account fencing, privacy headers, scalar property typing, daily activity de-duplication and shutdown flush without making analytics failure canonical business state.",
       "source_owner": "Desktop ProductionAnalyticsRuntime + HostProductAnalytics/AutomationRunAnalyticsTelemetry",
       "direct_callers": [
@@ -6324,7 +6345,7 @@
       "device_test": "required on protected device acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation is wired but deliberately not marked verified until a stable descendant exact HEAD passes Rust/architecture/full/package/device gates. 7a9b6ace and 3df1c466 are implementation ancestors, not final-head acceptance evidence."
+      "notes": "Implementation is wired but deliberately not marked verified until a stable descendant exact HEAD passes Rust/architecture/full/package/device gates. 7a9b6ace and 3df1c466 are implementation ancestors, not final-head acceptance evidence. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/product_analytics.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop SandProductAnalytics trait/no-op port is replaced by AndroidProductAnalyticsRuntime with account-scoped privacy gate and dashboard sender; production owner exists but row remains mapped pending exact-head evidence. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/sand_analytics_types.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop telemetry bucketing types are an analytics shaping responsibility. Android telemetry service owns event shaping/privacy and model exposure; exact bucket helper is not copied mechanically, so mapped as Android-adapted."
     },
     {
       "responsibility_id": "TELEMETRY-STARTUP-ANDROID-001",
@@ -16307,7 +16328,17 @@
       "device_test": "required for pairing/revoke/reconnect/viewport/file-transfer/computer-use on supported Android devices",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Production Android client/Host execution path is implemented; the prior note claiming no outbound Remote Runner adapter was stale and has been removed. Do not mark verified until a real enrolled Runner proves shell/read/write/computer/browser/file/lifecycle behavior on the same exact Android HEAD, followed by packaged/device evidence. Release signing and protected-account blockers remain independent."
+      "notes": "Production Android client/Host execution path is implemented; the prior note claiming no outbound Remote Runner adapter was stale and has been removed. Do not mark verified until a real enrolled Runner proves shell/read/write/computer/browser/file/lifecycle behavior on the same exact Android HEAD, followed by packaged/device evidence. Release signing and protected-account blockers remain independent. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/box.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop box port centralizes readiness/no-monitor/unsupported errors and primary/fork monitor identity. Android replacement lives behind authorized Box/Remote Runner routing; exact no-monitor/readiness taxonomy is only mapped pending parity review.",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/ports/box.rs",
+          "blob_sha": "068e13c68951ff062726771df05c04ddb36b69c2",
+          "symbols": [
+            "module responsibilities audited at current Desktop authority"
+          ]
+        }
+      ],
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d"
     },
     {
       "responsibility_id": "CLOUD-AGENT-RUNTIME-ANDROID-001",
@@ -20551,9 +20582,16 @@
             "CreateAgentNonceLedger",
             "sanitize_create_agent_args"
           ]
+        },
+        {
+          "path": "source/host/src/ports/transport.rs",
+          "blob_sha": "a45e7f1e75725d4afebd041dbfcd329ab2549bbe",
+          "symbols": [
+            "module responsibilities audited at current Desktop authority"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Preserve the Desktop Host gateway's closed command surface, request/result/event shaping, failure classification, authorization and remote reachability while replacing the Desktop process-local HTTP/SSE transport with Android's typed Kotlin/JNI façade and explicit authorized remote-device gateway.",
       "source_owner": "Desktop Host GatewayServer/GatewayApi plus frozen host_gateway_api command ownership",
       "direct_callers": [
@@ -20618,7 +20656,7 @@
       "device_test": "required: login/chat/tools/MCP/WebAuthn/remote reconnect/process-death/account-switch journeys",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Semantic mapping only. Do not mark implemented/verified until every applicable Desktop gateway responsibility is proven through Android shipping composition plus same-exact-HEAD integration/package/device evidence."
+      "notes": "Semantic mapping only. Do not mark implemented/verified until every applicable Desktop gateway responsibility is proven through Android shipping composition plus same-exact-HEAD integration/package/device evidence. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/transport.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop SandTransport records assigned send/reaction outcomes from ingested updates. Android replaces this with Host event/transcript mutation ownership plus durable send acknowledgements and typed Agent reaction desired-state reconciliation."
     },
     {
       "responsibility_id": "TRANSCRIPT-INITIAL-LOAD-ANDROID-001",
@@ -20885,9 +20923,16 @@
             "start_production_host_extensions",
             "ProductionHostBoxExtensions"
           ]
+        },
+        {
+          "path": "source/host/src/ports/mod.rs",
+          "blob_sha": "c01cd91c2996b6e63bda09cd6cdf344644d9e3c4",
+          "symbols": [
+            "module responsibilities audited at current Desktop authority"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Compose all applicable shipping Host extensions exactly once, wire diagnostics/backstops/events to canonical owners, and dispose/account-fence them with the Host lifecycle.",
       "source_owner": "Desktop production Host extension composition",
       "direct_callers": [
@@ -20936,7 +20981,7 @@
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "ProductionExtensionRegistry is not a shipping proof; full extension composition remains open."
+      "notes": "ProductionExtensionRegistry is not a shipping proof; full extension composition remains open. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/mod.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop ports module is composition-only for transport/computer/analytics/box/MCP ports. Android deliberately decomposes these into typed platform/runtime owners; host production composition is the replacement seam."
     },
     {
       "responsibility_id": "HOST-REQUEST-CONTEXT-ANDROID-001",
@@ -21075,9 +21120,16 @@
             "HostRunnerComposition",
             "AuthorizedHostRunnerComposition"
           ]
+        },
+        {
+          "path": "source/host/src/ports/user_computer.rs",
+          "blob_sha": "2ea88be60ef5c2184d88e37b73025633ab783e53",
+          "symbols": [
+            "module responsibilities audited at current Desktop authority"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
       "responsibility": "Compose bounded local and authenticated remote Runner execution behind the Capability Broker, preserve cancellation/result routing, and prevent unauthorized fallback or unknown-side-effect retry.",
       "source_owner": "Desktop Host Runner composition and production turn surfaces",
       "direct_callers": [
@@ -21127,7 +21179,7 @@
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Focused composition tests exist, but shipping constructor/call chain is not yet proven on this head."
+      "notes": "Focused composition tests exist, but shipping constructor/call chain is not yet proven on this head. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/user_computer.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop SingleUserComputer exposes this-computer selection/connectivity. Android coordinator provider policy preserves the canonical this-computer id and explicitly chooses bounded local versus authorized remote execution; no second computer owner is introduced."
     }
   ],
   "traceability": {
