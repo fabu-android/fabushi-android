@@ -17,6 +17,7 @@ pub mod remote_routed_tools;
 pub mod local_routed_tools;
 pub mod sand_labeling;
 pub mod web_routed_tools;
+pub mod generate_image_routed_tools;
 pub mod sand_auto_review;
 pub mod sand_auto_review_classifier_run;
 pub mod sand_auto_review_summaries;
@@ -92,6 +93,7 @@ pub use turn_run_shell::{
 pub use durable_turn_journal::{DurableTurnJournal, DurableTurnRecord, DurableTurnState};
 
 pub(crate) use web_routed_tools::with_web_routed_tools;
+pub(crate) use generate_image_routed_tools::with_generate_image_routed_tools;
 
 pub(crate) use remote_routed_tools::{
     with_remote_routed_tools, RemoteApprovalRegistry, RemoteAutoReviewDecision,
