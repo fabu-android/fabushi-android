@@ -1328,7 +1328,7 @@ mod tests {
         assert_eq!(observation.tool_call_id, "call-send-9");
         assert!(observation.succeeded);
         assert!(observation.completed_at_ms >= observation.started_at_ms);
-        assert_eq!(&observation.protobuf_bytes[..2], &[0xda, 0x03]);
+        assert_eq!(&observation.protobuf_bytes[..2], &[0xba, 0x03]);
 
         let decoded = decode_agent_tool_call(&observation.protobuf_bytes).unwrap();
         assert_eq!(decoded.tool_call_id.as_deref(), Some("call-send-9"));
