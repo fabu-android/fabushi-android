@@ -31,6 +31,10 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - name: Rebaseline persistent source authority in Actions worktree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/android-port-docs.py rebaseline
       - name: Enumerate source and verify authority
         env:
           GH_TOKEN: ${{ github.token }}
@@ -44,6 +48,10 @@ jobs:
         with:
           name: android-port-source-and-docs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            docs/android-port/authority/baseline.json
+            docs/android-port/authority/source-inventory-manifest.json
+            docs/android-port/authority/source-inventory-ledger.jsonl
+            docs/android-port/authority/responsibility-ledger.json
             docs/android-port/generated/
             android-port-documentation.zip
             android-port-documentation.zip.sha256
