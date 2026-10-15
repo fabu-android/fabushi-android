@@ -76,6 +76,7 @@ use crate::extensions::telemetry::agent_error_telemetry::{
 use crate::extensions::telemetry::bot_block_telemetry::{
     bot_block_detail_telemetry, bot_block_telemetry, BotBlockReport,
 };
+use crate::extensions::telemetry::box_copy_in_telemetry::box_copy_in_telemetry;
 use crate::extensions::telemetry::sand_error_tags::SandErrorValue;
 use crate::extensions::telemetry::host_event_bus_telemetry::host_event_bus_telemetry;
 use crate::extensions::telemetry::memory_synthesis_telemetry::memory_synthesis_service_telemetry;
@@ -2559,6 +2560,33 @@ impl AndroidJsonHost {
         }
     }
 
+    fn record_remote_box_copy_in_telemetry(
+        &self,
+        action: RemoteBoxStoreSyncAction,
+        level: &'static str,
+        outcome: &'static str,
+        reason: &'static str,
+        duration_ms: u64,
+    ) {
+        if action != RemoteBoxStoreSyncAction::Hydrate {
+            return;
+        }
+        let projection = box_copy_in_telemetry(
+            level,
+            BTreeMap::from([
+                ("duration_ms".into(), duration_ms.to_string()),
+                ("outcome".into(), outcome.into()),
+                ("reason".into(), reason.into()),
+            ]),
+        );
+        let (Some(level), Some(event)) = (projection.level, projection.event) else {
+            return;
+        };
+        // AndroidJsonHost is the single shipping structured-log owner. Copy-in diagnostics are
+        // observational and must never mutate/retry the durable Remote BoxStore operation.
+        let _ = self.record_structured_log(level, event, projection.metadata, now_ms());
+    }
+
     fn remote_box_store_sync_prepare(&mut self, params: &Value) -> Result<Value, String> {
         let binding = self.remote_box_store_sync_binding()?;
         let request_id = required_string(params, "requestId")?;
@@ -2632,26 +2660,59 @@ impl AndroidJsonHost {
             binding.device_id.clone(), store_id, action, base_manifest_etag, now_ms(),
         )?;
         let context = binding.context(operation_id, request_id, approval_id)?;
+        let copy_in_started_at = Instant::now();
+        self.record_remote_box_copy_in_telemetry(
+            action,
+            "info",
+            "started",
+            "hydrate-started",
+            0,
+        );
         let mut domain = self.remote_box_store_sync.lock()
             .map_err(|_| "Remote BoxStore sync journal lock poisoned".to_string())?;
         let mut runners = self.remote_runner.lock()
             .map_err(|_| "remote runner lock poisoned".to_string())?;
         let runner = runners.as_mut().ok_or("authorized Remote Runner is unavailable")?;
         match domain.dispatch_via_authorized_runner(runner, &context, record, now_ms()) {
-            Ok(result) => Ok(json!({
-                "operationId":operation_id,"requestId":request_id,"state":"completed",
-                "requiresReconciliation":false,
-                "result":serde_json::from_str::<Value>(&result.output_json)
-                    .unwrap_or(Value::String(result.output_json)),
-            })),
+            Ok(result) => {
+                self.record_remote_box_copy_in_telemetry(
+                    action,
+                    "info",
+                    "hydrated",
+                    "hydrate-completed",
+                    copy_in_started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                );
+                Ok(json!({
+                    "operationId":operation_id,"requestId":request_id,"state":"completed",
+                    "requiresReconciliation":false,
+                    "result":serde_json::from_str::<Value>(&result.output_json)
+                        .unwrap_or(Value::String(result.output_json)),
+                }))
+            }
             Err(error) => {
                 let state = domain.record(operation_id).map(|record| record.state);
+                let duration_ms =
+                    copy_in_started_at.elapsed().as_millis().min(u64::MAX as u128) as u64;
                 if state == Some(RemoteBoxStoreSyncState::OutcomeUnknown) {
+                    self.record_remote_box_copy_in_telemetry(
+                        action,
+                        "warn",
+                        "outcome_unknown",
+                        "remote-outcome-unknown",
+                        duration_ms,
+                    );
                     Ok(json!({
                         "operationId":operation_id,"requestId":request_id,"state":"outcome_unknown",
                         "requiresReconciliation":true,"error":format!("{error:?}"),
                     }))
                 } else {
+                    self.record_remote_box_copy_in_telemetry(
+                        action,
+                        "error",
+                        "failed",
+                        "remote-dispatch-failed",
+                        duration_ms,
+                    );
                     Err(format!("Remote BoxStore sync dispatch failed: {error:?}"))
                 }
             }
@@ -2695,15 +2756,36 @@ impl AndroidJsonHost {
         if remote.permission_grant_id != approval_id {
             return Err("Remote BoxStore reconciliation grant identity is stale".into());
         }
+        let reconcile_started_at = Instant::now();
         match domain.reconcile_via_authorized_runner(runner, &context, now_ms()) {
-            Ok(result) => Ok(json!({
-                "operationId":operation_id,"requestId":record.request_id,"state":"completed",
-                "requiresReconciliation":false,
-                "result":serde_json::from_str::<Value>(&result.output_json)
-                    .unwrap_or(Value::String(result.output_json)),
-            })),
+            Ok(result) => {
+                self.record_remote_box_copy_in_telemetry(
+                    record.action,
+                    "info",
+                    "hydrated",
+                    "reconcile-completed",
+                    reconcile_started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                );
+                Ok(json!({
+                    "operationId":operation_id,"requestId":record.request_id,"state":"completed",
+                    "requiresReconciliation":false,
+                    "result":serde_json::from_str::<Value>(&result.output_json)
+                        .unwrap_or(Value::String(result.output_json)),
+                }))
+            }
             Err(error) => {
                 let state = domain.record(operation_id).map(|record| record.state);
+                self.record_remote_box_copy_in_telemetry(
+                    record.action,
+                    if state == Some(RemoteBoxStoreSyncState::OutcomeUnknown) { "warn" } else { "error" },
+                    if state == Some(RemoteBoxStoreSyncState::OutcomeUnknown) { "outcome_unknown" } else { "failed" },
+                    if state == Some(RemoteBoxStoreSyncState::OutcomeUnknown) {
+                        "reconcile-outcome-unknown"
+                    } else {
+                        "reconcile-failed"
+                    },
+                    reconcile_started_at.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                );
                 Ok(json!({
                     "operationId":operation_id,"requestId":record.request_id,
                     "state":state.map(|state| match state {
