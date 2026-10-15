@@ -5,6 +5,7 @@ use super::{
     },
     production_turn_agent_owner::SAND_AGENT_MAX_STEPS,
     stream_attempt::{ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider},
+    turn_tool_session_reminders::TurnToolSessionReminderState,
 };
 use serde_json::{json, Map, Value};
 use std::{
@@ -74,6 +75,7 @@ pub struct AndroidHostInferenceProvider {
     routed_tools: Option<Arc<dyn AndroidRoutedToolBridge>>,
     tool_call_observation_sink: Option<Arc<dyn AndroidToolCallObservationSink>>,
     request_timeout: Option<Duration>,
+    turn_tool_session_reminders_enabled: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +103,7 @@ impl AndroidHostInferenceProvider {
             routed_tools: None,
             tool_call_observation_sink: None,
             request_timeout: None,
+            turn_tool_session_reminders_enabled: false,
         }
     }
 
@@ -120,6 +123,7 @@ impl AndroidHostInferenceProvider {
             routed_tools: None,
             tool_call_observation_sink: None,
             request_timeout: None,
+            turn_tool_session_reminders_enabled: false,
         })
     }
 
@@ -318,6 +322,7 @@ impl AndroidHostInferenceProvider {
             routed_tools: None,
             tool_call_observation_sink: None,
             request_timeout: None,
+            turn_tool_session_reminders_enabled: false,
         }
     }
 
@@ -331,6 +336,11 @@ impl AndroidHostInferenceProvider {
         sink: Arc<dyn AndroidToolCallObservationSink>,
     ) -> Self {
         self.tool_call_observation_sink = Some(sink);
+        self
+    }
+
+    pub fn with_turn_tool_session_reminders(mut self, enabled: bool) -> Self {
+        self.turn_tool_session_reminders_enabled = enabled;
         self
     }
 
@@ -415,6 +425,9 @@ impl AndroidHostInferenceProvider {
         // itself as progress before invoking the bridge. This keeps StreamAttemptHost from blindly
         // replaying the whole Responses turn when a later provider/tool/network leg fails.
         let mut routed_tool_dispatch_started = false;
+        let mut turn_tool_session_reminders = self
+            .turn_tool_session_reminders_enabled
+            .then(TurnToolSessionReminderState::default);
 
         for _tool_step in 0..SAND_AGENT_MAX_STEPS {
             if self.cancelled.load(Ordering::Acquire) {
@@ -567,7 +580,11 @@ impl AndroidHostInferenceProvider {
             let bridge = self.routed_tools.as_ref().ok_or_else(|| {
                 ProviderFailure::new("provider requested a tool but no routed tool bridge is bound")
             })?;
-            let mut outputs = Vec::with_capacity(tool_calls.len());
+            let observed_tool_step = tool_calls
+                .iter()
+                .map(|(_, name, arguments)| (name.clone(), arguments.clone()))
+                .collect::<Vec<_>>();
+            let mut outputs = Vec::with_capacity(tool_calls.len() + 1);
             for (call_id, name, arguments) in tool_calls {
                 if self.cancelled.load(Ordering::Acquire) {
                     return Err(ProviderFailure::new("cancelled"));
@@ -692,6 +709,15 @@ impl AndroidHostInferenceProvider {
                 first_token_stall: false,
                 stream_output_produced: routed_tool_dispatch_started,
             })?);
+            if let Some(reminder) = turn_tool_session_reminders
+                .as_mut()
+                .and_then(|state| state.observe_tool_step(&observed_tool_step))
+            {
+                outputs.push(json!({
+                    "role":"user",
+                    "content":reminder,
+                }));
+            }
             next_input = Value::Array(outputs);
         }
 
