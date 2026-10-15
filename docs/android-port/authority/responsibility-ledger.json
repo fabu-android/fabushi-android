@@ -1508,6 +1508,76 @@
           "symbols": [
             "browser tools refresh/back/forward generation contract"
           ]
+        },
+        {
+          "path": ".github/workflows/fdn-g10-native-computer.yml",
+          "blob_sha": "9f186adcb5c2e0d19c5f36e55fa24699a03a93de",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": ".github/workflows/fdn-tsnet-worker.yml",
+          "blob_sha": "4d2e9ad1025891ef8b4a1e2870cbc3f97666e8f6",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "docs/specs/fabushi-same-account-device-network.md",
+          "blob_sha": "67b94ad8438b4c60b00059bdb4caeae757465d3f",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "docs/specs/fdn-001-account-target-availability.md",
+          "blob_sha": "525f620a0a4f423978809f56aa69cceace296da9",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "docs/specs/fdn-001-host-network-enrollment-owner.md",
+          "blob_sha": "d11fa87ad937a5decf7d4dd5089243a617f207bd",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "docs/specs/fdn-001-host-target-core-owner.md",
+          "blob_sha": "dda84d379bff467b1a545ce4b1d8f5fa29fe53e6",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "docs/specs/fdn-001-target-private-listener.md",
+          "blob_sha": "4f7d9853451e446d6d9d6ea93eeb4ab2f8169758",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "docs/specs/fdn-001-tsnet-network-worker.md",
+          "blob_sha": "583c29c1190fd4d398ea039b71e2c4c27a705d87",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "docs/specs/fdn-native-display-coordinate-mapping.md",
+          "blob_sha": "4e36f1c349418c7c81332d22de9c024f59b63a5f",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "docs/specs/fdn-native-snapshot-generation-fencing.md",
+          "blob_sha": "89e45106aa9f2faecc44540c24b8443831521c27",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
         }
       ],
       "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
@@ -1568,7 +1638,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps. Desktop 2026-10-15 rebaseline re-audited browser tools/driver at blobs 792d30fd9db1e7c97f98386ca3f1531d91c63f58 and 1f8c795800334415b63c06669373aa66470fa074: refresh/back/forward are generation-fenced; Android Remote Runner parity and real G11 acceptance remain open."
+      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps. Desktop 2026-10-15 rebaseline re-audited browser tools/driver at blobs 792d30fd9db1e7c97f98386ca3f1531d91c63f58 and 1f8c795800334415b63c06669373aa66470fa074: refresh/back/forward are generation-fenced; Android Remote Runner parity and real G11 acceptance remain open. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/fdn-g10-native-computer.yml at Desktop blob 9f186adcb5c2e0d19c5f36e55fa24699a03a93de as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/fdn-tsnet-worker.yml at Desktop blob 4d2e9ad1025891ef8b4a1e2870cbc3f97666e8f6 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fabushi-same-account-device-network.md at Desktop blob 67b94ad8438b4c60b00059bdb4caeae757465d3f as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-account-target-availability.md at Desktop blob 525f620a0a4f423978809f56aa69cceace296da9 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-host-network-enrollment-owner.md at Desktop blob d11fa87ad937a5decf7d4dd5089243a617f207bd as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-host-target-core-owner.md at Desktop blob dda84d379bff467b1a545ce4b1d8f5fa29fe53e6 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-target-private-listener.md at Desktop blob 4f7d9853451e446d6d9d6ea93eeb4ab2f8169758 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-001-tsnet-network-worker.md at Desktop blob 583c29c1190fd4d398ea039b71e2c4c27a705d87 as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-native-display-coordinate-mapping.md at Desktop blob 4e36f1c349418c7c81332d22de9c024f59b63a5f as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked docs/specs/fdn-native-snapshot-generation-fencing.md at Desktop blob 89e45106aa9f2faecc44540c24b8443831521c27 as android-adapted; this does not promote verification."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
@@ -3697,7 +3767,7 @@
       "device_test": "Pending descendant exact-head emulator/device acceptance; no prior-head package/device result is inherited.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Android replacement keeps exact-SHA CI, architecture contracts, Rust/Kotlin/JNI/package/emulator gates. githubRelease sets CI_ACCOUNT_SESSION_IMPORT_ENABLED=false and minify/shrink=true; ciAcceptance alone enables session import; release workflow statically rejects forbidden session-import markers. This is not verified until the descendant release artifact exists. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+      "notes": "Android replacement keeps exact-SHA CI, architecture contracts, Rust/Kotlin/JNI/package/emulator gates. githubRelease sets CI_ACCOUNT_SESSION_IMPORT_ENABLED=false and minify/shrink=true; ciAcceptance alone enables session import; release workflow statically rejects forbidden session-import markers. This is not verified until the descendant release artifact exists. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/desktop-chat-parity-ci.yml at Desktop blob 63a8cacd13eed412ed9178d816969eaab69659c6 as not-applicable-with-replacement; this does not promote verification."
     },
     {
       "responsibility_id": "CI-GROK-ARCHITECTURE-IMPORT-REPLACEMENT-001",
@@ -3722,6 +3792,13 @@
           "blob_sha": "bbd1695ae4f24b4002a8f979c78237aa99c009d2",
           "symbols": [
             "reviewed Desktop platform/build/verification contract"
+          ]
+        },
+        {
+          "path": "projects/grok-fabu-parity/architecture-semantic-adaptations.json",
+          "blob_sha": "393689406db74fbbf19e2060e2e7f4e32869813c",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
           ]
         }
       ],
@@ -3776,7 +3853,7 @@
       "device_test": "Not applicable: no user-visible runtime mechanism exists to execute on device.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Audit conclusion: the Desktop writeback importer is intentionally absent on Android. The user-visible/product-quality requirement—reproducible, non-drifting migration authority—is retained by the pinned Desktop-main inventory/checker. This row remains not-verified until the ledger-update exact HEAD passes the same authority workflows. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+      "notes": "Audit conclusion: the Desktop writeback importer is intentionally absent on Android. The user-visible/product-quality requirement—reproducible, non-drifting migration authority—is retained by the pinned Desktop-main inventory/checker. This row remains not-verified until the ledger-update exact HEAD passes the same authority workflows. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked desktop/tsconfig.grok-electron.json at Desktop blob 9bf6d4880371b60ce2becfc39f56cae6b333c34f as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked projects/grok-fabu-parity/architecture-semantic-adaptations.json at Desktop blob 393689406db74fbbf19e2060e2e7f4e32869813c as not-applicable-with-replacement; this does not promote verification."
     },
     {
       "responsibility_id": "CI-RUST-PARITY-FINALIZE-REPLACEMENT-001",
@@ -4067,7 +4144,7 @@
       "device_test": "Open: real device clean install, same-signature upgrade, process death/restart during journeys, account/chat/tools/MCP/Mini App/notifications/offline/upgrade remain P01-P24 requirements; protected account secrets are currently unavailable.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "This row is mapped, not implemented/verified. The macOS workflow carries applicable release-quality responsibilities that Android must preserve through native platform mechanisms; current Android CI closes only part of that release envelope. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+      "notes": "This row is mapped, not implemented/verified. The macOS workflow carries applicable release-quality responsibilities that Android must preserve through native platform mechanisms; current Android CI closes only part of that release envelope. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/release-macos-main.yml at Desktop blob e602f5e89059a76f79372a6212b9a886a6425e9c as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked desktop/scripts/notarize-after-sign.cjs at Desktop blob 5f140c6ff8587b4969e1611ec9030a8c5dc5a6f1 as not-applicable-with-replacement; this does not promote verification."
     },
     {
       "responsibility_id": "RUST-ANDROID-RUNTIME-GATE-001",
@@ -4155,7 +4232,7 @@
       "device_test": "Open: Android P20/P21/P23/P24 require same-head instrumentation, performance/memory/energy/JNI resources, ABI/16KB and real-device install/upgrade evidence.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Mapped rather than implemented/verified because Android still lacks final same-head packaged/device/performance closure equivalent to the full Desktop runtime confidence envelope; Desktop-only renderer/WASM/OS-specific mechanisms are platform deltas, not deleted product responsibilities. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+      "notes": "Mapped rather than implemented/verified because Android still lacks final same-head packaged/device/performance closure equivalent to the full Desktop runtime confidence envelope; Desktop-only renderer/WASM/OS-specific mechanisms are platform deltas, not deleted product responsibilities. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/rust-desktop-runtime.yml at Desktop blob 5112570410c6c30e7d22b6eeff9780b939d97ab2 as android-adapted; this does not promote verification."
     },
     {
       "responsibility_id": "DISK-PRESSURE-ANDROID-001",
@@ -4216,6 +4293,13 @@
             "external-url-auth",
             "independent-review"
           ]
+        },
+        {
+          "path": "projects/telegram-desktop-rust/dossiers/external-url-auth-context.md",
+          "blob_sha": "2f2e16381913ff9fb69a868c76b7e5fb97233192",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -4268,7 +4352,7 @@
       "device_test": "Pending protected-account/emulator/device browser round-trip evidence.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented after finding a concrete production bug: MCP OAuth incorrectly reused the first-party-only account browser adapter, so real third-party connector authorization URLs could never open. The fix separates privilege instead of weakening the account allowlist."
+      "notes": "Implemented after finding a concrete production bug: MCP OAuth incorrectly reused the first-party-only account browser adapter, so real third-party connector authorization URLs could never open. The fix separates privilege instead of weakening the account allowlist. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked projects/telegram-desktop-rust/dossiers/external-url-auth-context.md at Desktop blob 2f2e16381913ff9fb69a868c76b7e5fb97233192 as android-adapted; this does not promote verification."
     },
     {
       "responsibility_id": "CI-DESKTOP-SOURCE-AUTHORITY-REPLACEMENT-001",
@@ -4291,6 +4375,62 @@
             "TDRP-SRC-01..03",
             "G-INVENTORY",
             "G-EVIDENCE"
+          ]
+        },
+        {
+          "path": "projects/telegram-desktop-rust/inventory/build-time-acquisitions.json",
+          "blob_sha": "0c554d04207545a8f852ceed44f6be560594552e",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "projects/telegram-desktop-rust/inventory/root-mutable-authorities.json",
+          "blob_sha": "fadaadac2f621444a3e236f47768cd7cd893d0b8",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "projects/telegram-desktop-rust/parity-ledger.json",
+          "blob_sha": "e57aec01f543d20457a4da6c36764a531612d552",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "projects/telegram-desktop-rust/upstream.lock.json",
+          "blob_sha": "9e10eca1e4c2ebcd743f454aa7b229f677e45c67",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "scripts/audit-tdrp-recursive-build-reachability.mjs",
+          "blob_sha": "7ecbf14ff058ac3a161f501fd7d525ce17b3d85c",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "scripts/discover-tdrp-recursive-next-layer.mjs",
+          "blob_sha": "315983ae7894140fef7f58453ed9cb858c21a11e",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "scripts/discover-tdrp-root-tool-authority.mjs",
+          "blob_sha": "668c06ef18678c8cef8128405fd9e80e756c19e7",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
+          ]
+        },
+        {
+          "path": "scripts/validate-tdrp-revision9-authority.mjs",
+          "blob_sha": "978735cff237b47fd71d321995857725b008e994",
+          "symbols": [
+            "semantic source/responsibility authority reviewed at current Desktop main"
           ]
         }
       ],
@@ -4348,7 +4488,7 @@
       "device_test": "Not applicable to source-authority accounting itself; device acceptance is a downstream final gate.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Replacement is implemented but deliberately not verified while full source closure remains nonzero. Do not mark this responsibility or its source row verified until the same final HEAD has zero strict debt and final package/device gates. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
+      "notes": "Replacement is implemented but deliberately not verified while full source closure remains nonzero. Do not mark this responsibility or its source row verified until the same final HEAD has zero strict debt and final package/device gates. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/tdrp-revision9-authority.yml at Desktop blob 658c9d1b2b88e68a6535d9c985f79d49442ad86f as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked projects/telegram-desktop-rust/inventory/build-time-acquisitions.json at Desktop blob 0c554d04207545a8f852ceed44f6be560594552e as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked projects/telegram-desktop-rust/inventory/root-mutable-authorities.json at Desktop blob fadaadac2f621444a3e236f47768cd7cd893d0b8 as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked projects/telegram-desktop-rust/parity-ledger.json at Desktop blob e57aec01f543d20457a4da6c36764a531612d552 as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked projects/telegram-desktop-rust/upstream.lock.json at Desktop blob 9e10eca1e4c2ebcd743f454aa7b229f677e45c67 as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked scripts/audit-tdrp-recursive-build-reachability.mjs at Desktop blob 7ecbf14ff058ac3a161f501fd7d525ce17b3d85c as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked scripts/discover-tdrp-recursive-next-layer.mjs at Desktop blob 315983ae7894140fef7f58453ed9cb858c21a11e as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked scripts/discover-tdrp-root-tool-authority.mjs at Desktop blob 668c06ef18678c8cef8128405fd9e80e756c19e7 as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked scripts/validate-tdrp-revision9-authority.mjs at Desktop blob 978735cff237b47fd71d321995857725b008e994 as not-applicable-with-replacement; this does not promote verification."
     },
     {
       "responsibility_id": "SEARCH-CANONICAL-IDENTITY-001",
