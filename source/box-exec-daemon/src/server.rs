@@ -26,7 +26,7 @@ pub struct RemoteRequestIdentity {
 }
 
 impl RemoteRequestIdentity {
-    fn validate(&self) -> Result<(), ExecutionError> {
+    pub(crate) fn validate(&self) -> Result<(), ExecutionError> {
         validate_identity("credential", &self.credential_id)?;
         validate_identity("operation", &self.operation_id)?;
         validate_identity("request", &self.request_id)?;
@@ -48,6 +48,7 @@ pub trait RemoteExecutionAuthorizer: Send {
         bearer: &str,
         identity: &RemoteRequestIdentity,
         capability_id: Option<&str>,
+        now_ms: u64,
     ) -> Result<(), ExecutionError>;
 }
 
@@ -415,6 +416,7 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
             &bearer,
             &identity,
             Some(execution.capability_id.as_str()),
+            now_ms,
         ) {
             return authorization_error(error);
         }
@@ -544,7 +546,7 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
             .records
             .get(&identity.operation_id)
             .map(|record| record.capability_id.as_str());
-        if let Err(error) = self.authorizer.authorize(&bearer, &identity, capability_id) {
+        if let Err(error) = self.authorizer.authorize(&bearer, &identity, capability_id, now_ms) {
             return authorization_error(error);
         }
 
@@ -623,7 +625,7 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
             .records
             .get(&identity.operation_id)
             .map(|record| record.capability_id.as_str());
-        if let Err(error) = self.authorizer.authorize(&bearer, &identity, capability_id) {
+        if let Err(error) = self.authorizer.authorize(&bearer, &identity, capability_id, now_ms) {
             return authorization_error(error);
         }
 
@@ -993,6 +995,7 @@ mod tests {
             bearer: &str,
             identity: &RemoteRequestIdentity,
             capability_id: Option<&str>,
+            _now_ms: u64,
         ) -> Result<(), ExecutionError> {
             self.calls += 1;
             if bearer != "remote-secret-token-1234" {

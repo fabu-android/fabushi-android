@@ -15,6 +15,7 @@ use crate::cloud_agent_backend::CloudAgentBackend;
 use crate::cloud_agent_production::{ProductionCloudAgentConfig, ProductionCloudAgentExecutor};
 use crate::file_transfer_backend::{RemoteFileTransferBackend, RemoteFileTransferConfig};
 use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService};
+use crate::remote_enrollment::DurableRemoteRunnerEnrollmentAuthorizer;
 use fabushi_android_shared::ExecutionError;
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -81,6 +82,19 @@ pub fn open_remote_box_control_execution_service<A: RemoteExecutionAuthorizer>(
     config: ProductionBoxControlConfig,
     now_ms: u64,
 ) -> Result<RemoteExecutionService<A, ProductionBoxControlBackend>, ExecutionError> {
+    crate::open_production_box_control_service(journal_path, authorizer, config, now_ms)
+}
+
+/// Shipping external-Runner composition for Android Box control. Unlike the generic constructor
+/// used by focused tests and embedders, this path always installs the durable enrollment/grant
+/// authorizer before ProductionBoxControlBackend can observe a request.
+pub fn open_enrolled_remote_box_control_execution_service(
+    journal_path: impl Into<PathBuf>,
+    enrollment_path: impl Into<PathBuf>,
+    config: ProductionBoxControlConfig,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<DurableRemoteRunnerEnrollmentAuthorizer, ProductionBoxControlBackend>, ExecutionError> {
+    let authorizer = DurableRemoteRunnerEnrollmentAuthorizer::open(enrollment_path, now_ms)?;
     crate::open_production_box_control_service(journal_path, authorizer, config, now_ms)
 }
 

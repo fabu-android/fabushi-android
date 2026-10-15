@@ -129,4 +129,20 @@ class RemoteBindingFencePolicyTest {
             ),
         )
     }
+    @Test
+    fun protectedBindingAcceptsOnlyCanonicalBoxExecutorScopes() {
+        val value = JSONObject(binding("session:account-a"))
+            .put("executors", JSONArray().put("box-environment").put("box-mcp"))
+            .toString()
+        val executors = JSONObject(value).getJSONArray("executors")
+        assertTrue((0 until executors.length()).map(executors::getString).contains("box-environment"))
+        assertTrue((0 until executors.length()).map(executors::getString).contains("box-mcp"))
+        RemoteBindingCredentialContract.validate(value)
+
+        val unsupported = JSONObject(value)
+            .put("executors", JSONArray().put("box-environment").put("box-root"))
+            .toString()
+        assertTrue(runCatching { RemoteBindingCredentialContract.validate(unsupported) }.isFailure)
+    }
+
 }

@@ -24,6 +24,7 @@ pub mod main;
 pub mod deployment_contract;
 pub mod file_transfer_backend;
 pub mod protected_path_guard;
+pub mod remote_enrollment;
 pub mod server;
 pub mod transport;
 
@@ -79,6 +80,9 @@ where
 pub use file_transfer_backend::{
     open_file_transfer_service, RemoteFileTransferBackend, RemoteFileTransferConfig,
     BOX_FILE_TRANSFER_CAPABILITY, MAX_TRANSFER_BYTES, TRANSFER_CHUNK_BYTES,
+};
+pub use remote_enrollment::{
+    DurableRemoteRunnerEnrollmentAuthorizer, RemoteRunnerEnrollment, RemoteRunnerGrant,
 };
 pub use transport::{
     AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteCancelOutcome,

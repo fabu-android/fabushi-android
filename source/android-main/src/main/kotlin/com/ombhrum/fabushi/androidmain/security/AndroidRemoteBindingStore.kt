@@ -198,12 +198,19 @@ internal object RemoteBindingCredentialContract {
         require(expiresAtMs > issuedAtMs) { "Remote binding expiresAtMs must follow issuance" }
         val allowedExecutors = setOf(
             "shell",
+            "background-shell",
             "read",
+            "write",
             "computer",
             "screenshot",
             "browser",
             "external-shell",
             "external-read",
+            "cloud-agent",
+            "box-store-sync",
+            "file-transfer",
+            "box-environment",
+            "box-mcp",
         )
         val executors = json.getJSONArray("executors")
         require(executors.length() in 1..allowedExecutors.size) {
