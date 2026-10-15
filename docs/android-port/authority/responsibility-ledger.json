@@ -17057,12 +17057,14 @@
         "source/host/src/attachment_paths.rs",
         "source/host/src/agent_attachment.rs",
         "source/host/src/android_json_runtime.rs",
-        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt",
+        "source/host/src/runner/generate_image_routed_tools.rs",
+        "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"
       ],
       "android_owner": "Rust Host media services + Android platform media adapters; Compose owns only projection/selection",
       "platform_delta": "Android file access must use scoped/private storage or ContentResolver; Desktop Box staging maps to bounded Local/Authorized Remote Runner; playback should use Android media APIs where they preserve the same user effect, while SSRF/link/image limits remain Host security contracts.",
       "implementation_status": "mapped",
-      "production_wiring": "Basic attachment storage is present, but safe link-preview, generate-image resource/backend, Runner staging and video rendition services are not shipping on Android.",
+      "production_wiring": "GenerateImage root-turn wiring now ships through the Rust Host AndroidRoutedToolBridge -> authenticated CursorDashboardMcpAuthBackend, persists content-addressed generated assets under the canonical app-private attachment root, and rejects cancelled/stale-account results. Other responsibility slices (safe link preview/media reads, full Runner staging and video rendition services) remain open, so the umbrella responsibility stays mapped and not verified.",
       "unit_test": "required per child service for byte/pixel/url/redirect/transcode limits",
       "contract_test": "required for Host/Runner resource fencing, generated request ids, SSRF protection and no cloud fallback where offline is promised",
       "integration_test": "required with real Host conversation/tools and Android media adapters",
@@ -17070,7 +17072,7 @@
       "device_test": "required for link preview, generated image, execution attachment, video playback and process-death recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Basic attachment parity remains tracked separately; this responsibility prevents broad source rows from being falsely closed by the picker/staging slice.",
+      "notes": "GenerateImage source slices were implemented on Android at 558b164306d62cbbac3d0cd73d2518ffa5da2863; the umbrella remains intentionally mapped because its non-image advanced attachment slices still require production closure and same-exact-HEAD packaged/device evidence.",
       "desktop_sources": [
         {
           "path": "source/host/src/media_mime.rs",
@@ -17079,6 +17081,23 @@
             "image_mime_from_path",
             "video_mime_from_path",
             "audio_mime_from_path"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/host_generate_image_dependencies.rs",
+          "blob_sha": "2d2ec7c6d0437fd2ef56d9c47229455f023d539a",
+          "symbols": [
+            "ProductionGenerateImageToolExecutor",
+            "GenerateImageToolExecutor::generate"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_generate_image_tool.rs",
+          "blob_sha": "4a8827a3374f83501724e5628bd752b64dfe4506",
+          "symbols": [
+            "SandGenerateImageToolBridge",
+            "GenerateImageToolExecutor",
+            "GENERATE_IMAGE_TOOL_NAME"
           ]
         }
       ]
