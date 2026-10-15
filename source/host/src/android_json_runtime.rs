@@ -20003,6 +20003,49 @@ export function apply(ctx) {
     }
 
     #[test]
+    fn react_to_message_routed_tool_updates_canonical_transcript_once_per_call() {
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let account_fence = host.current_turn_account_fence().unwrap();
+        host.transcript.lock().unwrap().append_entry(json!({
+            "id":"t3u",
+            "kind":"message",
+            "role":"user",
+            "content":"ship it",
+            "agentId":"mahayana-assistant",
+            "accountFence":account_fence,
+        })).unwrap();
+        let accepted = host.dispatch(
+            "feature.execute",
+            &json!({"command":{
+                "type":"chat.send",
+                "requestId":"reaction-root-request",
+                "agentId":"mahayana-assistant",
+                "model":"default",
+                "text":"[[tool:ReactToMessage]] {\"message_address\":\"t3u\",\"emoji\":\"👍\"}"
+            }}),
+        ).unwrap();
+        let operation_id = accepted["operationId"].as_str().unwrap().to_string();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            let event = host.dispatch("feature.receive", &json!({})).unwrap();
+            if event["operationId"] == operation_id && event["type"] == "operation.completed" {
+                break;
+            }
+            if event["operationId"] == operation_id && event["type"] == "operation.failed" {
+                panic!("ReactToMessage root routed tool failed: {event}");
+            }
+            assert!(std::time::Instant::now() < deadline, "reaction turn must settle");
+            if event.as_object().is_some_and(|object| object.is_empty()) {
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+        let reacted = host.transcript.lock().unwrap().entry("t3u").unwrap();
+        assert_eq!(reacted["reactions"], json!([{"emoji":"👍","by":"me"}]));
+    }
+
+    #[test]
     fn request_box_help_is_not_exposed_without_remote_desktop_capability() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
