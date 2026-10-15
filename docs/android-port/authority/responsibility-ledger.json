@@ -57519,6 +57519,176 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "b0ed4a8441ac1f7ab456a37caba21291b87d2abf classified 4973 still-unreviewed codex-rs rows by full build reachability, not by filename. Audit evidence: 201 repository Cargo manifests; 63 Mahayana member manifests; 65 workflow/script/desktop build files for codex-compat enablement; 135 workflow/script/desktop/project files for codex-rs direct use. Only optional compatibility edges exist; rust-desktop-runtime checks Cargo.toml presence but does not build the Codex workspace. Top-level row counts: {'.cargo': 2, '.config': 1, '.gitignore': 1, 'BUILD.bazel': 1, 'Cargo.lock': 1, 'Cargo.toml': 1, 'README.md': 1, 'agent-graph-store': 7, 'agent-identity': 3, 'analytics': 11, 'ansi-escape': 4, 'app-server-client': 6, 'app-server-daemon': 14, 'app-server-protocol': 923, 'app-server-test-client': 13, 'app-server-transport': 26, 'app-server': 195, 'apply-patch': 91, 'arg0': 3, 'async-utils': 3, 'aws-auth': 5, 'backend-client': 9, 'bwrap': 5, 'chatgpt': 14, 'cli': 53, 'clippy.toml': 1, 'cloud-config': 11, 'cloud-tasks-client': 5, 'cloud-tasks-mock-client': 4, 'cloud-tasks': 11, 'code-mode-host': 9, 'code-mode-protocol': 16, 'code-mode': 38, 'codex-api': 44, 'codex-backend-openapi-models': 23, 'codex-client': 7, 'codex-experimental-api-macros': 3, 'codex-home': 5, 'codex-mcp': 22, 'collaboration-mode-templates': 7, 'config.md': 1, 'config': 61, 'connectors': 18, 'context-fragments': 5, 'core-api': 3, 'core-plugins': 48, 'core-skills': 24, 'core': 583, 'default.nix': 1, 'deny.toml': 1, 'docs': 3, 'exec-server-protocol': 6, 'exec-server': 97, 'exec': 32, 'execpolicy': 15, 'ext': 127, 'external-agent-migration': 3, 'external-agent-sessions': 10, 'features': 6, 'feedback': 4, 'file-search': 6, 'file-system': 4, 'file-watcher': 4, 'git-utils': 13, 'hooks': 48, 'http-client': 21, 'install-context': 3, 'keyring-store': 3, 'linux-sandbox': 19, 'lmstudio': 4, 'mcp-server': 19, 'memories': 37, 'message-history': 4, 'model-provider-info': 4, 'model-provider': 13, 'models-manager': 16, 'network-proxy': 30, 'ollama': 9, 'otel': 33, 'patches': 28, 'plugin': 8, 'process-hardening': 4, 'prompts': 33, 'protocol': 41, 'realtime-webrtc': 4, 'response-debug-context': 3, 'responses-api-proxy': 10, 'rmcp-client': 41, 'rollout-trace': 37, 'rollout': 24, 'rust-toolchain.toml': 1, 'rustfmt.toml': 1, 'sandboxing': 18, 'scripts': 1, 'shell-command': 14, 'shell-escalation': 14, 'skills': 55, 'state': 78, 'stdio-to-uds': 6, 'terminal-detection': 4, 'test-binary-support': 3, 'thread-manager-sample': 4, 'thread-store': 23, 'tools': 41, 'tui': 1289, 'uds': 4, 'utils': 125, 'v8-poc': 4, 'vendor': 51, 'websocket-client': 5, 'windows-sandbox-rs': 62}. Any future shipping edge must re-open this responsibility."
+    },
+    {
+      "responsibility_id": "MAHAYANA-CLI-CODEX-COMPAT-ANDROID-REPLACEMENT-001",
+      "domain": "desktop-cli-and-optional-codex-compatibility",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-agent-codex/Cargo.toml",
+          "blob_sha": "d56fabdaa5c945be2a3747ce7170ecaf12e4f986",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-agent-codex/src/implementation.rs",
+          "blob_sha": "002d129706f503ead7a44729f9583480a411e8cc",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-agent-codex/src/lib.rs",
+          "blob_sha": "f8b153c80867feca4981e92b17372e01fc2f6796",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/Cargo.toml",
+          "blob_sha": "5896c0ed152f71bb06cb55d24d213446b86d13ca",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/bin/mahayana-gateway.rs",
+          "blob_sha": "660eca96a76f1bd0fb2ae05d7b03f60a579f24ca",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/bin/mahayana-test-driver.rs",
+          "blob_sha": "4db5450a87154ceccaff4400e0a187b80965fa96",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/bin/mahayana-test-driver/backend.rs",
+          "blob_sha": "55654371d4c42008e87c709e38af6531ddd2b488",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/bin/mahayana-test-driver/miniapp.rs",
+          "blob_sha": "3b162d7cfa1d890b33d48c9f2f621ef1101af9e4",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/chat_tui.rs",
+          "blob_sha": "391277c0f97de050849d518d0c2760bd2d1aa215",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/device_agent.rs",
+          "blob_sha": "10029b40dcccd21c920b760b5deb234b93af90e1",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/main.rs",
+          "blob_sha": "a0e0a98f20e7f24eb75dc13ae9bffdf5c4846b6e",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/plugin_archive.rs",
+          "blob_sha": "6537af44077bed43d943fbfd1d400cd00daeff70",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/plugin_dev.rs",
+          "blob_sha": "aff745c0607262cda1e9d385b2bac2017d94dbc9",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/plugin_dev_template.rs",
+          "blob_sha": "9abf47d40dcff2000d9cf84a0b115b075284e913",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/src/plugin_dev_tests.rs",
+          "blob_sha": "ee3ff1810d578e603d31bc0110c7a79ca7c26b77",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/mahayana-rs/mahayana-cli/tests/test_driver_backend.rs",
+          "blob_sha": "93d2a57603b9ee07672d7cf3fbcc978baa8a91ab",
+          "symbols": [
+            "optional Codex adapter or desktop/developer CLI responsibility"
+          ]
+        }
+      ],
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "responsibility": "Preserve applicable user/developer capabilities without shipping Desktop Mahayana CLI/TUI/test-driver/plugin-dev binaries or the disabled Codex compatibility adapter inside the Android app.",
+      "source_owner": "Desktop Mahayana CLI/developer binaries plus optional Mahayana Agent Codex compatibility adapter.",
+      "direct_callers": [
+        "No current shipping caller for mahayana-agent-codex because codex-compat is not enabled.",
+        "Mahayana CLI entrypoints are developer/desktop command surfaces rather than Android production UI."
+      ],
+      "downstream_dependencies": [
+        "native Android Compose surfaces",
+        "typed Coordinator/JNI/Host commands",
+        "Capability Broker/Runner",
+        "GitHub Actions test/developer workflows"
+      ],
+      "state_owner": "No Android CLI/TUI state owner. Product canonical state remains in Rust Host/Coordinator stores; UI owns only ephemeral presentation state.",
+      "persistent_state": [
+        "No CLI-specific canonical Android product state."
+      ],
+      "protocol_wire_contract": [
+        "Applicable product commands continue through typed Android bridge/JNI; CLI-only argv/stdin/stdout contracts are not an Android app ABI."
+      ],
+      "visible_effect": "Android users receive native Fabushi account/chat/Agent/plugin/remote surfaces rather than a terminal TUI; developer test/plugin workflows run in repository CI/tooling.",
+      "failure_behavior": [
+        "native command failures are surfaced through typed Host errors",
+        "developer/test failures fail GitHub Actions rather than an embedded CLI"
+      ],
+      "cancellation_behavior": "runtime cancellation remains Host/Runner-owned; CLI process cancellation is not ported as an Android product mechanism.",
+      "retry_semantics": "side effects obey Host/Runner outcome-unknown rules rather than shell/CLI replay.",
+      "idempotency_semantics": "canonical Host request identities replace CLI-process-local assumptions.",
+      "process_death_recovery": "Android durable owners recover canonical runs/state; no CLI process is expected to survive app process death.",
+      "account_fencing": "live Rust account epoch/fence applies to native commands; CLI account selection is not a second owner.",
+      "security_boundary": "no arbitrary terminal/desktop Codex CLI is embedded; privileged resources remain behind Capability Broker and authorized Runner boundaries.",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend",
+        "source/host",
+        "source/android-preload",
+        "source/android-main",
+        "source/android-host-jni",
+        ".github/workflows/android-parity-full-ci.yml"
+      ],
+      "android_owner": "Native Compose + typed Coordinator/JNI/Host + Capability Broker/Runner; GitHub Actions for developer/test tooling.",
+      "platform_delta": "Desktop/developer CLI/TUI/process mechanics are intentionally absent on Android. Optional Codex compatibility is disabled in the current Desktop product graph; Android follows current Mahayana-native owners.",
+      "implementation_status": "not-applicable",
+      "production_wiring": "No Android CLI or Codex compatibility runtime is wired. Applicable capabilities are exposed through the native product and repository CI tooling.",
+      "unit_test": "Active native owners have focused tests; CLI-only mechanisms are not runtime-tested on Android.",
+      "contract_test": "Strict architecture/source gates ensure no CLI/Codex bypass enters production.",
+      "integration_test": "Native user journeys and GitHub Actions developer/test workflows replace these desktop mechanisms.",
+      "packaged_test": "Final release must not package an arbitrary CLI/Codex compatibility runtime.",
+      "device_test": "Applicable native journeys are tested under their product responsibilities; CLI itself is N/A.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "0a5cad523f602d3ea6b5276fc10514f7beefc851 reviewed all 16 remaining mahayana-agent-codex + mahayana-cli source rows. codex-compat has no current shipping enablement; CLI/TUI/test-driver/plugin-dev are desktop/developer mechanisms. All are N/A-with-replacement, not verified."
     }
   ],
   "traceability": {
