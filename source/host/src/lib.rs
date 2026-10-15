@@ -27,6 +27,7 @@ pub mod automation_trigger;
 pub mod automation_schedule;
 pub mod auto_review_settings;
 pub mod box_rebuild_backend;
+pub mod box_capabilities;
 pub mod capability_broker;
 pub mod composer_draft;
 pub mod connectors;

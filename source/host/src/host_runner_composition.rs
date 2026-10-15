@@ -1,3 +1,4 @@
+use crate::box_capabilities::{box_is_available, CapableBox};
 use crate::remote_execution::{
     RemoteExecutionJournal, RemoteExecutionRecord, RemoteExecutionState,
 };
@@ -79,6 +80,24 @@ impl<L: HostRunnerSession, R: HostRunnerSession> HostRunnerComposition<L, R> {
 pub struct AuthenticatedRemoteHostRunner<T: RemoteExecutionTransport> {
     runner: RemoteRunner<T>,
     journal: RemoteExecutionJournal,
+}
+
+impl<T: RemoteExecutionTransport> CapableBox<RemoteExecutionContext>
+    for AuthenticatedRemoteHostRunner<T>
+{
+    type Description = String;
+    type EnvironmentUpdate = String;
+    type McpLoadResult = Vec<String>;
+    type McpAccessor = String;
+    type Error = ExecutionError;
+
+    fn is_available(&self) -> Option<Result<bool, Self::Error>> {
+        Some(Ok(true))
+    }
+
+    fn description(&self) -> Option<Self::Description> {
+        Some("authenticated-remote-box".into())
+    }
 }
 
 impl AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport> {
@@ -507,6 +526,9 @@ impl<L: HostRunnerSession, T: RemoteExecutionTransport> AuthorizedHostRunnerComp
         match target {
             ExecutionTarget::AndroidLocal => self.local.execute(request),
             ExecutionTarget::RemoteBox => {
+                if !box_is_available::<RemoteExecutionContext, _>(&self.remote)? {
+                    return Err(ExecutionError::CapabilityUnavailable("remote_box".into()));
+                }
                 let context = remote_context.ok_or_else(|| {
                     ExecutionError::InvalidRequest(
                         "RemoteBox requires authenticated remote execution context".into(),
