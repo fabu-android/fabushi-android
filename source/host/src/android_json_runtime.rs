@@ -4527,6 +4527,7 @@ impl AndroidJsonHost {
             "feature.widget.dismiss" => self.widget_dismiss(params),
             "feature.transcript.secret.prepare" => self.transcript_secret_prepare(params),
             "feature.transcript.secret.commit" => self.transcript_secret_commit(params),
+            "feature.transcript.reaction.set" => self.transcript_reaction_set(params),
             "feature.receive" => self.feature_receive(),
             "feature.interrupt" => self.feature_interrupt(params),
             "feature.approval.resolve" => self.feature_approval_resolve(params),
