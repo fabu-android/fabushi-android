@@ -5,7 +5,7 @@
     "desktop_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "43eec8b67f5b1f6fd09a5a162e8de16a90b3cbe8",
+    "android_head_at_update": "f6664ddcfdcd35fed188c0daf016b75a2dc5951a",
     "status": "incomplete",
     "note": "Desktop canonical rebaselined to c33a9495fc1e640557d65f3e2daedc1449be7fcb / root tree 906b3f414b5ff343a5f0e627fa31b98778dfbf54 from GitHub Actions run 38731258547 artifact 11971095464. 13 changed/new source rows were reset for semantic re-audit; REMOTE-COMPUTER-001 was conservatively invalidated. Android migration remains incomplete pending source/responsibility closure and same-exact-head package/device/release evidence.",
     "desktop_root_tree": "906b3f414b5ff343a5f0e627fa31b98778dfbf54"
@@ -58312,16 +58312,16 @@
       ],
       "android_owner": "AndroidJsonHost root-turn assembly using existing canonical owners; no second MCP/workflow/channel/Agent store",
       "platform_delta": "Android uses app-private/account-fenced owner projections and authorized Remote Runner context instead of Desktop box-local surfaces.",
-      "implementation_status": "mapped",
-      "production_wiring": "At f2cd11b invariant root instructions, combined durable memory, timezone, managed team rules, Agent profile and Remote Runner runtime are production-wired. Desktop c33a9495 live MCP custom/discovery, automation/workflow, budgeted skills, channels and Agent directory dynamic sections are still open and therefore this responsibility remains mapped.",
-      "unit_test": "Partial exact-head f2cd11b Rust prompt tests succeeded in run 38738066987 / job 116432346862; missing dynamic-section matrix must be added before promotion.",
-      "contract_test": "Desktop c33a9495 system_prompt_assembly.rs and dynamic/shipping contract tests were re-read; Android does not yet satisfy the full dynamic section closure.",
-      "integration_test": "Partial root-turn integration exists at f2cd11b; complete canonical-owner dynamic projection and stale-account/process-reopen coverage remain required.",
-      "packaged_test": "required on final exact-head signed APK/AAB",
-      "device_test": "required on final protected emulator/device acceptance",
-      "artifact": "f2cd11b baseline evidence only; no full prompt-assembly verification claim.",
+      "implementation_status": "implemented",
+      "production_wiring": "At exact Android HEAD f6664ddcfdcd35fed188c0daf016b75a2dc5951a, AndroidJsonHost::queue_chat_turn_with_context freezes the current account fence, reads memory/timezone/managed team rules, builds AndroidJsonHost::dynamic_prompt_snapshot_for_root_turn from the existing AutomationRuntime, GlobalWorkflowLibrary + account-fenced SandManagedSkillsService cache, FileChannelStore, AndroidAgentRoster and MCP Dashboard/McpServerToolSettings owners, appends those sections through append_android_dynamic_runtime_system_instructions, then appends Remote Runner state and passes the resulting system instructions into AndroidHostInferenceProvider for the shipping root turn. Prompt collection occurs before new user transcript acceptance and the account fence is rechecked before provider dispatch, so discovery/fence failure cannot create a ghost user-message side effect.",
+      "unit_test": "Exact-head f6664ddcfdcd35fed188c0daf016b75a2dc5951a GitHub Actions run 38749910719 / rust-runtime-foundation job 116473283990 succeeded. Focused Rust coverage includes dynamic_runtime_sections_preserve_order_dedupe_and_fail_closed_mcp, empty_dynamic_states_match_desktop_omission_semantics, skill_catalog_uses_two_percent_initial_context_budget_and_truncates, prompt_account_fence_rejects_stale_account_or_session_epoch, remote_runner_section_coexists_after_dynamic_runtime_context, and account-fenced managed-skill cache tests.",
+      "contract_test": "Exact-head f6664ddcfdcd35fed188c0daf016b75a2dc5951a run 38749910719 / rust-runtime-foundation job 116473283990 succeeded against Desktop c33a9495 system prompt sources. Prompt remains context-only: routed tools, Capability Broker, approval and account/device/process fences remain execution authority; MCP discovery failure projects unavailable rather than an empty connector catalog.",
+      "integration_test": "Exact-head f6664ddcfdcd35fed188c0daf016b75a2dc5951a run 38749910719 / rust-runtime-foundation job 116473283990 succeeded, including android_json_runtime::tests::queue_chat_turn_passes_dynamic_sections_to_the_real_android_provider_path and android_json_runtime::tests::dynamic_prompt_snapshot_reopens_canonical_owners_and_fences_stale_accounts. The test transport probes AndroidHostInferenceProvider-owned system instructions after the real queue_chat_turn_with_context composition path.",
+      "packaged_test": "Not closed for this responsibility on the final exact HEAD. Final signed githubRelease APK/AAB packaged acceptance remains required.",
+      "device_test": "Not closed. Protected emulator/device acceptance still requires protected-account prerequisites and a final release/device run.",
+      "artifact": "Exact-head f6664ddcfdcd35fed188c0daf016b75a2dc5951a: run 38749910719 and rust-runtime-foundation job 116473283990 succeeded; the Host suite reported 1056 passed / 0 failed. Architecture artifact 11981176416 records still-open strict full-source debt and is not package/device/release verification.",
       "verification_status": "not-verified",
-      "notes": "Keep source/host/src/runner/system_prompt.rs and system_prompt_assembly.rs nonterminal until all shipping responsibilities are closed on the same exact HEAD. Never bulk-promote these source rows from this partial responsibility."
+      "notes": "Implemented for Desktop c33a9495 root prompt assembly and proven by exact-head Rust/production-path tests at f6664ddc. Keep not-verified until one final same Android HEAD closes strict Full CI plus signed package, protected device and release evidence. system_prompt_assembly.rs also carries AGENT-REMOTE-PROMPT-ANDROID-001, which is implemented/not-verified."
     }
   ],
   "traceability": {
