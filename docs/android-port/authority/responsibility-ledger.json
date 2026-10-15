@@ -2,13 +2,13 @@
   "schema_version": 1,
   "authority": {
     "desktop_repository": "bhrumom/fabushi-desktop",
-    "desktop_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+    "desktop_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "470f3090fd0d166df698635cba62c5e41ca76d64",
+    "android_head_at_update": "2d5edc8f69eedb1a275ed30e3d9e66fd5b3f4965",
     "status": "incomplete",
-    "note": "Desktop canonical remains 371b72f1cd20de03dc4dff9a15ed761054968093. Android exact head 470f3090fd0d166df698635cba62c5e41ca76d64 is under active CI. Transcript source closure review has begun: primitive replica/projection responsibilities are implemented but not yet exact-head verified, while extension/roster composition remains a mapped production gap. Full source/package/device closure remains open.",
-    "desktop_root_tree": "ca4777b5e3b03395da5e8f28aa2d3cfe5169113a"
+    "note": "Desktop canonical rebaselined to 8148bfb9e747d446dd3d97342c3cf04a0ed407a2. Seven paths changed since the prior lock: three new G11 real-browser authority/evidence files and four browser shipping/contract files with changed blobs. Those seven rows are unreviewed; unchanged rows retain prior human review state. Android exact head 2d5edc8f69eedb1a275ed30e3d9e66fd5b3f4965 has Rust/build gates green, while strict source closure and protected-account emulator acceptance remain incomplete.",
+    "desktop_root_tree": "daa4cfbf6851e312e280050f81ef18915bca0c0c"
   },
   "responsibilities": [
     {
@@ -11116,9 +11116,19 @@
           "symbols": [
             "useMovablePanel"
           ]
+        },
+        {
+          "path": "source/host/src/runner/conversation_outline.rs",
+          "blob_sha": "7cfca5ae5806de679614006a6d21a24dc58534d4",
+          "symbols": [
+            "OutlineItem",
+            "OutlineTurn",
+            "derive_outline_turns_from_conversation_state",
+            "step_to_outline_item"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Provide account+Agent scoped full-conversation outline snapshots with retain/refcount lifecycle, cancellable single-flight refresh, transport reconnect recovery, optional polling for running subagents, generation fencing, append/update reconciliation, and a native panel with subagent tabs, expandable typed rows and close/accessibility behavior.",
       "source_owner": "Canonical transcript/runtime owns conversation items; outline provider owns only retained/read-only projection lifecycle and panel-local selection/expansion.",
       "direct_callers": [
@@ -16578,7 +16588,18 @@
       "device_test": "required for launch/reply/background recovery/image attachment on supported Android device",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not collapse this into generated local subagents or async-task UI. The Remote CloudAgent tool client is implemented as a distinct sub-responsibility, but end-to-end Cloud Agent runtime parity still requires a real authorized remote executor plus model/image/trace/transcript contracts and packaged/device evidence."
+      "notes": "Do not collapse this into generated local subagents or async-task UI. The Remote CloudAgent tool client is implemented as a distinct sub-responsibility, but end-to-end Cloud Agent runtime parity still requires a real authorized remote executor plus model/image/trace/transcript contracts and packaged/device evidence.",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/production_binding_providers.rs",
+          "blob_sha": "49a475ddcdedc81faaff1b477f633936023c03af",
+          "symbols": [
+            "production_cloud_agent_trace_converter",
+            "convert_generated_conversation_messages_to_no_preamble_trace"
+          ]
+        }
+      ],
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2"
     },
     {
       "responsibility_id": "CLOUD-AGENT-REMOTE-TOOL-ANDROID-001",
@@ -18295,9 +18316,18 @@
             "HostStateBackstopExtension",
             "start_state_backstop_extension_with_gate"
           ]
+        },
+        {
+          "path": "source/host/src/production_binding_providers.rs",
+          "blob_sha": "49a475ddcdedc81faaff1b477f633936023c03af",
+          "symbols": [
+            "ProductionStateBackstopRuntime",
+            "create_production_state_backstop_runtime",
+            "create_production_state_backstop_runtime_with"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Provide a bounded durable Agent store.db backstop with debounced snapshot scheduling, checkpointed reads, maximum-size enforcement, stable source/object-store routing, explicit enablement, readback, error reporting, and lifecycle disposal without making Presentation a storage owner.",
       "source_owner": "Desktop StateBackstop extension",
       "direct_callers": [
