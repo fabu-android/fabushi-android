@@ -565,7 +565,7 @@ fn normalize_cursor_agent(object: &Map<String, Value>) -> Result<Value, String> 
 fn normalize_secret_request(object: &Map<String, Value>) -> Result<Value, String> {
     reject_cross_type(
         object,
-        &["content", "url", "images", "alt", "reply_to", "channel", "widget"],
+        &["content", "url", "images", "alt", "reply_to", "channel", "widget", "bcId"],
     )?;
     let secret = object
         .get("secret")
@@ -983,6 +983,20 @@ mod tests {
             )
             .unwrap_err()
             .contains("canonical lowercase platform id"));
+        assert!(transcript.lock().unwrap().get_transcript().is_empty());
+
+        assert!(tools
+            .call_tool(
+                SEND_MESSAGE_TOOL_NAME,
+                json!({
+                    "type":"secret-request",
+                    "bcId":"must-not-mix",
+                    "secret":{"label":"Token","connector":"discord","field":"token"}
+                }),
+                "secret-mixed",
+            )
+            .unwrap_err()
+            .contains("only valid"));
         assert!(transcript.lock().unwrap().get_transcript().is_empty());
     }
 
