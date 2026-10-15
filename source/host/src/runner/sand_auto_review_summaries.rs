@@ -426,6 +426,7 @@ pub struct SandBrowserSummaryArgs {
     pub cdp_params: Option<String>,
     pub tabs_action: Option<String>,
     pub tab_index: Option<usize>,
+    pub file_path: Option<String>,
 }
 
 pub fn summarize_sand_browser_auto_review_action(args: &SandBrowserSummaryArgs) -> String {
@@ -464,6 +465,14 @@ pub fn summarize_sand_browser_auto_review_action(args: &SandBrowserSummaryArgs) 
                 .unwrap_or_else(|| "a key".into())
         )),
         "drag" => summarize(format!("Drag {target}")),
+        "download" => summarize(format!("Download from {target}")),
+        "upload_file" => summarize(format!(
+            "Upload “{}” to {target}",
+            compact_head_and_tail(
+                &redact_inline_secrets(args.file_path.as_deref().unwrap_or("")),
+                120,
+            )
+        )),
         "cdp" => summarize(format!(
             "Run CDP command {} with {}",
             args.cdp_method
