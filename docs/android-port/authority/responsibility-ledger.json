@@ -22195,6 +22195,463 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "1438b495440c82473f88b1187b05794155e27eba source audit established Desktop journal-first mirror is shipping, while Android's shipping replacement is the canonical durable TranscriptStore. This closes the source responsibility as implemented, not verified; final exact-head package/device evidence remains required."
+    },
+    {
+      "responsibility_id": "CODEX-LOGIN-ANDROID-REPLACEMENT-001",
+      "domain": "account-auth-compatibility",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/codex-rs/login/BUILD.bazel",
+          "blob_sha": "42c5385c53ed211f37e32d036b5450e7ebcd7b1c",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/Cargo.toml",
+          "blob_sha": "bc0abf9327927699afc55da0f0f5ed5182fe2a6f",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/assets/error.html",
+          "blob_sha": "e5fb4dba10dbb562e5bb336a10df034c4c1620fd",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/assets/success.html",
+          "blob_sha": "5b01ceb90e96ad74d3bb9ddf806686e5e98ef64d",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/assets/success_legacy.html",
+          "blob_sha": "015866ee546dfa582072fddec3ddb2de00ac2402",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/access_token.rs",
+          "blob_sha": "5859ab1c252a047d8d6e992282a1d0e1de96eb25",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/access_token_tests.rs",
+          "blob_sha": "d734d149d5e8fa31a367ecc0ceb9de9247fa9427",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/agent_identity.rs",
+          "blob_sha": "15cdb11163f1c6f898d88b8c4c97bf1c2a398b9b",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/auth_headers.rs",
+          "blob_sha": "802f00c4d363993a2bce156632ea10dbeca4914e",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/auth_tests.rs",
+          "blob_sha": "780cd8600984faa25d2c83f886f7d27bfb553ca9",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/bedrock_api_key.rs",
+          "blob_sha": "3445878365a186527889d6610ad4e2bded545e26",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/bedrock_api_key_tests.rs",
+          "blob_sha": "182834af6631f8d13af3c0da422cd66d647e5927",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/default_client.rs",
+          "blob_sha": "ac153ea8a4ae9f40f6df3f16dea2d2020f7e52aa",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/default_client_tests.rs",
+          "blob_sha": "d873c70e0dc1d3fa4c20174d42aecd8fb2d55ce5",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/error.rs",
+          "blob_sha": "ec8a3790fef306ff55e43a5f5855698eb08d8b1d",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/external_bearer.rs",
+          "blob_sha": "0a276543eabf69e9d58b210e0f1f31cbbd1267fc",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/manager.rs",
+          "blob_sha": "9509efc348c384ebca7cc54758b2daadb8df66a3",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/mod.rs",
+          "blob_sha": "16477d78279e31041d629a77c3a41d3600582a7c",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/personal_access_token.rs",
+          "blob_sha": "09c6d5d2b3c8674421cfc80ce86327266acbf7a5",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/personal_access_token_tests.rs",
+          "blob_sha": "b05edb068bf39a158f3883a482f2d757f62fc280",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/revoke.rs",
+          "blob_sha": "6b2b21dcf832f6c9e30729376ad8dbbd57b0d331",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/storage.rs",
+          "blob_sha": "ae195f3bff62b617bc56ea12e02a5b567417fcad",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/storage_tests.rs",
+          "blob_sha": "647af79b656ae4ab51ca1677a9aac921661a145d",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth/util.rs",
+          "blob_sha": "a993bbf4a378612f50c1f72926068e8d9e11f170",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/auth_env_telemetry.rs",
+          "blob_sha": "3cec5a4ce3e98f4b0406ddaf04221b8d69cd9659",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/device_code_auth.rs",
+          "blob_sha": "0d9c7244a103a6da6cdf65f7d028167ee2a50396",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/device_code_auth_tests.rs",
+          "blob_sha": "ba6071ba88d4e15632d9ff42702bdbf42bd38afb",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/jwt_expiration.rs",
+          "blob_sha": "60aba8dfeb5da86551dc81f0347a0843e95c754e",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/lib.rs",
+          "blob_sha": "ba172cef8d57ab354ec686bfcf2855fe7bcc70b6",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/outbound_proxy.rs",
+          "blob_sha": "79fcf76de192eff9575e8c9c858bb9e85129f0c5",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/pkce.rs",
+          "blob_sha": "a0eacfc20147ec419ee9e6f05385360e3d6dc9eb",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/server.rs",
+          "blob_sha": "804d05434e231049ffa63709728a5ed8b004e247",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/success_page.rs",
+          "blob_sha": "4c7983e63c3e1de857a699ea11aca41d5c6b4fde",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/success_page_tests.rs",
+          "blob_sha": "5ccfc9e563b7d5e3bf4edabdfd40f46dd9b666b8",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/token_data.rs",
+          "blob_sha": "2952ecb2a7cb50fb7c1b1d462eb6f2f16231baf3",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/src/token_data_tests.rs",
+          "blob_sha": "f39a7cb25dbb7210dffe7bda8c64de78d5121030",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/tests/all.rs",
+          "blob_sha": "fdf98aa9455bffb74f4dc11df6d237aa948248ef",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/tests/suite/auth_refresh.rs",
+          "blob_sha": "e47b2978e8d62660e052e1432d16395c642ff08f",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/tests/suite/device_code_login.rs",
+          "blob_sha": "83cae8af5fc3545383788bfbcb2e1fa11e5ead04",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/tests/suite/login_server_e2e.rs",
+          "blob_sha": "dbcd396ef1540f8c2d57a109a8ddb630d03e7839",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/tests/suite/logout.rs",
+          "blob_sha": "bf2873779b32d7d61ce7debf34ee6a74d59919b3",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/login/tests/suite/mod.rs",
+          "blob_sha": "3c3bb24d62dcf49d1f281093af50c35ebe47ffde",
+          "symbols": [
+            "Codex login feature/build responsibility"
+          ]
+        }
+      ],
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "responsibility": "Preserve native Fabushi account login/session expiry/refresh/logout capability without shipping Codex's desktop CLI callback server, device-code/API-key/keyring login stack on Android.",
+      "source_owner": "MahayanaProduct minimal codex-login token_data dependency; Codex full login stack is an optional desktop/CLI compatibility mechanism.",
+      "direct_callers": [
+        "mahayana-product (codex-login default-features=false)",
+        "AndroidJsonHost/Fabushi account commands",
+        "AndroidAccountOAuthAdapter"
+      ],
+      "downstream_dependencies": [
+        "canonical account session",
+        "browser login attempt polling",
+        "refresh/logout/revocation",
+        "protected Android session persistence"
+      ],
+      "state_owner": "Rust AndroidAccountService is canonical; AndroidAccountSessionStore owns only encrypted storage and Custom Tabs owns only browser launch.",
+      "persistent_state": [
+        "Rust durable pending login-attempt/session state",
+        "Android no-backup AES-GCM session ciphertext + revocation fence"
+      ],
+      "protocol_wire_contract": [
+        "same-origin Fabushi auth URL",
+        "bounded pending attempt id/poll secret",
+        "server-normalized access/refresh expiry",
+        "no stale/foreign callback acceptance"
+      ],
+      "visible_effect": "Users can sign in/out and survive process death with one account truth; expired credentials are refreshed or rejected without exposing local API-key/device-code CLI modes.",
+      "failure_behavior": [
+        "invalid/expired attempts fail closed",
+        "protected-store corruption clears unusable ciphertext",
+        "logout persists revocation before erase",
+        "browser launch failure does not fabricate login success"
+      ],
+      "cancellation_behavior": "login attempts are explicitly cancellable and terminal/cancelled attempts cannot later settle a session",
+      "retry_semantics": "poll/refresh is bounded and identity-fenced; no duplicate account owner is created",
+      "idempotency_semantics": "stable attempt/session identity plus revocation fence prevents cold-start resurrection",
+      "process_death_recovery": "Rust account state and protected session restore are reconciled on cold start; expired pending attempts are dropped",
+      "account_fencing": "all callbacks/session projections are tied to the live Rust account epoch/fence",
+      "security_boundary": "tokens remain Rust Host/Keystore side; Presentation receives status/identity only",
+      "android_disposition": "not-applicable-with-replacement",
+      "android_target": [
+        "source/host/src/account_service.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/adapters/account-oauth.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidAccountSessionStore.kt"
+      ],
+      "android_owner": "Rust AndroidAccountService + storage-only AndroidAccountSessionStore + system Custom Tabs adapter",
+      "platform_delta": "Codex feature=full login is a desktop/CLI mechanism. Android replaces it with server-origin browser auth and durable Rust account attempts. MahayanaProduct's actual default-features=false JWT-expiry dependency is replaced by server-normalized expiry fields in the canonical account session.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost constructs/uses AndroidAccountService; typed account commands launch only validated same-origin Custom Tabs URLs; native session adapter persists the Rust-owned normalized session in Android Keystore storage and revocation fence.",
+      "unit_test": "source/host/src/account_service.rs focused tests cover expired pending attempt cold start, refresh expiry, terminal failures and normalization.",
+      "contract_test": "Existing account/session/Custom Tabs architecture contracts; current exact-head CI required.",
+      "integration_test": "Protected account login/process-death/account-switch acceptance required on latest exact head.",
+      "packaged_test": "Required on final githubRelease package with test-session import disabled.",
+      "device_test": "Blocked until protected test-account secrets are configured; must run on latest head.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "9bdffa00ee96bbc9f62bee7e56794c44bca4534b audited all 42 codex-login inventory rows by Cargo feature reachability. Full CLI login files are Android N/A-with-replacement; minimal JWT expiry responsibility is Android-adapted. No row is verified from predecessor CI."
+    },
+    {
+      "responsibility_id": "CODEX-SECRETS-ANDROID-REPLACEMENT-001",
+      "domain": "protected-secrets-compatibility",
+      "desktop_sources": [
+        {
+          "path": "source/mahayana/codex-rs/secrets/BUILD.bazel",
+          "blob_sha": "1b69e7c7e05613e74c2fd7d5cf01049d016e5a12",
+          "symbols": [
+            "Codex protected secrets backend/redaction responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/secrets/Cargo.toml",
+          "blob_sha": "2a294ee39134e0a4d4160ed7b422d5fe3c2ba6da",
+          "symbols": [
+            "Codex protected secrets backend/redaction responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/secrets/src/lib.rs",
+          "blob_sha": "df2155e5e4039be46420510be6b2d163f27e9133",
+          "symbols": [
+            "Codex protected secrets backend/redaction responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/secrets/src/local.rs",
+          "blob_sha": "e721e1451ee133ca7ecb7ff6b65b0804774a8b17",
+          "symbols": [
+            "Codex protected secrets backend/redaction responsibility"
+          ]
+        },
+        {
+          "path": "source/mahayana/codex-rs/secrets/src/sanitizer.rs",
+          "blob_sha": "7f112b2f0fa129ba861524a2b2bed36c75c0a803",
+          "symbols": [
+            "Codex protected secrets backend/redaction responsibility"
+          ]
+        }
+      ],
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "responsibility": "Preserve MahayanaProduct protected account/managed-secret storage and redaction without importing desktop keyring/cwd filesystem assumptions into Android or exposing plaintext to Presentation.",
+      "source_owner": "Codex SecretsManager LocalSecretsBackend + sanitizer, consumed by MahayanaProduct.",
+      "direct_callers": [
+        "MahayanaProduct account session secret",
+        "MahayanaProduct managed secret requests",
+        "Android credential/plugin/account storage boundaries"
+      ],
+      "downstream_dependencies": [
+        "account session restore",
+        "connector/Agent requested secrets",
+        "MCP/plugin variables",
+        "privacy redaction"
+      ],
+      "state_owner": "Rust Host owns account/config/connector truth; Android Keystore stores own cryptographic resources only.",
+      "persistent_state": [
+        "Android Keystore AES keys",
+        "no-backup encrypted session/vault/plugin-secret files",
+        "Rust non-secret metadata/handles"
+      ],
+      "protocol_wire_contract": [
+        "bounded secret names/values",
+        "account/origin scoping",
+        "no reveal projection",
+        "revoke/erase semantics"
+      ],
+      "visible_effect": "Credentials survive intended restarts and can be rotated/revoked without becoming visible in UI or crossing accounts.",
+      "failure_behavior": [
+        "unreadable encrypted vault fails closed",
+        "revocation precedes/guards erasure",
+        "secret-storage failures do not commit public metadata as success"
+      ],
+      "cancellation_behavior": "cancelled/failed handoffs do not reveal or blindly replay secret writes",
+      "retry_semantics": "uncertain writes reconcile by metadata/handle; side-effecting credential writes are not blindly replayed",
+      "idempotency_semantics": "stable account/key/secret references and atomic encrypted replacement",
+      "process_death_recovery": "protected ciphertext + Rust metadata reconcile after cold start; revoked session cannot resurrect",
+      "account_fencing": "all account-scoped secret operations validate live account fence before storage access",
+      "security_boundary": "no Compose/ViewModel plaintext reveal route; origin-bound secret resolution exists only at execution boundary",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidAccountSessionStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidCredentialVaultStore.kt",
+        "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/security/AndroidPluginVariableSecretStore.kt",
+        "source/packages/redaction",
+        "source/host/src/account_service.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Scoped Android Keystore storage resources beneath canonical Rust Host owners",
+      "platform_delta": "Android Keystore + app-private no-backup storage replaces desktop keyring/encrypted cwd namespaces. Product secret classes are split by canonical owner instead of sharing one global Codex SecretsManager.",
+      "implementation_status": "implemented",
+      "production_wiring": "Account session, Agent connector/requested-secret and plugin-variable paths are wired through Keystore-backed storage; credential vault exposes metadata only and an internal origin-authorized resolver. Rust Host remains business-state owner.",
+      "unit_test": "Keystore/storage policy and Rust secret-handoff/redaction focused tests exist; exact-head CI required.",
+      "contract_test": "No-reveal/account-fence/rollback contracts exist; final same-head architecture and protected-session gates required.",
+      "integration_test": "Real authorized credential-vault consumer acceptance remains a broader SECURITY-CREDENTIAL-VAULT-001 gap and does not invalidate the narrower MahayanaProduct secrets replacement.",
+      "packaged_test": "Required on final signed release.",
+      "device_test": "Required on final protected account/credential acceptance.",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "9bdffa00ee96bbc9f62bee7e56794c44bca4534b audited all 5 codex-secrets rows. BUILD.bazel is Android N/A-with-replacement; runtime secret backend/redaction responsibilities map to scoped Keystore/Rust owners. This responsibility is implemented but not verified."
     }
   ],
   "traceability": {
