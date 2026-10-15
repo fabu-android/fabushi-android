@@ -15352,7 +15352,8 @@ impl AndroidJsonHost {
                             let review_modes = auto_review_modes.clone();
                             Arc::new(move |tool_name: &str, tool_args: &Value| {
                                 let review_mode = match tool_name {
-                                    "Shell" | "Write" => review_modes.box_shell,
+                                    "Shell" | "Write" | "BoxEnvironmentApply" | "BoxMcpLoad"
+                                    | "BoxMcpState" | "BoxMcpTool" => review_modes.box_shell,
                                     "ExternalShell" => review_modes.host_shell,
                                     "Computer" | "Screenshot" => review_modes.computer,
                                     "CloudAgent" => review_modes.cloud_agent,

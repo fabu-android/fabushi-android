@@ -417,15 +417,16 @@ impl<T: RemoteExecutionTransport> AuthenticatedRemoteHostRunner<T> {
             .record(&context.operation_id)
             .cloned()
             .ok_or_else(|| ExecutionError::InvalidRequest("remote operation is unknown".into()))?;
-        if record.request_id != context.request_id
-            || record.account_fence != context.account_fence
-            || record.account_epoch != context.account_epoch
-            || record.permission_grant_id != context.permission_grant_id
-        {
-            return Err(ExecutionError::InvalidRequest(
-                "remote reconciliation identity conflicts with durable journal".into(),
-            ));
-        }
+        self.journal
+            .assert_bound_identity(
+                &context.operation_id,
+                &context.request_id,
+                &context.account_fence,
+                context.account_epoch,
+                &context.permission_grant_id,
+                &context.device_id,
+            )
+            .map_err(ExecutionError::InvalidRequest)?;
         if !matches!(
             record.state,
             RemoteExecutionState::Acked | RemoteExecutionState::OutcomeUnknown

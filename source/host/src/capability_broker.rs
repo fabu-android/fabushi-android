@@ -394,8 +394,8 @@ impl CapabilityBroker {
         Ok(consumed)
     }
 
-    pub fn consume_remote_approval_for_dispatch(
-        &mut self,
+    pub fn remote_approval_for_dispatch(
+        &self,
         approval_id: &str,
         operation_id: &str,
         request_id: &str,
@@ -403,7 +403,6 @@ impl CapabilityBroker {
         current_account_fence: &str,
         account_epoch: u64,
         device_id: &str,
-        now_ms: u64,
     ) -> Result<PendingCapabilityApproval, String> {
         if account_epoch == 0 {
             return Err("remote dispatch account epoch must be positive".into());
@@ -419,6 +418,30 @@ impl CapabilityBroker {
         {
             return Err("remote approval account epoch or device identity mismatch".into());
         }
+        self.approval_for_dispatch(
+            approval_id,
+            operation_id,
+            request_id,
+            capability,
+            current_account_fence,
+        )
+    }
+
+    pub fn consume_remote_approval_for_dispatch(
+        &mut self,
+        approval_id: &str,
+        operation_id: &str,
+        request_id: &str,
+        capability: &str,
+        current_account_fence: &str,
+        account_epoch: u64,
+        device_id: &str,
+        now_ms: u64,
+    ) -> Result<PendingCapabilityApproval, String> {
+        self.remote_approval_for_dispatch(
+            approval_id, operation_id, request_id, capability, current_account_fence,
+            account_epoch, device_id,
+        )?;
         self.consume_approval_for_dispatch(
             approval_id,
             operation_id,
@@ -812,6 +835,22 @@ impl SharedCapabilityBroker {
             account_epoch,
             device_id,
             now_ms,
+        )
+    }
+
+    pub fn remote_approval_for_dispatch(
+        &self,
+        approval_id: &str,
+        operation_id: &str,
+        request_id: &str,
+        capability: &str,
+        current_account_fence: &str,
+        account_epoch: u64,
+        device_id: &str,
+    ) -> Result<PendingCapabilityApproval, String> {
+        self.lock()?.remote_approval_for_dispatch(
+            approval_id, operation_id, request_id, capability, current_account_fence,
+            account_epoch, device_id,
         )
     }
 

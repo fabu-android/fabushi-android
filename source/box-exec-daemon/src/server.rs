@@ -47,6 +47,7 @@ pub trait RemoteExecutionAuthorizer: Send {
         &mut self,
         bearer: &str,
         identity: &RemoteRequestIdentity,
+        capability_id: Option<&str>,
     ) -> Result<(), ExecutionError>;
 }
 
@@ -401,9 +402,6 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
             Ok(bearer) => bearer,
             Err(response) => return response,
         };
-        if let Err(error) = self.authorizer.authorize(&bearer, &identity) {
-            return authorization_error(error);
-        }
         let execution = ExecutionRequest {
             operation_id: request.operation_id.clone(),
             capability_id: request.capability_id.clone(),
@@ -412,6 +410,13 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
         };
         if let Err(error) = execution.validate().and_then(|_| identity.validate()) {
             return request_error(error);
+        }
+        if let Err(error) = self.authorizer.authorize(
+            &bearer,
+            &identity,
+            Some(execution.capability_id.as_str()),
+        ) {
+            return authorization_error(error);
         }
 
         if let Some(existing) = self.records.get(&request.operation_id) {
@@ -535,7 +540,11 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
             Ok(bearer) => bearer,
             Err(response) => return response,
         };
-        if let Err(error) = self.authorizer.authorize(&bearer, &identity) {
+        let capability_id = self
+            .records
+            .get(&identity.operation_id)
+            .map(|record| record.capability_id.as_str());
+        if let Err(error) = self.authorizer.authorize(&bearer, &identity, capability_id) {
             return authorization_error(error);
         }
 
@@ -610,7 +619,11 @@ impl<A: RemoteExecutionAuthorizer, B: RemoteExecutionBackend> RemoteExecutionSer
             Ok(bearer) => bearer,
             Err(response) => return response,
         };
-        if let Err(error) = self.authorizer.authorize(&bearer, &identity) {
+        let capability_id = self
+            .records
+            .get(&identity.operation_id)
+            .map(|record| record.capability_id.as_str());
+        if let Err(error) = self.authorizer.authorize(&bearer, &identity, capability_id) {
             return authorization_error(error);
         }
 
@@ -979,6 +992,7 @@ mod tests {
             &mut self,
             bearer: &str,
             identity: &RemoteRequestIdentity,
+            capability_id: Option<&str>,
         ) -> Result<(), ExecutionError> {
             self.calls += 1;
             if bearer != "remote-secret-token-1234" {
@@ -989,6 +1003,9 @@ mod tests {
                 || identity.device_id != "device-1"
             {
                 return Err(ExecutionError::InvalidRequest("identity rejected".into()));
+            }
+            if capability_id.is_some_and(|value| value.trim().is_empty()) {
+                return Err(ExecutionError::InvalidRequest("capability scope rejected".into()));
             }
             Ok(())
         }

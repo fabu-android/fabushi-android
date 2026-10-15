@@ -7,6 +7,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const REMOTE_BOX_ENVIRONMENT_CAPABILITY: &str = "box.environment.apply";
 pub const REMOTE_BOX_MCP_CAPABILITY: &str = "box.mcp";
+pub const REMOTE_BOX_ENVIRONMENT_EXECUTOR: &str = "box-environment";
+pub const REMOTE_BOX_MCP_EXECUTOR: &str = "box-mcp";
 pub const REMOTE_BOX_CONTROL_TIMEOUT_MS: u64 = 30_000;
 pub const MCP_TOOL_EXEC_FIELD_NUMBER: u32 = 11;
 pub const MCP_STATE_EXEC_FIELD_NUMBER: u32 = 36;

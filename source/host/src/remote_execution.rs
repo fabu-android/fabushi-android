@@ -548,6 +548,31 @@ impl RemoteExecutionJournal {
         self.state.operations.get(operation_id)
     }
 
+    pub fn assert_bound_identity(
+        &self,
+        operation_id: &str,
+        request_id: &str,
+        account_fence: &str,
+        account_epoch: u64,
+        permission_grant_id: &str,
+        device_id: &str,
+    ) -> Result<(), String> {
+        let record = self
+            .state
+            .operations
+            .get(operation_id)
+            .ok_or("remote operation is unknown")?;
+        if record.request_id != request_id
+            || record.account_fence != account_fence
+            || record.account_epoch != account_epoch
+            || record.permission_grant_id != permission_grant_id
+            || record.device_id != device_id
+        {
+            return Err("remote execution identity is stale, revoked, or bound to another device".into());
+        }
+        Ok(())
+    }
+
     fn mark_outcome_unknown(&mut self, operation_id: &str, now_ms: u64) -> Result<(), String> {
         let record = self
             .state

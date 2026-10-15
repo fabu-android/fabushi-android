@@ -3,6 +3,10 @@ use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::box_readiness::remote_box_not_ready_message;
 use crate::capability_broker::SharedCapabilityBroker;
 use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
+use crate::remote_box_control::{
+    MCP_STATE_EXEC_FIELD_NUMBER, MCP_TOOL_EXEC_FIELD_NUMBER, REMOTE_BOX_ENVIRONMENT_CAPABILITY,
+    REMOTE_BOX_ENVIRONMENT_EXECUTOR, REMOTE_BOX_MCP_CAPABILITY, REMOTE_BOX_MCP_EXECUTOR,
+};
 use crate::remote_background_work::{DurableRemoteBackgroundWorkOwner, RemoteBackgroundWorkKind};
 use crate::remote_execution::RemoteExecutionState;
 use crate::runner::background_work::{
@@ -34,6 +38,10 @@ const MAX_BROWSER_UPLOAD_PATH: usize = 4096;
 const MAX_WRITE_CONTENT: usize = 1024 * 1024;
 const COPY_TO_BOX_TOOL_NAME: &str = "CopyToBox";
 const COPY_FROM_BOX_TOOL_NAME: &str = "CopyFromBox";
+const BOX_ENVIRONMENT_TOOL_NAME: &str = "BoxEnvironmentApply";
+const BOX_MCP_LOAD_TOOL_NAME: &str = "BoxMcpLoad";
+const BOX_MCP_STATE_TOOL_NAME: &str = "BoxMcpState";
+const BOX_MCP_TOOL_NAME: &str = "BoxMcpTool";
 const REMOTE_BROWSER_EXECUTION_TIMEOUT_MS: u64 = 90_000;
 const REMOTE_CLOUD_AGENT_EXECUTION_TIMEOUT_MS: u64 = 120_000;
 const REMOTE_REFUSED_ACTION_MEMORY: usize = 512;
@@ -141,6 +149,22 @@ fn remote_execution_input_json(name: &str, args: &Value) -> String {
     // Legacy one-shot tools retain the generic wrapper expected by their execution backend.
     if name == CLOUD_AGENT_TOOL_NAME {
         args.to_string()
+    } else if name == BOX_ENVIRONMENT_TOOL_NAME {
+        json!({"version":1,"update":args.get("update").cloned().unwrap_or(Value::Null)}).to_string()
+    } else if name == BOX_MCP_LOAD_TOOL_NAME {
+        json!({
+            "version":1,
+            "action":"load_servers",
+            "mcpConfigJson":args.get("configJson").cloned().unwrap_or(Value::Null),
+            "removeMissing":args.get("removeMissing").cloned().unwrap_or(Value::Bool(true)),
+        }).to_string()
+    } else if matches!(name, BOX_MCP_STATE_TOOL_NAME | BOX_MCP_TOOL_NAME) {
+        json!({
+            "version":1,
+            "action":"execute_raw",
+            "fieldNumber":if name == BOX_MCP_STATE_TOOL_NAME { MCP_STATE_EXEC_FIELD_NUMBER } else { MCP_TOOL_EXEC_FIELD_NUMBER },
+            "payloadHex":args.get("payloadHex").cloned().unwrap_or(Value::Null),
+        }).to_string()
     } else if is_background_shell(name, args) {
         json!({
             "command": args.get("command").cloned().unwrap_or(Value::Null),
@@ -312,6 +336,8 @@ impl RemoteDispatchBinding {
             "cloud-agent",
             "box-store-sync",
             "file-transfer",
+            REMOTE_BOX_ENVIRONMENT_EXECUTOR,
+            REMOTE_BOX_MCP_EXECUTOR,
         ];
         if let Some(executor) = self.executors.iter().find(|value| !ALLOWED_EXECUTORS.contains(&value.as_str())) {
             return Err(format!("remote binding executor is unsupported: {executor}"));
@@ -696,6 +722,34 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 }
             }));
         }
+        if binding.supports(REMOTE_BOX_ENVIRONMENT_EXECUTOR) {
+            tools.push(json!({
+                "type":"function",
+                "name":BOX_ENVIRONMENT_TOOL_NAME,
+                "description":"Apply the bounded Agent-box environment through the enrolled Remote Runner. Requires one-time approval and exact account/device/epoch fencing.",
+                "parameters":{"type":"object","additionalProperties":false,"required":["update"],"properties":{"update":{"type":"object"}}}
+            }));
+        }
+        if binding.supports(REMOTE_BOX_MCP_EXECUTOR) {
+            tools.push(json!({
+                "type":"function",
+                "name":BOX_MCP_LOAD_TOOL_NAME,
+                "description":"Load the canonical MCP server configuration in the enrolled Agent box. Requires one-time approval.",
+                "parameters":{"type":"object","additionalProperties":false,"required":["configJson"],"properties":{"configJson":{"type":"string"},"removeMissing":{"type":"boolean"}}}
+            }));
+            tools.push(json!({
+                "type":"function",
+                "name":BOX_MCP_STATE_TOOL_NAME,
+                "description":"Read or reconcile MCP state using ExecService field 36 through the enrolled Agent box.",
+                "parameters":{"type":"object","additionalProperties":false,"required":["payloadHex"],"properties":{"payloadHex":{"type":"string"}}}
+            }));
+            tools.push(json!({
+                "type":"function",
+                "name":BOX_MCP_TOOL_NAME,
+                "description":"Execute one MCP tool payload using ExecService field 11. Unknown outcomes are reconciled and never blindly replayed.",
+                "parameters":{"type":"object","additionalProperties":false,"required":["payloadHex"],"properties":{"payloadHex":{"type":"string"}}}
+            }));
+        }
         if binding.supports("computer") {
             tools.push(json!({
                 "type":"function",
@@ -786,6 +840,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             name,
             "Shell" | "Read" | "Write" | "Computer" | "Screenshot" | "ExternalShell" | "ExternalRead"
                 | COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME | CLOUD_AGENT_TOOL_NAME
+                | BOX_ENVIRONMENT_TOOL_NAME | BOX_MCP_LOAD_TOOL_NAME | BOX_MCP_STATE_TOOL_NAME | BOX_MCP_TOOL_NAME
         ) && !browser_tool {
             return self.delegate.call_tool(name, args, tool_call_id);
         }
@@ -834,6 +889,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Read" | "ExternalRead" => "remote.read",
             "Write" => "remote.write",
             COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME => "box.file.transfer",
+            BOX_ENVIRONMENT_TOOL_NAME => REMOTE_BOX_ENVIRONMENT_CAPABILITY,
+            BOX_MCP_LOAD_TOOL_NAME | BOX_MCP_STATE_TOOL_NAME | BOX_MCP_TOOL_NAME => REMOTE_BOX_MCP_CAPABILITY,
             "Computer" | "Screenshot" => "computer.use",
             CLOUD_AGENT_TOOL_NAME => "cloud-agent",
             _ if browser_tool => "browser.use",
@@ -862,6 +919,8 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             "Read" => "read",
             "Write" => "write",
             COPY_TO_BOX_TOOL_NAME | COPY_FROM_BOX_TOOL_NAME => "file-transfer",
+            BOX_ENVIRONMENT_TOOL_NAME => REMOTE_BOX_ENVIRONMENT_EXECUTOR,
+            BOX_MCP_LOAD_TOOL_NAME | BOX_MCP_STATE_TOOL_NAME | BOX_MCP_TOOL_NAME => REMOTE_BOX_MCP_EXECUTOR,
             "Computer" => "computer",
             "Screenshot" => "screenshot",
             CLOUD_AGENT_TOOL_NAME => "cloud-agent",
@@ -1126,6 +1185,16 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 "local computer permission policy changed before Remote dispatch",
             ));
         }
+        self.broker.remote_approval_for_dispatch(
+            &approval_id,
+            &operation_id,
+            &request_id,
+            capability,
+            &binding.account_fence,
+            binding.account_epoch,
+            &binding.device_id,
+        )?;
+
         // Persist a never-sent Remote operation before consuming the one-time grant. A process
         // death before mark_sent can then be proven not to have crossed the Remote boundary.
         let prepare_result = (|| -> Result<(), String> {
@@ -1797,6 +1866,35 @@ fn validate_remote_tool_input(name: &str, args: &Value) -> Result<u64, String> {
                 return Err(format!("Remote {name} overwrite must be boolean"));
             }
             Ok(120_000)
+        }
+        BOX_ENVIRONMENT_TOOL_NAME => {
+            if object.len() != 1 || !object.get("update").is_some_and(Value::is_object) {
+                return Err("Remote BoxEnvironmentApply requires only object update".into());
+            }
+            Ok(30_000)
+        }
+        BOX_MCP_LOAD_TOOL_NAME => {
+            if let Some(key) = object.keys().find(|key| !matches!(key.as_str(), "configJson" | "removeMissing")) {
+                return Err(format!("Remote BoxMcpLoad argument is unsupported: {key}"));
+            }
+            let config = object.get("configJson").and_then(Value::as_str).ok_or("Remote BoxMcpLoad requires string configJson")?;
+            if config.len() > 2 * 1024 * 1024 || serde_json::from_str::<Value>(config).is_err() {
+                return Err("Remote BoxMcpLoad configJson must be bounded valid JSON".into());
+            }
+            if object.get("removeMissing").is_some_and(|value| !value.is_boolean()) {
+                return Err("Remote BoxMcpLoad removeMissing must be boolean".into());
+            }
+            Ok(30_000)
+        }
+        BOX_MCP_STATE_TOOL_NAME | BOX_MCP_TOOL_NAME => {
+            if object.len() != 1 {
+                return Err(format!("Remote {name} accepts only payloadHex"));
+            }
+            let payload = object.get("payloadHex").and_then(Value::as_str).ok_or_else(|| format!("Remote {name} requires string payloadHex"))?;
+            if payload.len() > 16 * 1024 * 1024 || payload.len() % 2 != 0 || !payload.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Err(format!("Remote {name} payloadHex is invalid or too large"));
+            }
+            Ok(30_000)
         }
         "Computer" => {
             validate_remote_computer_action(args, true)?;
@@ -2752,6 +2850,58 @@ mod tests {
             "executors":["shell","read","computer","screenshot","external-shell","external-read"]
         }).to_string();
         assert!(RemoteDispatchBinding::parse(&plaintext).is_err());
+    }
+
+    #[test]
+    fn box_control_executors_are_explicit_and_payloads_are_bounded() {
+        let binding = RemoteDispatchBinding::parse(&json!({
+            "credentialPlane":"authorized-remote-runner-v1",
+            "credentialId":"runner-credential-box-control",
+            "issuedAtMs":1,
+            "expiresAtMs":4102444800000_u64,
+            "endpoint":"https://remote.example.com",
+            "bearerCredential":"long-enough-credential",
+            "deviceId":"device-box",
+            "accountFence":"session:a",
+            "accountEpoch":7,
+            "executors":[REMOTE_BOX_ENVIRONMENT_EXECUTOR, REMOTE_BOX_MCP_EXECUTOR]
+        }).to_string()).unwrap();
+        assert!(binding.supports(REMOTE_BOX_ENVIRONMENT_EXECUTOR));
+        assert!(binding.supports(REMOTE_BOX_MCP_EXECUTOR));
+        assert_eq!(validate_remote_tool_input(
+            BOX_ENVIRONMENT_TOOL_NAME,
+            &json!({"update":{"A":"1"}}),
+        ), Ok(30_000));
+        assert_eq!(validate_remote_tool_input(
+            BOX_MCP_LOAD_TOOL_NAME,
+            &json!({"configJson":"{\"mcpServers\":{}}","removeMissing":true}),
+        ), Ok(30_000));
+        assert_eq!(validate_remote_tool_input(
+            BOX_MCP_STATE_TOOL_NAME,
+            &json!({"payloadHex":"00ff"}),
+        ), Ok(30_000));
+        assert_eq!(validate_remote_tool_input(
+            BOX_MCP_TOOL_NAME,
+            &json!({"payloadHex":"00ff"}),
+        ), Ok(30_000));
+        assert!(validate_remote_tool_input(
+            BOX_MCP_TOOL_NAME,
+            &json!({"payloadHex":"not-hex"}),
+        ).is_err());
+        assert_eq!(
+            serde_json::from_str::<Value>(&remote_execution_input_json(
+                BOX_MCP_TOOL_NAME,
+                &json!({"payloadHex":"00ff"}),
+            )).unwrap()["fieldNumber"],
+            json!(MCP_TOOL_EXEC_FIELD_NUMBER),
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&remote_execution_input_json(
+                BOX_MCP_STATE_TOOL_NAME,
+                &json!({"payloadHex":"00ff"}),
+            )).unwrap()["fieldNumber"],
+            json!(MCP_STATE_EXEC_FIELD_NUMBER),
+        );
     }
 
     #[test]
