@@ -166,7 +166,8 @@ use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
 use crate::runner::{
-    build_android_root_system_instructions, AndroidHostInferenceProvider, AndroidInferenceMode,
+    append_android_agent_profile_system_instructions, build_android_root_system_instructions,
+    AndroidHostInferenceProvider, AndroidInferenceMode,
     AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
@@ -12025,7 +12026,7 @@ impl AndroidJsonHost {
             .memory
             .render_combined_turn_prompt(&account_fence_for_attachment, &agent_id)?;
         let effective_time_zone = self.effective_time_zone()?;
-        let system_instructions = build_android_root_system_instructions(
+        let mut system_instructions = build_android_root_system_instructions(
             &memory_prompt,
             effective_time_zone.as_deref(),
         );
@@ -12546,6 +12547,14 @@ impl AndroidJsonHost {
             .lock()
             .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
             .get(&agent_id);
+        if let Some(profile) = profile.as_ref() {
+            append_android_agent_profile_system_instructions(
+                &mut system_instructions,
+                &profile.name,
+                &profile.description,
+                group_context.is_some(),
+            );
+        }
         let profile_revision = profile.as_ref().map(|profile| {
             crate::sha256::sha256_hex(
                 format!(

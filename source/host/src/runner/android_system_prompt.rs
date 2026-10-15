@@ -38,6 +38,42 @@ pub fn build_android_root_system_instructions(
     sections.join("\n\n")
 }
 
+pub fn append_android_agent_profile_system_instructions(
+    instructions: &mut String,
+    name: &str,
+    description: &str,
+    shared_room: bool,
+) {
+    let configured_name = name.trim();
+    let name = if configured_name.eq_ignore_ascii_case("grok")
+        || configured_name.eq_ignore_ascii_case("grok bot")
+    {
+        "Fabushi"
+    } else {
+        configured_name
+    };
+    let description = description.trim();
+    if name.is_empty() && description.is_empty() {
+        return;
+    }
+    let mut lines = vec!["## Agent profile".to_string()];
+    if !name.is_empty() {
+        lines.push(format!("Title: {name}"));
+        if !shared_room {
+            lines.push(format!(
+                "Your agent name is \"{name}\". If the user asks for your name, answer with \"{name}\"."
+            ));
+        }
+    }
+    if !description.is_empty() {
+        lines.push(format!("Description: {description}"));
+    }
+    if !instructions.trim().is_empty() {
+        instructions.push_str("\n\n");
+    }
+    instructions.push_str(&lines.join("\n"));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +101,24 @@ mod tests {
 
         let base_only = build_android_root_system_instructions("   ", Some("   "));
         assert_eq!(base_only, ANDROID_ROOT_SYSTEM_INSTRUCTIONS);
+    }
+
+    #[test]
+    fn profile_identity_is_system_owned_every_turn_and_shared_room_safe() {
+        let mut prompt = build_android_root_system_instructions("", None);
+        append_android_agent_profile_system_instructions(
+            &mut prompt, "Grok Bot", "Research helper", false,
+        );
+        assert!(prompt.contains("## Agent profile"));
+        assert!(prompt.contains("Title: Fabushi"));
+        assert!(prompt.contains("Your agent name is \"Fabushi\""));
+        assert!(prompt.contains("Description: Research helper"));
+
+        let mut shared = build_android_root_system_instructions("", None);
+        append_android_agent_profile_system_instructions(
+            &mut shared, "Room helper", "Shared room role", true,
+        );
+        assert!(shared.contains("Title: Room helper"));
+        assert!(!shared.contains("Your agent name is"));
     }
 }
