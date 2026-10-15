@@ -5,6 +5,7 @@ pub mod agent_v1_wire;
 pub mod agent_v1_observation;
 pub mod android_host_inference;
 pub mod background_work;
+mod checkpoint;
 pub mod durable_turn_journal;
 pub mod multitask_todo;
 pub mod production_turn_agent_owner;
@@ -42,6 +43,7 @@ pub use production_turn_agent_owner::{
 pub use production_turn_lifecycle::{
     ProductionAwaitingUserProjection, ProductionDiskPressureLevel, ProductionTurnLifecycleStore,
 };
+pub use checkpoint::AttemptCheckpoint;
 pub use stream_attempt::{
     ProviderFailure, StreamAttemptHost, StreamAttemptInput, StreamAttemptResult, StreamGeneration,
     TurnStreamProvider,

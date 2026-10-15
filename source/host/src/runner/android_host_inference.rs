@@ -3,6 +3,7 @@ use super::{
         encode_routed_tool_call_initial_observation, encode_routed_tool_call_observation,
         is_agent_v1_observed_tool,
     },
+    checkpoint::AttemptCheckpoint,
     production_turn_agent_owner::SAND_AGENT_MAX_STEPS,
     stream_attempt::{ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider},
     turn_tool_session_reminders::TurnToolSessionReminderState,
@@ -76,6 +77,8 @@ pub struct AndroidHostInferenceProvider {
     tool_call_observation_sink: Option<Arc<dyn AndroidToolCallObservationSink>>,
     request_timeout: Option<Duration>,
     turn_tool_session_reminders_enabled: bool,
+    turn_tool_session_reminder_state: Option<TurnToolSessionReminderState>,
+    latest_resume_checkpoint: Option<AttemptCheckpoint>,
     silence_allowed: bool,
 }
 
@@ -105,6 +108,8 @@ impl AndroidHostInferenceProvider {
             tool_call_observation_sink: None,
             request_timeout: None,
             turn_tool_session_reminders_enabled: false,
+            turn_tool_session_reminder_state: None,
+            latest_resume_checkpoint: None,
             silence_allowed: false,
         }
     }
@@ -126,6 +131,8 @@ impl AndroidHostInferenceProvider {
             tool_call_observation_sink: None,
             request_timeout: None,
             turn_tool_session_reminders_enabled: false,
+            turn_tool_session_reminder_state: None,
+            latest_resume_checkpoint: None,
             silence_allowed: false,
         })
     }
@@ -326,6 +333,8 @@ impl AndroidHostInferenceProvider {
             tool_call_observation_sink: None,
             request_timeout: None,
             turn_tool_session_reminders_enabled: false,
+            turn_tool_session_reminder_state: None,
+            latest_resume_checkpoint: None,
             silence_allowed: false,
         }
     }
@@ -356,6 +365,15 @@ impl AndroidHostInferenceProvider {
     fn run_stream(
         &mut self,
         input: &StreamAttemptInput,
+        on_chunk: &mut dyn FnMut(&str) -> Result<(), String>,
+    ) -> Result<StreamGeneration, ProviderFailure> {
+        self.run_stream_from_checkpoint(input, None, on_chunk)
+    }
+
+    fn run_stream_from_checkpoint(
+        &mut self,
+        input: &StreamAttemptInput,
+        resume_from: Option<&AttemptCheckpoint>,
         on_chunk: &mut dyn FnMut(&str) -> Result<(), String>,
     ) -> Result<StreamGeneration, ProviderFailure> {
         if input.prompt.trim().is_empty() {
@@ -427,16 +445,32 @@ impl AndroidHostInferenceProvider {
         let started = Instant::now();
         let mut all_chunks = Vec::new();
         let mut first_token_delay_ms = None;
-        let mut previous_response_id: Option<String> = None;
-        let mut next_input = Value::String(input.prompt.clone());
+        let (mut previous_response_id, mut next_input, mut emitted_text_bytes, mut completed_tool_calls) =
+            match resume_from {
+                Some(checkpoint) => {
+                    let (previous_response_id, next_input) =
+                        decode_responses_resume_checkpoint(checkpoint)?;
+                    self.latest_resume_checkpoint = Some(checkpoint.clone());
+                    (
+                        Some(previous_response_id),
+                        next_input,
+                        checkpoint.emitted_text_bytes,
+                        checkpoint.tool_calls_completed,
+                    )
+                }
+                None => {
+                    self.latest_resume_checkpoint = None;
+                    self.turn_tool_session_reminder_state =
+                        (self.turn_tool_session_reminders_enabled && !self.silence_allowed)
+                            .then(TurnToolSessionReminderState::default);
+                    (None, Value::String(input.prompt.clone()), 0, 0)
+                }
+            };
         // Provider retries are only safe while no externally routed tool dispatch has started.
         // A tool bridge error can represent an outcome-unknown side effect, so count the attempt
         // itself as progress before invoking the bridge. This keeps StreamAttemptHost from blindly
         // replaying the whole Responses turn when a later provider/tool/network leg fails.
-        let mut routed_tool_dispatch_started = false;
-        let mut turn_tool_session_reminders = (self.turn_tool_session_reminders_enabled
-            && !self.silence_allowed)
-            .then(TurnToolSessionReminderState::default);
+        let mut routed_tool_dispatch_started = completed_tool_calls > 0;
 
         for _tool_step in 0..SAND_AGENT_MAX_STEPS {
             if self.cancelled.load(Ordering::Acquire) {
@@ -490,7 +524,10 @@ impl AndroidHostInferenceProvider {
             let mut reader = BufReader::new(response.into_reader());
             let mut line = String::new();
             let mut completed = false;
-            let mut response_id = previous_response_id.clone();
+            // Every Responses request that yields tools must prove the identity of
+            // that response. Reusing the prior response id would make a checkpoint
+            // point at the wrong provider boundary.
+            let mut response_id: Option<String> = None;
             let mut tool_calls = Vec::new();
 
             loop {
@@ -530,12 +567,16 @@ impl AndroidHostInferenceProvider {
                                 started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64
                             );
                         }
+                        // Text emitted after a tool boundary invalidates that boundary
+                        // until a newer provider checkpoint is accepted.
+                        self.latest_resume_checkpoint = None;
                         on_chunk(&delta).map_err(|message| ProviderFailure {
                             message,
                             retry_after_ms: None,
                             first_token_stall: false,
                             stream_output_produced: !all_chunks.is_empty() || routed_tool_dispatch_started,
                         })?;
+                        emitted_text_bytes = emitted_text_bytes.saturating_add(delta.len());
                         all_chunks.push(delta);
                     }
                     Ok(ProviderSseEvent::ResponseId(id)) => response_id = Some(id),
@@ -593,6 +634,7 @@ impl AndroidHostInferenceProvider {
                 .iter()
                 .map(|(_, name, arguments)| (name.clone(), arguments.clone()))
                 .collect::<Vec<_>>();
+            let completed_this_step = tool_calls.len();
             let mut outputs = Vec::with_capacity(tool_calls.len() + 1);
             for (call_id, name, arguments) in tool_calls {
                 if self.cancelled.load(Ordering::Acquire) {
@@ -651,7 +693,9 @@ impl AndroidHostInferenceProvider {
                 }
 
                 // From this point onward a bridge error can mean the side effect committed but
-                // its acknowledgement was lost. Never allow StreamAttemptHost to replay the turn.
+                // its acknowledgement was lost. The prior provider checkpoint is no longer
+                // sufficient because replaying it could redispatch this tool.
+                self.latest_resume_checkpoint = None;
                 routed_tool_dispatch_started = true;
                 let dispatch = bridge.call_tool(&name, arguments.clone(), &call_id);
                 let completed_at_ms = unix_time_ms().max(started_at_ms);
@@ -712,13 +756,15 @@ impl AndroidHostInferenceProvider {
                     }
                 }));
             }
+            completed_tool_calls = completed_tool_calls.saturating_add(completed_this_step);
             previous_response_id = Some(response_id.ok_or_else(|| ProviderFailure {
                 message: "provider tool call response omitted response identity".into(),
                 retry_after_ms: None,
                 first_token_stall: false,
                 stream_output_produced: routed_tool_dispatch_started,
             })?);
-            if let Some(reminder) = turn_tool_session_reminders
+            if let Some(reminder) = self
+                .turn_tool_session_reminder_state
                 .as_mut()
                 .and_then(|state| state.observe_tool_step(&observed_tool_step))
             {
@@ -728,6 +774,14 @@ impl AndroidHostInferenceProvider {
                 }));
             }
             next_input = Value::Array(outputs);
+            self.latest_resume_checkpoint = Some(encode_responses_resume_checkpoint(
+                previous_response_id
+                    .as_deref()
+                    .expect("provider response identity validated"),
+                &next_input,
+                emitted_text_bytes,
+                completed_tool_calls,
+            )?);
         }
 
         Err(ProviderFailure {
@@ -757,10 +811,79 @@ impl TurnStreamProvider for AndroidHostInferenceProvider {
         self.run_stream(input, on_chunk)
     }
 
+    fn latest_resume_checkpoint(&self) -> Option<AttemptCheckpoint> {
+        self.latest_resume_checkpoint.clone()
+    }
+
+    fn resume_stream_with_sink(
+        &mut self,
+        input: &StreamAttemptInput,
+        _attempt: usize,
+        checkpoint: &AttemptCheckpoint,
+        on_chunk: &mut dyn FnMut(&str) -> Result<(), String>,
+    ) -> Result<StreamGeneration, ProviderFailure> {
+        self.run_stream_from_checkpoint(input, Some(checkpoint), on_chunk)
+    }
+
     fn cancel(&mut self, _operation_id: &str) -> Result<(), String> {
         self.cancelled.store(true, Ordering::Release);
         Ok(())
     }
+}
+
+fn encode_responses_resume_checkpoint(
+    previous_response_id: &str,
+    next_input: &Value,
+    emitted_text_bytes: usize,
+    tool_calls_completed: usize,
+) -> Result<AttemptCheckpoint, ProviderFailure> {
+    let previous_response_id = previous_response_id.trim();
+    if previous_response_id.is_empty() {
+        return Err(ProviderFailure::new(
+            "provider resume checkpoint response identity is empty",
+        ));
+    }
+    let cursor = serde_json::to_string(&json!({
+        "version": 1,
+        "previousResponseId": previous_response_id,
+        "nextInput": next_input,
+    }))
+    .map_err(|_| ProviderFailure::new("provider resume checkpoint encoding failed"))?;
+    Ok(AttemptCheckpoint::new(
+        cursor,
+        emitted_text_bytes,
+        tool_calls_completed,
+    ))
+}
+
+fn decode_responses_resume_checkpoint(
+    checkpoint: &AttemptCheckpoint,
+) -> Result<(String, Value), ProviderFailure> {
+    if !checkpoint.is_resumable() {
+        return Err(ProviderFailure::new(
+            "provider resume checkpoint cursor is empty",
+        ));
+    }
+    let value: Value = serde_json::from_str(&checkpoint.cursor)
+        .map_err(|_| ProviderFailure::new("provider resume checkpoint is invalid"))?;
+    if value.get("version").and_then(Value::as_u64) != Some(1) {
+        return Err(ProviderFailure::new(
+            "provider resume checkpoint version is unsupported",
+        ));
+    }
+    let previous_response_id = value
+        .get("previousResponseId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ProviderFailure::new("provider resume checkpoint omitted response identity"))?
+        .to_string();
+    let next_input = value
+        .get("nextInput")
+        .cloned()
+        .filter(Value::is_array)
+        .ok_or_else(|| ProviderFailure::new("provider resume checkpoint omitted tool outputs"))?;
+    Ok((previous_response_id, next_input))
 }
 
 fn build_subagent_review_prompt(target: &Value) -> String {
@@ -1411,6 +1534,54 @@ mod tests {
         let delta = json!({"type":"response.output_text.delta","delta":"done"});
         let completed = json!({"type":"response.completed","response":{"id":"resp-final"}});
         format!("data: {delta}\n\ndata: {completed}\n\n")
+    }
+
+    #[test]
+    fn production_tool_boundary_resumes_without_redispatching_side_effect() {
+        use crate::runner::stream_attempt::StreamAttemptHost;
+        use crate::runner::transient_stream_error::RetryPolicy;
+
+        let (endpoint, requests) = spawn_recording_sse_server(vec![
+            tool_sse("Read", "read-resume-1", "{}"),
+            String::new(),
+            final_sse(),
+        ]);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_routed_tools(Arc::new(CanonicalProductionTools {
+            result: Ok(json!({"value":"ok"})),
+            calls: Arc::clone(&calls),
+        }));
+        let mut host = StreamAttemptHost::with_policy(
+            provider,
+            RetryPolicy {
+                max_attempts: 2,
+                base_delay_ms: 1,
+                max_delay_ms: 1,
+            },
+            10_000,
+        );
+
+        let result = host.run(&input()).unwrap();
+        assert_eq!(result.attempts, 2);
+        assert_eq!(result.retries.len(), 1);
+        assert_eq!(result.chunks.concat(), "done");
+        assert_eq!(
+            calls.load(AtomicOrdering::SeqCst),
+            1,
+            "resume must continue after the accepted tool boundary instead of redispatching it",
+        );
+
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert_eq!(requests[2]["previous_response_id"], "resp-tool");
+        let resumed_input = requests[2]["input"].as_array().unwrap();
+        assert_eq!(resumed_input[0]["type"], "function_call_output");
+        assert_eq!(resumed_input[0]["call_id"], "read-resume-1");
     }
 
     #[test]

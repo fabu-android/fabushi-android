@@ -1,6 +1,9 @@
-use super::transient_stream_error::{
-    compute_backoff_delay_ms, compute_server_paced_delay_ms, should_retry_turn_attempt,
-    RetryPolicy, DEFAULT_FIRST_TOKEN_STALL_DEADLINE_MS,
+use super::{
+    checkpoint::AttemptCheckpoint,
+    transient_stream_error::{
+        compute_backoff_delay_ms, compute_server_paced_delay_ms, should_retry_turn_attempt,
+        RetryPolicy, DEFAULT_FIRST_TOKEN_STALL_DEADLINE_MS,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -89,6 +92,33 @@ pub trait TurnStreamProvider {
         Ok(generation)
     }
 
+    /// Return the latest concrete provider boundary that is safe to resume.
+    ///
+    /// A boolean capability hint is deliberately insufficient here: the Host
+    /// must have the exact provider cursor before retrying after visible output.
+    fn latest_resume_checkpoint(&self) -> Option<AttemptCheckpoint> {
+        None
+    }
+
+    /// Continue from a previously accepted concrete provider checkpoint.
+    ///
+    /// The default is fail-closed so a provider cannot accidentally turn a
+    /// resume request into a full prompt replay.
+    fn resume_stream_with_sink(
+        &mut self,
+        _input: &StreamAttemptInput,
+        _attempt: usize,
+        _checkpoint: &AttemptCheckpoint,
+        _on_chunk: &mut dyn FnMut(&str) -> Result<(), String>,
+    ) -> Result<StreamGeneration, ProviderFailure> {
+        Err(ProviderFailure {
+            message: "provider resume checkpoint unavailable".into(),
+            retry_after_ms: None,
+            first_token_stall: false,
+            stream_output_produced: true,
+        })
+    }
+
     fn cancel(&mut self, operation_id: &str) -> Result<(), String>;
 }
 
@@ -153,11 +183,30 @@ impl<P: TurnStreamProvider> StreamAttemptHost<P> {
             .map_err(|message| ProviderFailure::new(message))?;
 
         let mut retries = Vec::new();
+        let mut collected_chunks = Vec::new();
+        let mut resume_checkpoint: Option<AttemptCheckpoint> = None;
+
         for attempt in 1..=self.retry_policy.max_attempts.max(1) {
-            match self
-                .provider
-                .start_stream_with_sink(input, attempt, on_chunk)
-            {
+            let accepted_resume = resume_checkpoint.clone();
+            let mut attempt_chunks = Vec::new();
+            let mut forwarding_sink = |chunk: &str| {
+                attempt_chunks.push(chunk.to_string());
+                on_chunk(chunk)
+            };
+            let attempt_result = match accepted_resume.as_ref() {
+                Some(checkpoint) => self.provider.resume_stream_with_sink(
+                    input,
+                    attempt,
+                    checkpoint,
+                    &mut forwarding_sink,
+                ),
+                None => self
+                    .provider
+                    .start_stream_with_sink(input, attempt, &mut forwarding_sink),
+            };
+            collected_chunks.extend(attempt_chunks);
+
+            match attempt_result {
                 Ok(generation) => {
                     if generation.first_token_delay_ms > self.first_token_deadline_ms
                         && !generation.output_produced()
@@ -171,7 +220,8 @@ impl<P: TurnStreamProvider> StreamAttemptHost<P> {
                             first_token_stall: true,
                             stream_output_produced: false,
                         };
-                        if self.should_retry(input, attempt, &failure) {
+                        if self.should_retry(attempt, &failure, accepted_resume.is_some()) {
+                            resume_checkpoint = accepted_resume;
                             let observation = self.retry_observation(attempt, &failure);
                             on_retry(&observation);
                             retries.push(observation);
@@ -180,7 +230,7 @@ impl<P: TurnStreamProvider> StreamAttemptHost<P> {
                         return Err(failure);
                     }
                     return Ok(StreamAttemptResult {
-                        chunks: generation.chunks,
+                        chunks: collected_chunks,
                         finish_reason: generation.finish_reason,
                         attempts: attempt,
                         retries,
@@ -188,7 +238,17 @@ impl<P: TurnStreamProvider> StreamAttemptHost<P> {
                     });
                 }
                 Err(failure) => {
-                    if self.should_retry(input, attempt, &failure) {
+                    let concrete_checkpoint = self
+                        .provider
+                        .latest_resume_checkpoint()
+                        .filter(AttemptCheckpoint::is_resumable);
+                    let can_resume = concrete_checkpoint.is_some();
+                    if self.should_retry(attempt, &failure, can_resume) {
+                        resume_checkpoint = if failure.stream_output_produced {
+                            concrete_checkpoint
+                        } else {
+                            concrete_checkpoint.or(accepted_resume)
+                        };
                         let observation = self.retry_observation(attempt, &failure);
                         on_retry(&observation);
                         retries.push(observation);
@@ -215,15 +275,15 @@ impl<P: TurnStreamProvider> StreamAttemptHost<P> {
 
     fn should_retry(
         &self,
-        input: &StreamAttemptInput,
         attempt: usize,
         failure: &ProviderFailure,
+        concrete_resume_checkpoint_available: bool,
     ) -> bool {
         should_retry_turn_attempt(
             false,
             &failure.message,
             failure.stream_output_produced,
-            input.resume_checkpoint_available,
+            concrete_resume_checkpoint_available,
             attempt,
             self.retry_policy,
             failure.first_token_stall,
@@ -359,5 +419,107 @@ mod tests {
         };
         let mut host = StreamAttemptHost::new(provider);
         assert!(host.run(&input()).is_err());
+    }
+
+    #[test]
+    fn boolean_resume_hint_does_not_authorize_full_prompt_replay() {
+        let provider = ScriptedProvider {
+            responses: VecDeque::from([
+                Err(ProviderFailure {
+                    message: "connection reset".into(),
+                    retry_after_ms: None,
+                    first_token_stall: false,
+                    stream_output_produced: true,
+                }),
+                Ok(StreamGeneration {
+                    first_token_delay_ms: 1,
+                    chunks: vec!["must-not-replay".into()],
+                    finish_reason: "stop".into(),
+                }),
+            ]),
+            cancelled: vec![],
+        };
+        let mut hinted = input();
+        hinted.resume_checkpoint_available = true;
+        let mut host = StreamAttemptHost::new(provider);
+        assert!(host.run(&hinted).is_err());
+    }
+
+    struct ConcreteResumeProvider {
+        checkpoint: Option<AttemptCheckpoint>,
+        resumed: usize,
+    }
+
+    impl TurnStreamProvider for ConcreteResumeProvider {
+        fn start_stream(
+            &mut self,
+            _input: &StreamAttemptInput,
+            _attempt: usize,
+        ) -> Result<StreamGeneration, ProviderFailure> {
+            Err(ProviderFailure::new("sink-aware path required"))
+        }
+
+        fn start_stream_with_sink(
+            &mut self,
+            _input: &StreamAttemptInput,
+            _attempt: usize,
+            on_chunk: &mut dyn FnMut(&str) -> Result<(), String>,
+        ) -> Result<StreamGeneration, ProviderFailure> {
+            on_chunk("hel").map_err(ProviderFailure::new)?;
+            self.checkpoint = Some(AttemptCheckpoint::new("cursor-1", 3, 1));
+            Err(ProviderFailure {
+                message: "connection reset".into(),
+                retry_after_ms: None,
+                first_token_stall: false,
+                stream_output_produced: true,
+            })
+        }
+
+        fn latest_resume_checkpoint(&self) -> Option<AttemptCheckpoint> {
+            self.checkpoint.clone()
+        }
+
+        fn resume_stream_with_sink(
+            &mut self,
+            _input: &StreamAttemptInput,
+            _attempt: usize,
+            checkpoint: &AttemptCheckpoint,
+            on_chunk: &mut dyn FnMut(&str) -> Result<(), String>,
+        ) -> Result<StreamGeneration, ProviderFailure> {
+            assert_eq!(checkpoint.cursor, "cursor-1");
+            self.resumed += 1;
+            on_chunk("lo").map_err(ProviderFailure::new)?;
+            Ok(StreamGeneration {
+                first_token_delay_ms: 1,
+                chunks: vec!["lo".into()],
+                finish_reason: "stop".into(),
+            })
+        }
+
+        fn cancel(&mut self, _operation_id: &str) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn concrete_checkpoint_resumes_without_replaying_prior_output() {
+        let provider = ConcreteResumeProvider {
+            checkpoint: None,
+            resumed: 0,
+        };
+        let mut host = StreamAttemptHost::with_policy(
+            provider,
+            RetryPolicy {
+                max_attempts: 2,
+                base_delay_ms: 1,
+                max_delay_ms: 1,
+            },
+            100,
+        );
+        let result = host.run(&input()).unwrap();
+        assert_eq!(result.attempts, 2);
+        assert_eq!(result.retries.len(), 1);
+        assert_eq!(result.chunks.concat(), "hello");
+        assert_eq!(host.into_provider().resumed, 1);
     }
 }
