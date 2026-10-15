@@ -563,6 +563,81 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read as _, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    fn spawn_rpc_server(
+        responses: Vec<Vec<u8>>,
+    ) -> (String, Arc<Mutex<Vec<String>>>, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let worker_captured = Arc::clone(&captured);
+        let handle = std::thread::spawn(move || {
+            for body in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut data = Vec::new();
+                let mut chunk = [0_u8; 4096];
+                let header_end = loop {
+                    let count = stream.read(&mut chunk).unwrap();
+                    assert!(count > 0);
+                    data.extend_from_slice(&chunk[..count]);
+                    if let Some(index) = data.windows(4).position(|window| window == b"\r\n\r\n") {
+                        break index + 4;
+                    }
+                };
+                let header_text = String::from_utf8_lossy(&data[..header_end]);
+                let content_length = header_text
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                while data.len() < header_end + content_length {
+                    let count = stream.read(&mut chunk).unwrap();
+                    if count == 0 { break; }
+                    data.extend_from_slice(&chunk[..count]);
+                }
+                worker_captured.lock().unwrap().push(String::from_utf8_lossy(&data).into_owned());
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len(),
+                ).unwrap();
+                stream.write_all(&body).unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        (format!("http://{address}/"), captured, handle)
+    }
+
+    fn backend_with_timeout(base_url: String, timeout_ms: u64) -> ProductionBoxControlBackend {
+        ProductionBoxControlBackend::new(ProductionBoxControlConfig {
+            base_url,
+            headers: BTreeMap::new(),
+            timeout_ms,
+        }).unwrap()
+    }
+
+    fn backend(base_url: String) -> ProductionBoxControlBackend {
+        backend_with_timeout(base_url, 1_000)
+    }
+
+    fn identity(operation_id: &str) -> RemoteRequestIdentity {
+        RemoteRequestIdentity {
+            credential_id: "credential-box".into(),
+            account_fence: "session:account-a".into(),
+            account_epoch: 7,
+            operation_id: operation_id.into(),
+            request_id: format!("request-{operation_id}"),
+            permission_grant_id: format!("grant-{operation_id}"),
+            device_id: "device-box".into(),
+        }
+    }
 
     #[test]
     fn config_is_loopback_only_and_tool_reconcile_never_replays() {
@@ -607,6 +682,269 @@ mod tests {
             ..tool
         };
         assert!(ProductionBoxControlBackend::reconcile_is_safe(&state));
+    }
+
+    #[test]
+    fn production_backend_executes_environment_load_and_state_over_frozen_box_wire() {
+        let mut load_response = Vec::new();
+        encode_len(1, b"calendar", &mut load_response);
+        encode_len(1, b"github", &mut load_response);
+
+        let mut state_client_message = Vec::new();
+        encode_len(MCP_STATE_EXEC_FIELD_NUMBER, &[0xde, 0xad], &mut state_client_message);
+        let mut state_stream_element = Vec::new();
+        encode_len(1, &state_client_message, &mut state_stream_element);
+        let state_response = encode_connect_envelope(0, &state_stream_element);
+        let mut tool_client_message = Vec::new();
+        encode_len(MCP_TOOL_EXEC_FIELD_NUMBER, &[0xbe, 0xef], &mut tool_client_message);
+        let mut tool_stream_element = Vec::new();
+        encode_len(1, &tool_client_message, &mut tool_stream_element);
+        let tool_response = encode_connect_envelope(0, &tool_stream_element);
+
+        let (base_url, captured, handle) = spawn_rpc_server(vec![
+            Vec::new(),
+            load_response,
+            state_response,
+            tool_response,
+        ]);
+        let mut backend = backend(base_url);
+
+        let env = ExecutionRequest {
+            operation_id: "box-env".into(),
+            capability_id: BOX_ENVIRONMENT_CAPABILITY.into(),
+            input_json: serde_json::json!({
+                "version":1,
+                "update":{"env":{"FOO":"bar"},"replace":true}
+            }).to_string(),
+            timeout_ms: 30_000,
+        };
+        assert!(matches!(
+            backend.start(&identity("box-env"), &env).unwrap(),
+            RemoteBackendStartOutcome::Completed { output_json } if output_json == r#"{"ok":true}"#
+        ));
+
+        let load = ExecutionRequest {
+            operation_id: "box-load".into(),
+            capability_id: BOX_MCP_CAPABILITY.into(),
+            input_json: serde_json::json!({
+                "version":1,
+                "action":"load_servers",
+                "mcpConfigJson":"{\"mcpServers\":{}}",
+                "removeMissing":true
+            }).to_string(),
+            timeout_ms: 30_000,
+        };
+        let RemoteBackendStartOutcome::Completed { output_json } = backend
+            .start(&identity("box-load"), &load)
+            .unwrap() else { panic!("MCP load must complete in the production Box backend") };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&output_json).unwrap()["loadedServerNames"],
+            serde_json::json!(["calendar", "github"]),
+        );
+
+        let state = ExecutionRequest {
+            operation_id: "box-state".into(),
+            capability_id: BOX_MCP_CAPABILITY.into(),
+            input_json: serde_json::json!({
+                "version":1,
+                "action":"execute_raw",
+                "fieldNumber":MCP_STATE_EXEC_FIELD_NUMBER,
+                "payloadHex":"00ff"
+            }).to_string(),
+            timeout_ms: 30_000,
+        };
+        let RemoteBackendReconcileOutcome::Completed { output_json } = backend
+            .reconcile(&identity("box-state"), &state, None)
+            .unwrap() else { panic!("field 36 state reconcile must be safely repeatable") };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&output_json).unwrap()["payloadHex"],
+            "dead",
+        );
+
+        let tool = ExecutionRequest {
+            operation_id: "box-tool-start".into(),
+            capability_id: BOX_MCP_CAPABILITY.into(),
+            input_json: serde_json::json!({
+                "version":1,
+                "action":"execute_raw",
+                "fieldNumber":MCP_TOOL_EXEC_FIELD_NUMBER,
+                "payloadHex":"00ff"
+            }).to_string(),
+            timeout_ms: 30_000,
+        };
+        let RemoteBackendStartOutcome::Completed { output_json } = backend
+            .start(&identity("box-tool-start"), &tool)
+            .unwrap() else { panic!("field 11 tool execution must complete on first dispatch") };
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&output_json).unwrap()["payloadHex"],
+            "beef",
+        );
+
+        handle.join().unwrap();
+        let requests = captured.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[0].contains(UPDATE_ENVIRONMENT_VARIABLES_PATH));
+        assert!(requests[1].contains(LOAD_MCP_SERVERS_PATH));
+        assert!(requests[2].contains(EXEC_PATH));
+        assert!(requests[3].contains(EXEC_PATH));
+        assert!(requests[2].to_ascii_lowercase().contains("application/connect+proto"));
+        assert!(requests[3].to_ascii_lowercase().contains("application/connect+proto"));
+    }
+
+    #[test]
+    fn mcp_tool_reconcile_and_cancel_preserve_outcome_unknown_without_second_rpc() {
+        let mut backend = backend("http://127.0.0.1:9/".into());
+        let request = ExecutionRequest {
+            operation_id: "box-tool".into(),
+            capability_id: BOX_MCP_CAPABILITY.into(),
+            input_json: serde_json::json!({
+                "version":1,
+                "action":"execute_raw",
+                "fieldNumber":MCP_TOOL_EXEC_FIELD_NUMBER,
+                "payloadHex":"00ff"
+            }).to_string(),
+            timeout_ms: 30_000,
+        };
+        assert!(matches!(
+            backend.reconcile(&identity("box-tool"), &request, None).unwrap(),
+            RemoteBackendReconcileOutcome::Pending
+        ));
+        assert!(matches!(
+            backend.cancel(&identity("box-tool"), &request, None).unwrap(),
+            RemoteBackendCancelOutcome::OutcomeUnknown { reason }
+                if reason.contains("side-effect boundary")
+        ));
+    }
+
+    #[test]
+    fn box_rpc_read_timeout_surfaces_transport_error_without_fabricating_completion() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0_u8; 2048];
+            let _ = stream.read(&mut buffer);
+            std::thread::sleep(Duration::from_millis(100));
+        });
+        let mut backend = backend_with_timeout(format!("http://{address}/"), 20);
+        let request = ExecutionRequest {
+            operation_id: "box-env-timeout".into(),
+            capability_id: BOX_ENVIRONMENT_CAPABILITY.into(),
+            input_json: serde_json::json!({
+                "version":1,
+                "update":{"env":{"FOO":"bar"},"replace":false}
+            }).to_string(),
+            timeout_ms: 30_000,
+        };
+        assert!(matches!(
+            backend.start(&identity("box-env-timeout"), &request),
+            Err(ExecutionError::Transport(_))
+        ));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn reopened_mcp_tool_journal_stays_outcome_unknown_and_reconcile_does_not_replay() {
+        use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService, RemoteHttpRequest};
+        use crate::transport::RECONCILE_PATH;
+        use tempfile::tempdir;
+
+        struct AllowAuthorizer;
+        impl RemoteExecutionAuthorizer for AllowAuthorizer {
+            fn authorize(
+                &mut self,
+                _bearer: &str,
+                _identity: &RemoteRequestIdentity,
+                _capability_id: Option<&str>,
+                _now_ms: u64,
+            ) -> Result<(), ExecutionError> {
+                Ok(())
+            }
+        }
+
+        let root = tempdir().unwrap();
+        let journal = root.path().join("remote-execution.json");
+        std::fs::write(
+            &journal,
+            serde_json::json!({
+                "version":1,
+                "records":[{
+                    "credentialId":"credential-box",
+                    "operationId":"box-tool-reopen",
+                    "requestId":"request-box-tool-reopen",
+                    "capabilityId":BOX_MCP_CAPABILITY,
+                    "inputJson":serde_json::json!({
+                        "version":1,
+                        "action":"execute_raw",
+                        "fieldNumber":MCP_TOOL_EXEC_FIELD_NUMBER,
+                        "payloadHex":"00ff"
+                    }).to_string(),
+                    "timeoutMs":30000,
+                    "accountFence":"session:account-a",
+                    "accountEpoch":7,
+                    "permissionGrantId":"grant-box-tool-reopen",
+                    "deviceId":"device-box",
+                    "ackId":"ack-box-tool-reopen",
+                    "state":"running",
+                    "progressJson":null,
+                    "outputJson":null,
+                    "error":null,
+                    "updatedAtMs":1
+                }]
+            }).to_string(),
+        ).unwrap();
+
+        let backend = backend("http://127.0.0.1:9/".into());
+        let mut service = RemoteExecutionService::open(&journal, AllowAuthorizer, backend, 10).unwrap();
+        let identity = identity("box-tool-reopen");
+        let headers = BTreeMap::from([
+            ("Authorization".into(), "Bearer real-enough-secret-token-for-test".into()),
+            ("X-Fabushi-Credential-Id".into(), identity.credential_id.clone()),
+            ("X-Fabushi-Account-Fence".into(), identity.account_fence.clone()),
+            ("X-Fabushi-Account-Epoch".into(), identity.account_epoch.to_string()),
+            ("X-Fabushi-Operation-Id".into(), identity.operation_id.clone()),
+            ("X-Fabushi-Request-Id".into(), identity.request_id.clone()),
+            ("X-Fabushi-Permission-Grant-Id".into(), identity.permission_grant_id.clone()),
+            ("X-Fabushi-Device-Id".into(), identity.device_id.clone()),
+        ]);
+        let response = service.handle_http(
+            RemoteHttpRequest {
+                path: RECONCILE_PATH.into(),
+                headers,
+                body: serde_json::json!({
+                    "version":1,
+                    "credentialId":identity.credential_id,
+                    "operationId":identity.operation_id,
+                    "requestId":identity.request_id,
+                    "deviceId":identity.device_id,
+                    "accountFence":identity.account_fence,
+                    "accountEpoch":identity.account_epoch,
+                    "permissionGrantId":identity.permission_grant_id
+                }).to_string(),
+            },
+            11,
+        );
+        assert_eq!(response.status_code, 200);
+        let body: serde_json::Value = serde_json::from_str(&response.body).unwrap();
+        assert_eq!(body["status"], "outcome_unknown");
+    }
+
+    #[test]
+    fn transport_failure_surfaces_error_instead_of_fabricating_box_success() {
+        let mut backend = backend("http://127.0.0.1:9/".into());
+        let request = ExecutionRequest {
+            operation_id: "box-env-failure".into(),
+            capability_id: BOX_ENVIRONMENT_CAPABILITY.into(),
+            input_json: serde_json::json!({
+                "version":1,
+                "update":{"env":{"FOO":"bar"},"replace":false}
+            }).to_string(),
+            timeout_ms: 30_000,
+        };
+        assert!(matches!(
+            backend.start(&identity("box-env-failure"), &request),
+            Err(ExecutionError::Transport(_))
+        ));
     }
 
     #[test]
