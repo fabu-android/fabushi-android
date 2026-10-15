@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "7f800738482f8c6669341c0f4dcb423b60c6015f4771d64a24001ff83f5a17fb",
-  "closure_review": "incremental-session-watch-gap-audit-7b1e610",
+  "ledger_sha256": "27e44fd7672162a25135d2890b634a7b1cc4db68037b343fda448d2f5f14666c",
+  "closure_review": "complete-same-path-semantic-audit-at-b2a7549",
   "product_acceptance": "not-claimed"
 }
