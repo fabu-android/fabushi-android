@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "819513c02029e69773ccc34d9eeb12991fc1ae06d16f4ccf818dcf22d01833b3",
-  "closure_review": "incremental-rebaseline-preserved-8204-reset-13-deleted-0",
+  "ledger_sha256": "0a886b808f9557c6bc3e6984a5d3199bda5ef8b20e8bef939efde0a3d81a1622",
+  "closure_review": "incremental-cloudagent-box-closure-implemented-458-mapped-1018-unreviewed-1596",
   "product_acceptance": "not-claimed"
 }
