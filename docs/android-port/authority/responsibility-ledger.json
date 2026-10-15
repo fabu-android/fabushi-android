@@ -5,7 +5,7 @@
     "desktop_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "3ebd350353c99df74d0839b294bde2545af361b4",
+    "android_head_at_update": "11d714103a0bc78bb51c6166102bacffba2081aa",
     "status": "incomplete",
     "note": "Desktop canonical rebaselined to c33a9495fc1e640557d65f3e2daedc1449be7fcb / root tree 906b3f414b5ff343a5f0e627fa31b98778dfbf54 from GitHub Actions run 38731258547 artifact 11971095464. 13 changed/new source rows were reset for semantic re-audit; REMOTE-COMPUTER-001 was conservatively invalidated. Android migration remains incomplete pending source/responsibility closure and same-exact-head package/device/release evidence.",
     "desktop_root_tree": "906b3f414b5ff343a5f0e627fa31b98778dfbf54"
