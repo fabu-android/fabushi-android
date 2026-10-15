@@ -21375,6 +21375,16 @@
           "symbols": [
             "module responsibilities audited at current Desktop authority"
           ]
+        },
+        {
+          "path": "source/host/app/src/main.rs",
+          "blob_sha": "4488df58e2739e11955a885c3845b95caf318c55",
+          "symbols": [
+            "main",
+            "HostLaneRequest",
+            "GatewayEventHub",
+            "drain_ready_runtime_events"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
@@ -21442,7 +21452,7 @@
       "device_test": "required: login/chat/tools/MCP/WebAuthn/remote reconnect/process-death/account-switch journeys",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Semantic mapping only. Do not mark implemented/verified until every applicable Desktop gateway responsibility is proven through Android shipping composition plus same-exact-HEAD integration/package/device evidence. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/transport.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop SandTransport records assigned send/reaction outcomes from ingested updates. Android replaces this with Host event/transcript mutation ownership plus durable send acknowledgements and typed Agent reaction desired-state reconciliation."
+      "notes": "Semantic mapping only. Do not mark implemented/verified until every applicable Desktop gateway responsibility is proven through Android shipping composition plus same-exact-HEAD integration/package/device evidence. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/transport.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop SandTransport records assigned send/reaction outcomes from ingested updates. Android replaces this with Host event/transcript mutation ownership plus durable send acknowledgements and typed Agent reaction desired-state reconciliation. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner."
     },
     {
       "responsibility_id": "TRANSCRIPT-INITIAL-LOAD-ANDROID-001",
@@ -21589,6 +21599,14 @@
             "HostLockOutcome",
             "acquire_host_lock"
           ]
+        },
+        {
+          "path": "source/host/app/src/main.rs",
+          "blob_sha": "4488df58e2739e11955a885c3845b95caf318c55",
+          "symbols": [
+            "main",
+            "acquire_host_lock"
+          ]
         }
       ],
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
@@ -21638,7 +21656,7 @@
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Compatibility HostMain wiring exists but final Android process owner/lifecycle proof is open."
+      "notes": "Compatibility HostMain wiring exists but final Android process owner/lifecycle proof is open. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner."
     },
     {
       "responsibility_id": "HOST-DATA-PATHS-ANDROID-001",
@@ -21734,6 +21752,16 @@
             "resolveHostExtensionBootOrder",
             "startHostExtensions"
           ]
+        },
+        {
+          "path": "source/host/app/src/main.rs",
+          "blob_sha": "4488df58e2739e11955a885c3845b95caf318c55",
+          "symbols": [
+            "main",
+            "start_production_host_extensions",
+            "ProductionAutomationsLifecycle",
+            "ProductionTranscriptRuntime"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
@@ -21785,7 +21813,7 @@
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "ProductionExtensionRegistry is not a shipping proof; full extension composition remains open. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/mod.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop ports module is composition-only for transport/computer/analytics/box/MCP ports. Android deliberately decomposes these into typed platform/runtime owners; host production composition is the replacement seam."
+      "notes": "ProductionExtensionRegistry is not a shipping proof; full extension composition remains open. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/mod.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop ports module is composition-only for transport/computer/analytics/box/MCP ports. Android deliberately decomposes these into typed platform/runtime owners; host production composition is the replacement seam. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner."
     },
     {
       "responsibility_id": "HOST-REQUEST-CONTEXT-ANDROID-001",
@@ -21940,6 +21968,15 @@
           "symbols": [
             "module responsibilities audited at current Desktop authority"
           ]
+        },
+        {
+          "path": "source/host/app/src/main.rs",
+          "blob_sha": "4488df58e2739e11955a885c3845b95caf318c55",
+          "symbols": [
+            "main",
+            "HostRunnerComposition",
+            "ProductionTurnCompositionHooks"
+          ]
         }
       ],
       "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
@@ -21992,7 +22029,7 @@
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Promoted from mapped to implemented only after direct caller/shipping-composition audit on 8e60857a67bf318201b5a5c8538b6e65a661af36. Not verified: strict source ledger, signed package and device acceptance remain open; Remote executors not advertised by the binding remain intentionally unavailable."
+      "notes": "Promoted from mapped to implemented only after direct caller/shipping-composition audit on 8e60857a67bf318201b5a5c8538b6e65a661af36. Not verified: strict source ledger, signed package and device acceptance remain open; Remote executors not advertised by the binding remain intentionally unavailable. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner."
     },
     {
       "responsibility_id": "HOST-SCHEDULING-POLICIES-ANDROID-001",
