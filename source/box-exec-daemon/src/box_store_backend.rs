@@ -1010,6 +1010,49 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_applies_desktop_workspace_ignore_and_negation_semantics() {
+        let config = config("workspace-ignore");
+        fs::create_dir_all(config.workspace_root.join("node_modules/pkg")).unwrap();
+        fs::create_dir_all(config.workspace_root.join("target/debug")).unwrap();
+        fs::create_dir_all(config.workspace_root.join("generated")).unwrap();
+        fs::write(
+            config.workspace_root.join(SAND_WORKSPACE_IGNORE_FILE_NAME),
+            "generated/\n!generated/keep.txt\n",
+        )
+        .unwrap();
+        fs::write(config.workspace_root.join("node_modules/pkg/index.js"), b"ignored").unwrap();
+        fs::write(config.workspace_root.join("target/debug/app"), b"ignored").unwrap();
+        fs::write(config.workspace_root.join("generated/drop.txt"), b"ignored").unwrap();
+        fs::write(config.workspace_root.join("generated/keep.txt"), b"kept").unwrap();
+        fs::write(config.workspace_root.join("main.rs"), b"kept").unwrap();
+
+        let root = config.store_root.parent().unwrap().to_path_buf();
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        completed(
+            backend
+                .start(&identity("op-ignore", "req-ignore"), &request("op-ignore", "snapshot", None))
+                .unwrap(),
+        );
+        let (manifest, _) = backend.load_manifest("store-a").unwrap();
+        let paths = manifest
+            .unwrap()
+            .entries
+            .into_iter()
+            .filter(|entry| entry.category == "workspace")
+            .map(|entry| entry.rel_path)
+            .collect::<BTreeSet<_>>();
+
+        assert!(paths.contains("main.rs"));
+        assert!(paths.contains("generated/keep.txt"));
+        assert!(paths.contains(SAND_WORKSPACE_IGNORE_FILE_NAME));
+        assert!(!paths.contains("generated/drop.txt"));
+        assert!(!paths.iter().any(|path| path.starts_with("node_modules/")));
+        assert!(!paths.iter().any(|path| path.starts_with("target/")));
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn duplicate_execute_returns_durable_result_without_replaying_source_changes() {
         let config = config("duplicate");
         fs::create_dir_all(&config.workspace_root).unwrap();
