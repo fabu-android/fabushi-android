@@ -181,7 +181,7 @@ use crate::runner::{
     build_parent_subagent_routed_tools, spawn_generated_subagent, SubagentCompletionWakeSink,
     with_agent_management_tools_and_transcript,
     with_send_message_tools, with_send_message_tools_counted_to_target, with_multitask_todo_tools,
-    with_local_file_tools, with_remote_routed_tools, with_web_routed_tools,
+    with_generate_image_routed_tools, with_local_file_tools, with_remote_routed_tools, with_web_routed_tools,
     AgentTurnInterruptionRegistry, LocalApprovalRegistry, RemoteApprovalRegistry,
     RemoteAutoReviewDecision, RemoteAutoReviewPreflight, RemoteDispatchBinding,
     DurableMultitaskTodoStore,
@@ -13078,6 +13078,21 @@ impl AndroidJsonHost {
                         routed_subagent_tools,
                         web_backend,
                         &model_owned,
+                        &account_fence_owned,
+                        Arc::clone(&live_account_fence),
+                        Arc::clone(&cancelled),
+                    )
+                } else {
+                    routed_subagent_tools
+                };
+                // GenerateImage shares the authenticated Host backend but persists only inside
+                // the canonical app-private attachment root. Account/cancel fencing prevents late
+                // results from crossing turns or accounts; no UI or second storage owner is created.
+                let routed_subagent_tools = if let Some(web_backend) = web_backend.clone() {
+                    with_generate_image_routed_tools(
+                        routed_subagent_tools,
+                        web_backend,
+                        agent_attachment_root.clone(),
                         &account_fence_owned,
                         Arc::clone(&live_account_fence),
                         Arc::clone(&cancelled),
