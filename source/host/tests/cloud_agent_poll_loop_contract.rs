@@ -60,3 +60,24 @@ fn completion_poller_honors_restart_grace_rate_limit_and_terminal_state(){
     let poller=CloudAgentCompletionPoller::new("account-a/device-1/op-1".into(),{let n=Arc::clone(&now);Arc::new(move||n.load(Ordering::SeqCst))},{let n=Arc::clone(&now);Arc::new(move|d:Duration|{n.fetch_add(d.as_millis() as u64,Ordering::SeqCst);})},{let r=Arc::clone(&responses);let c=Arc::clone(&calls);Arc::new(move|_,timeout|{assert_eq!(timeout,CLOUD_AGENT_POLL_RPC_TIMEOUT_MS);c.fetch_add(1,Ordering::SeqCst);r.lock().unwrap().remove(0)})}).with_limits(1_000,10,100);
     let result=poller.await_completion("bc-1",false); assert_eq!(result.status,"completed"); assert!(result.text.contains("https://example/pr")); assert_eq!(calls.load(Ordering::SeqCst),3);
 }
+
+#[test]
+fn production_reconcile_uses_bounded_poll_policy_without_replaying_side_effects() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    let runtime = std::fs::read_to_string(root.join("host/src/android_json_runtime.rs")).unwrap();
+    let production = std::fs::read_to_string(root.join("box-exec-daemon/src/cloud_agent_production.rs")).unwrap();
+    for needle in [
+        "CLOUD_AGENT_MAX_WAIT_MS",
+        "CLOUD_AGENT_POLL_INTERVAL_MS",
+        "parse_rate_limit_retry_after_ms",
+        "cloud_agent_rate_limit_pause_ms",
+        "cloud_agent_rate_limited",
+        "runner.reconcile_authorized(&context, now_ms())",
+        "durable operation was not replayed",
+    ] {
+        assert!(runtime.contains(needle), "shipping Host CloudAgent reconcile must contain {needle}");
+    }
+    assert!(production.contains("ureq::Error::Status(429, response)"));
+    assert!(production.contains("retry_after_ms="));
+    assert!(production.contains("Never replay launch/reply/rename/cancel/archive/delete"));
+}
