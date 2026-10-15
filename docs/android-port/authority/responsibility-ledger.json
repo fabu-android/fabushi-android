@@ -58167,6 +58167,161 @@
       "verification_status": "not-verified",
       "notes": "Created by semantic audit at Android 43d15e4d53620f972dca79fc8bd9b6149a93f552; prevents test-only AndroidLocal staged upload from being counted as Remote Box parity.",
       "android_head_at_update": "43d15e4d53620f972dca79fc8bd9b6149a93f552"
+    },
+    {
+      "responsibility_id": "AGENT-REMOTE-PROMPT-ANDROID-001",
+      "domain": "agent-runtime-prompt",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/system_prompt_assembly.rs",
+          "blob_sha": "6d592794b835994a81a214049b9c5907df0cb4ff",
+          "symbols": [
+            "RemoteBoxPromptState",
+            "append_remote_runtime_sections_for_turn"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Project the canonical Remote Runner availability for each root Agent turn into system context without converting prompt text into execution authority: unavailable and paused states fail closed; ready state reports desktop capability and deduplicated executor classes while actual execution remains fenced by the routed tool graph, Capability Broker, explicit approval, account/device identity and process epoch.",
+      "source_owner": "Desktop Runner prompt collector over canonical remote runtime state",
+      "direct_callers": [
+        "root Agent turn prompt assembly",
+        "shipping provider turn"
+      ],
+      "downstream_dependencies": [
+        "canonical remote binding",
+        "remote runner",
+        "Capability Broker",
+        "approval registry",
+        "provider routed-tool graph"
+      ],
+      "state_owner": "Canonical Android remote binding/runner state remains the only owner; prompt assembly is a read-only per-turn projection.",
+      "persistent_state": [
+        "remote execution journal and canonical binding state only; prompt owns no durable state"
+      ],
+      "protocol_wire_contract": [
+        "ready/paused/unavailable projection",
+        "hasDesktop projection",
+        "deduplicated executor projection",
+        "account/device/epoch-fenced execution remains outside prompt"
+      ],
+      "visible_effect": "The root Agent knows whether an authorized Remote Runner is actually available for the current turn and does not claim unavailable computer access.",
+      "failure_behavior": [
+        "paused/unavailable projects fail-closed guidance",
+        "missing executor list grants nothing",
+        "prompt state never widens tool exposure"
+      ],
+      "cancellation_behavior": "Prompt projection has no side effect to cancel; remote execution cancellation stays owned by the canonical runner path.",
+      "retry_semantics": "Recomputed from canonical state on every root turn; outcome-unknown remote side effects reconcile through the durable runner journal rather than prompt-driven retry.",
+      "idempotency_semantics": "Projection is deterministic for one canonical runtime snapshot and executor names are sorted/deduplicated.",
+      "process_death_recovery": "After Host reopen the prompt is rebuilt from reopened canonical remote binding/runner state; no prompt snapshot becomes a second owner.",
+      "account_fencing": "AndroidJsonHost builds the section only inside the already account-fenced root turn; remote execution additionally retains account/device/epoch validation.",
+      "security_boundary": "Informational prompt only. Routed tool graph + Capability Broker + approval consumption + executor validation are the sole execution boundary.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/android_system_prompt.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/remote_routed_tools.rs"
+      ],
+      "android_owner": "AndroidJsonHost root-turn prompt projection over canonical RemoteDispatchBinding/AuthenticatedRemoteHostRunner",
+      "platform_delta": "Desktop local/box computer context is replaced by the explicitly authorized Android Remote Runner, while fail-closed capability semantics are preserved.",
+      "implementation_status": "implemented",
+      "production_wiring": "At f2cd11b AndroidJsonHost::queue_chat_turn_with_context reads remote_prompt_state() on every root turn, append_android_remote_runtime_system_instructions renders paused/unavailable/ready state, and AndroidHostInferenceProvider receives the resulting system instructions. Remote routed tools remain separately composed behind Capability Broker and approval.",
+      "unit_test": "Exact-head f2cd11b GitHub Actions run 38738066987 / rust-runtime-foundation job 116432346862 succeeded, including unavailable, paused, ready, executor dedupe and prompt-does-not-grant-capability tests in android_system_prompt.rs.",
+      "contract_test": "Exact-head f2cd11b run 38738066987 / rust-runtime-foundation job 116432346862 and run 38738066869 / android-build-unit-lint job 116432479797 succeeded; prompt explicitly states routed tool graph, Capability Broker, account/device/epoch fence and approval remain authority.",
+      "integration_test": "Exact-head f2cd11b root queue_chat_turn_with_context -> remote_prompt_state -> system instructions -> AndroidHostInferenceProvider production wiring compiled/tested in GitHub Actions; final signed/package/device acceptance remains blocked independently.",
+      "packaged_test": "Exact-head non-release APK artifact 11975257057 exists; final signed githubRelease package remains blocked by missing release signing secrets.",
+      "device_test": "required after protected emulator/device account secrets and release signing prerequisites are available",
+      "artifact": "f2cd11b: run 38738066987 rust-runtime-foundation success; run 38738066869 android-build-unit-lint success; non-release APK artifact 11975257057.",
+      "verification_status": "not-verified",
+      "notes": "The Remote Runner prompt sub-responsibility is implemented on f2cd11b, but final verification is intentionally withheld until same-final-HEAD signed/package/device gates close. This responsibility MUST NOT be used to promote the entire Desktop system_prompt_assembly.rs source row to verified."
+    },
+    {
+      "responsibility_id": "AGENT-RUNTIME-PROMPT-ASSEMBLY-ANDROID-001",
+      "domain": "agent-runtime-prompt",
+      "desktop_sources": [
+        {
+          "path": "source/host/src/runner/system_prompt.rs",
+          "blob_sha": "8090c7a1282ae043a63ec9b40d28520542cc8fb0",
+          "symbols": [
+            "shipping root system prompt contract"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/system_prompt_assembly.rs",
+          "blob_sha": "6d592794b835994a81a214049b9c5907df0cb4ff",
+          "symbols": [
+            "append_automations_system_prompt",
+            "append_budgeted_workflows_system_prompt",
+            "append_channels_system_prompt",
+            "append_agent_directory_system_prompt",
+            "append_mcp_system_prompt_sections",
+            "dynamic section ordering/dedupe"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Assemble every root Agent turn from invariant safety/identity plus the canonical live account-scoped dynamic sections: memory/timezone, managed team rules, automation/workflow context, budgeted skills, connected channels, Agent directory, MCP custom instructions/discovery-unavailable state and Remote Runner state, preserving Desktop ordering, deduplication, budget, fail-closed and stale-account semantics without making prompt text an authorization source.",
+      "source_owner": "Desktop shipping Runner prompt assembly / prompt collector over canonical runtime owners",
+      "direct_callers": [
+        "shipping root provider turn"
+      ],
+      "downstream_dependencies": [
+        "memory owner",
+        "managed team rules",
+        "automation owner",
+        "workflow/skill owners",
+        "channel store",
+        "Agent roster",
+        "MCP owner/settings",
+        "remote runtime",
+        "provider tool graph"
+      ],
+      "state_owner": "Each dynamic section remains owned by its canonical runtime service/store; prompt assembly is a per-turn projection only.",
+      "persistent_state": [
+        "none owned by prompt assembly"
+      ],
+      "protocol_wire_contract": [
+        "Desktop dynamic ordering and dedupe markers",
+        "2% initial skill catalog context budget",
+        "MCP discovery-unavailable fail-closed notice",
+        "account-scoped connector instructions",
+        "root-only directory/runtime context"
+      ],
+      "visible_effect": "Every root Agent turn sees current connected services, routines/workflows/skills, channels, teammates and remote availability without stale cross-account leakage.",
+      "failure_behavior": [
+        "MCP discovery failure reports temporary unavailability instead of falsely claiming no connectors",
+        "empty/disconnected sources omit their sections",
+        "stale account/epoch aborts rather than mixing snapshots"
+      ],
+      "cancellation_behavior": "Read-only prompt collection has no side effects; cancellation cannot authorize or execute tools.",
+      "retry_semantics": "Dynamic state is freshly collected for each turn; failed discovery is not rewritten as an empty canonical catalog.",
+      "idempotency_semantics": "Each dynamic section is appended at most once in fixed order; duplicate source rows/entries are deterministically collapsed.",
+      "process_death_recovery": "Reopened canonical owners feed a newly assembled prompt; no cached prompt becomes durable truth.",
+      "account_fencing": "All per-turn dynamic reads must remain tied to the frozen current account fence and reject stale account/epoch observations before provider dispatch.",
+      "security_boundary": "Prompt is context only; routed tools, Capability Broker and approvals are the exclusive execution authority.",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/android_system_prompt.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/mcp_server_tool_settings.rs",
+        "source/host/src/extensions/session/channel_store.rs",
+        "source/host/src/automation_runtime.rs",
+        "source/host/src/extensions/managed_setup/managed_skills_service.rs",
+        "source/host/src/android_agent_roster.rs"
+      ],
+      "android_owner": "AndroidJsonHost root-turn assembly using existing canonical owners; no second MCP/workflow/channel/Agent store",
+      "platform_delta": "Android uses app-private/account-fenced owner projections and authorized Remote Runner context instead of Desktop box-local surfaces.",
+      "implementation_status": "mapped",
+      "production_wiring": "At f2cd11b invariant root instructions, combined durable memory, timezone, managed team rules, Agent profile and Remote Runner runtime are production-wired. Desktop c33a9495 live MCP custom/discovery, automation/workflow, budgeted skills, channels and Agent directory dynamic sections are still open and therefore this responsibility remains mapped.",
+      "unit_test": "Partial exact-head f2cd11b Rust prompt tests succeeded in run 38738066987 / job 116432346862; missing dynamic-section matrix must be added before promotion.",
+      "contract_test": "Desktop c33a9495 system_prompt_assembly.rs and dynamic/shipping contract tests were re-read; Android does not yet satisfy the full dynamic section closure.",
+      "integration_test": "Partial root-turn integration exists at f2cd11b; complete canonical-owner dynamic projection and stale-account/process-reopen coverage remain required.",
+      "packaged_test": "required on final exact-head signed APK/AAB",
+      "device_test": "required on final protected emulator/device acceptance",
+      "artifact": "f2cd11b baseline evidence only; no full prompt-assembly verification claim.",
+      "verification_status": "not-verified",
+      "notes": "Keep source/host/src/runner/system_prompt.rs and system_prompt_assembly.rs nonterminal until all shipping responsibilities are closed on the same exact HEAD. Never bulk-promote these source rows from this partial responsibility."
     }
   ],
   "traceability": {
