@@ -2016,4 +2016,35 @@ mod tests {
     }
 
 
+
+    #[test]
+    fn production_loop_silence_allowed_configuration_does_not_inject_reminders() {
+        use super::super::turn_tool_session_reminders::START_OF_TURN_ACK_REMINDER_MESSAGE;
+
+        let (endpoint, requests) = spawn_recording_sse_server(vec![
+            tool_sse("Read", "read-1", "{}"),
+            tool_sse("Shell", "shell-2", "{}"),
+            final_sse(),
+        ]);
+        let mut provider = AndroidHostInferenceProvider::with_endpoint(
+            "a".repeat(32),
+            endpoint,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .with_turn_tool_session_reminders(true)
+        .with_silence_allowed(true)
+        .with_routed_tools(Arc::new(ReminderTools {
+            calls: Arc::new(AtomicUsize::new(0)),
+            cancelled: None,
+        }));
+
+        provider.start_stream(&input(), 1).unwrap();
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 3);
+        assert!(!requests.iter().any(|request| {
+            request_contains_user_reminder(request, START_OF_TURN_ACK_REMINDER_MESSAGE)
+        }));
+    }
+
+
 }
