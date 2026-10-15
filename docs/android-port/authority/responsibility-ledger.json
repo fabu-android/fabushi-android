@@ -21514,12 +21514,12 @@
       ],
       "android_owner": "Rust Host persistence and acceptance boundary",
       "platform_delta": "Android uses Host Result/error plus durable acceptance state rather than the Desktop named error type.",
-      "implementation_status": "mapped",
-      "production_wiring": "chat.send propagates transcript and acceptance errors, but a focused injected persistence-failure contract is still required to prove no swallowed send.",
-      "unit_test": "PromptAcceptanceLedger corruption and unknown-durability tests exist; injected transcript-persist failure test required",
-      "contract_test": "required: persistence failure externally observable and no inference/tool side effect starts",
-      "integration_test": "required: simulated storage failure/recovery in GitHub Actions",
-      "notes": "Mapped pending deterministic persistence-failure evidence."
+      "implementation_status": "implemented",
+      "production_wiring": "chat.send durably records pending acceptance before transcript persistence, then propagates TranscriptStore append failure before any turn/inference/tool side effect can start. TranscriptStore rolls back the in-memory append when persistence fails. After process reopen, the missing canonical entry plus durable pending acceptance produces SEND_ACCEPTANCE_OUTCOME_UNKNOWN, requiring reconciliation instead of swallowing success or blindly replaying the send.",
+      "unit_test": "Focused AndroidJsonHost Rust contract injects a deterministic transcript persistence failure via the canonical transcript temporary path and proves external rejection, no canonical transcript entry, no operation/chat completion event, no transcript.run-started projection, process-reopen emptiness, and SEND_ACCEPTANCE_OUTCOME_UNKNOWN on retry. Same-exact-head Actions pending.",
+      "contract_test": "Focused production-path persistence-failure contract added in source/host/src/android_json_runtime.rs; exact-head Rust/architecture CI required before verification.",
+      "integration_test": "Same-exact-head GitHub Actions must execute the real AndroidJsonHost/TranscriptStore failure path; final packaged storage-failure acceptance remains required.",
+      "notes": "Production semantics are now implemented and focused failure coverage exists. Keep not-verified until the descendant exact HEAD passes Rust/architecture CI; packaged/device evidence remains a broader release gate."
     },
     {
       "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",

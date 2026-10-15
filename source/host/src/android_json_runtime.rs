@@ -26948,6 +26948,60 @@ mod user_message_received_telemetry_wiring_tests {
     }
 
     #[test]
+    fn transcript_persist_failure_rejects_send_before_turn_side_effects_and_survives_reopen() {
+        let root = tempfile::tempdir().unwrap();
+        let request_id = "persist-failure-request";
+        let client_nonce = "persist-failure-nonce";
+        {
+            let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+            sign_in_test_account(&mut host);
+            std::fs::create_dir(root.path().join("transcript.json.tmp")).unwrap();
+            let error = host
+                .queue_chat_turn(
+                    "persist-failure-operation",
+                    request_id,
+                    &json!({
+                        "text":"must not be swallowed",
+                        "agentId":"persist-failure-agent",
+                        "clientNonce":client_nonce
+                    }),
+                    None,
+                )
+                .unwrap_err();
+            assert!(error.contains("failed to persist user transcript entry"));
+            assert!(host.transcript.lock().unwrap().get_transcript().is_empty());
+            assert!(!host.turn_events.lock().unwrap().iter().any(|event| {
+                matches!(
+                    event.get("type").and_then(Value::as_str),
+                    Some("operation.started") | Some("chat.message") | Some("operation.completed")
+                )
+            }));
+            assert!(!host.transcript_projection_events.lock().unwrap().iter().any(|event| {
+                event.get("type").and_then(Value::as_str) == Some("transcript.run-started")
+            }));
+        }
+
+        std::fs::remove_dir(root.path().join("transcript.json.tmp")).unwrap();
+        let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut reopened);
+        assert!(reopened.transcript.lock().unwrap().get_transcript().is_empty());
+        let retry_error = reopened
+            .queue_chat_turn(
+                "persist-failure-retry-operation",
+                request_id,
+                &json!({
+                    "text":"must not be swallowed",
+                    "agentId":"persist-failure-agent",
+                    "clientNonce":client_nonce
+                }),
+                None,
+            )
+            .unwrap_err();
+        assert!(retry_error.contains("SEND_ACCEPTANCE_OUTCOME_UNKNOWN"));
+        assert!(reopened.transcript.lock().unwrap().get_transcript().is_empty());
+    }
+
+    #[test]
     fn failed_chat_send_does_not_publish_transcript_run_started() {
         let root = tempfile::tempdir().unwrap();
         let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
