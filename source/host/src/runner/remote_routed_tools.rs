@@ -150,13 +150,24 @@ fn remote_browser_tool_definitions() -> Vec<Value> {
                     json!({"type":"string","enum":["list","new","close","select"]}),
                 );
             }
+            let mut required = spec.required.to_vec();
+            if matches!(
+                spec.name,
+                "browser_refresh" | "browser_back" | "browser_forward"
+                    | "browser_click" | "browser_mouse_click_xy" | "browser_type"
+                    | "browser_fill" | "browser_select_option" | "browser_press_key"
+                    | "browser_drag" | "browser_cdp"
+            ) {
+                if !required.contains(&"viewId") { required.push("viewId"); }
+                if !required.contains(&"expectedGeneration") { required.push("expectedGeneration"); }
+            }
             json!({
                 "type":"function",
                 "name":spec.name,
                 "description":spec.description,
                 "parameters":{
                     "type":"object",
-                    "required":spec.required,
+                    "required":required,
                     "additionalProperties":true,
                     "properties":properties
                 }
@@ -1386,6 +1397,20 @@ fn validate_remote_browser_allowed_keys(
     Ok(())
 }
 
+fn remote_browser_requires_generation_fence(name: &str, args: &Value) -> bool {
+    match name {
+        "browser_refresh" | "browser_back" | "browser_forward"
+        | "browser_click" | "browser_mouse_click_xy" | "browser_type"
+        | "browser_fill" | "browser_select_option" | "browser_press_key"
+        | "browser_drag" | "browser_cdp" => true,
+        "browser_tabs" => matches!(
+            args.get("action").and_then(Value::as_str),
+            Some("close")
+        ),
+        _ => false,
+    }
+}
+
 fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, String> {
     let object = args
         .as_object()
@@ -1414,6 +1439,14 @@ fn validate_remote_browser_tool_input(name: &str, args: &Value) -> Result<u64, S
         {
             return Err("Remote Browser expectedGeneration must be a non-empty string of at most 240 non-control characters".into());
         }
+    }
+
+    // Desktop Auto-review re-checks the reviewed display state before a mutating
+    // browser action. Android binds review, approval identity, and Remote dispatch
+    // to the exact view generation so stale-page execution fails closed remotely.
+    if remote_browser_requires_generation_fence(name, args) {
+        validate_browser_required_string(object, name, "viewId")?;
+        validate_browser_required_string(object, name, "expectedGeneration")?;
     }
 
     match name {
@@ -2389,7 +2422,7 @@ mod tests {
         assert_eq!(
             validate_remote_tool_input(
                 "browser_drag",
-                &json!({"sourceRef":"ref-1","targetX":12.5,"targetY":9}),
+                &json!({"sourceRef":"ref-1","targetX":12.5,"targetY":9,"viewId":"view-a","expectedGeneration":"generation-7"}),
             )
             .unwrap(),
             REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
@@ -2430,6 +2463,32 @@ mod tests {
             &json!({"ref":"ref-1","viewId":42}),
         )
         .is_err());
+        assert!(validate_remote_tool_input(
+            "browser_click",
+            &json!({"ref":"ref-1"}),
+        )
+        .is_err());
+        assert_eq!(
+            validate_remote_tool_input(
+                "browser_click",
+                &json!({"ref":"ref-1","viewId":"view-a","expectedGeneration":"generation-7"}),
+            )
+            .unwrap(),
+            REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
+        );
+        assert!(validate_remote_tool_input(
+            "browser_tabs",
+            &json!({"action":"close","index":0}),
+        )
+        .is_err());
+        assert_eq!(
+            validate_remote_tool_input(
+                "browser_tabs",
+                &json!({"action":"close","index":0,"viewId":"view-a","expectedGeneration":"generation-7"}),
+            )
+            .unwrap(),
+            REMOTE_BROWSER_EXECUTION_TIMEOUT_MS,
+        );
         assert!(validate_remote_tool_input(
             "browser_take_screenshot",
             &json!({"fullPage":"yes"}),
