@@ -5,6 +5,7 @@ use serde_json::Value;
 use crate::connectors::channel_delivery::ChannelOutboundMessage;
 
 pub const TIMELINE_EVENT_WAKE_CUE: &str = "[event]";
+pub const ADMIN_BROADCAST_WAKE_CUE: &str = "[admin-broadcast]";
 pub const CHANNEL_INBOUND_WAKE_CUE: &str = "[inbound]";
 pub const CHANNEL_DELIVERY_FAILED_WAKE_CUE: &str = "[channel-delivery-failed]";
 
@@ -312,6 +313,18 @@ pub fn describe_timeline_event(event: &Value) -> String {
     }
 }
 
+pub fn build_admin_broadcast_wake_prompt(message: &str) -> String {
+    let message = message.trim();
+    [
+        format!("{ADMIN_BROADCAST_WAKE_CUE} A direct message from your user was broadcast to their agents."),
+        "This is the user speaking to you, not another agent and not an automation. Treat it as a directive or announcement from the person you work for.".to_string(),
+        String::new(),
+        format!("The user says: {message}"),
+        String::new(),
+        "Act on it as appropriate, then use SendMessage to give the user a concise acknowledgement and result.".to_string(),
+    ].join("\n")
+}
+
 pub fn build_timeline_event_wake_prompt(events: &[Value]) -> String {
     let mut lines = vec![
         format!(
@@ -381,6 +394,15 @@ impl<T> BackgroundWakes<T> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn admin_broadcast_prompt_preserves_user_directive_semantics() {
+        let prompt = build_admin_broadcast_wake_prompt("restart the rollout");
+        assert!(prompt.starts_with(ADMIN_BROADCAST_WAKE_CUE));
+        assert!(prompt.contains("The user says: restart the rollout"));
+        assert!(prompt.contains("not another agent"));
+        assert!(prompt.contains("SendMessage"));
+    }
 
     #[test]
     fn inbound_prompt_groups_addresses_and_marks_redrive_once() {

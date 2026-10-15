@@ -151,8 +151,8 @@ use crate::extensions::trays::extension::{start_trays_extension, HostTraysExtens
 use crate::extensions::trays::trays_service::{TrayEvent, TraySubscription};
 use crate::extensions::transcript::{AsyncTask, SandPendingWakeStore, TranscriptRecoveryOutcome, TranscriptStore, merge_async_tasks};
 use crate::extensions::transcript::background_wakes::{
-    BackgroundWakes, build_channel_delivery_failure_wake_prompt, build_channel_inbound_wake_prompt,
-    build_timeline_event_wake_prompt,
+    BackgroundWakes, build_admin_broadcast_wake_prompt, build_channel_delivery_failure_wake_prompt,
+    build_channel_inbound_wake_prompt, build_timeline_event_wake_prompt,
 };
 use crate::extensions::transcript::completion_revivals::{
     build_shell_revival_prompt, build_subagent_revival_prompt, ShellCompletion,
@@ -6007,16 +6007,29 @@ impl AndroidJsonHost {
         if broadcast_id.len() > 512 || broadcast_id.chars().any(char::is_control) {
             return Err("admin broadcast id is invalid".into());
         }
-        let message = required_string(params, "message")?;
-        if message.len() > 64 * 1024 {
-            return Err("admin broadcast message exceeds 64 KiB".into());
+        let message = required_string(params, "message")?.trim();
+        if message.is_empty() || message.len() > 64 * 1024 {
+            return Err("admin broadcast message must contain 1..65536 bytes".into());
         }
-        let agent_ids = self.agents
+        let roster = self.agents
             .lock()
             .map_err(|_| "canonical Android Agent roster lock poisoned".to_string())?
-            .list()
-            .into_iter()
-            .map(|agent| agent.id)
+            .list();
+        let by_id = roster.iter().map(|agent| (agent.id.as_str(), agent)).collect::<std::collections::HashMap<_, _>>();
+        let requested = match params.get("targets") {
+            Some(Value::String(value)) if value == "all" => roster.iter().map(|agent| agent.id.clone()).collect::<Vec<_>>(),
+            Some(Value::Array(values)) => {
+                let mut ids = Vec::new();
+                for id in values.iter().filter_map(Value::as_str).map(str::trim).filter(|id| !id.is_empty()) {
+                    if !ids.iter().any(|known| known == id) { ids.push(id.to_string()); }
+                }
+                ids
+            }
+            _ => return Err("broadcastToAgents requires targets = \"all\" or an array".into()),
+        };
+        let total = requested.len();
+        let agent_ids = requested.into_iter()
+            .filter(|id| by_id.get(id.as_str()).is_some_and(|agent| !agent.is_group))
             .collect::<Vec<_>>();
         for agent_id in &agent_ids {
             self.persist_timeline_event_wake(
@@ -6033,6 +6046,8 @@ impl AndroidJsonHost {
             "accepted":true,
             "broadcastId":broadcast_id,
             "agentCount":agent_ids.len(),
+            "total":total,
+            "scheduled":agent_ids.len(),
         }))
     }
 
@@ -10571,17 +10586,29 @@ impl AndroidJsonHost {
                 return Ok(());
             }
         };
+        let is_admin_broadcast = events.iter().all(|event| {
+            event.get("type").and_then(Value::as_str) == Some("admin-broadcast")
+        });
+        let prompt = if is_admin_broadcast {
+            events.iter()
+                .filter_map(|event| event.get("message").and_then(Value::as_str))
+                .map(build_admin_broadcast_wake_prompt)
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        } else {
+            build_timeline_event_wake_prompt(&events)
+        };
         let operation_id = self.next_operation_id(&request_id);
         self.active_operations.insert(operation_id.clone());
         let command = json!({
             "type":"chat.send",
             "requestId":request_id,
             "agentId":agent_id,
-            "text":build_timeline_event_wake_prompt(&events),
+            "text":prompt,
             "hidden":true,
             "appendUserMessage":false,
             "awaitTurn":false,
-            "requestSource":"timeline-event",
+            "requestSource":if is_admin_broadcast { "broadcast" } else { "timeline-event" },
             "skipAckObligation":true,
             "directAddressedAcceptance":true,
         });
@@ -26388,20 +26415,33 @@ mod automation_event_trigger_wiring_tests {
             let payload = json!({
                 "accountFence":account_fence,
                 "broadcastId":"admin-policy-42",
-                "message":"A maintenance window starts soon."
+                "message":"A maintenance window starts soon.",
+                "targets":"all"
             });
             let first = host.dispatch("broadcastToAgents", &payload).unwrap();
             assert_eq!(first["accepted"], true);
             assert_eq!(first["agentCount"], 2);
             let duplicate = host.dispatch("broadcastToAgents", &payload).unwrap();
             assert_eq!(duplicate["agentCount"], 2);
+            let targeted = host.dispatch(
+                "broadcastToAgents",
+                &json!({
+                    "accountFence":account_fence,
+                    "broadcastId":"admin-policy-targeted",
+                    "message":"Only the first agent handles this.",
+                    "targets":[first_agent.clone(), first_agent.clone(), "missing-agent"]
+                }),
+            ).unwrap();
+            assert_eq!(targeted["total"], 2);
+            assert_eq!(targeted["scheduled"], 1);
 
             assert!(host.dispatch(
                 "broadcastToAgents",
                 &json!({
                     "accountFence":"session:stale",
                     "broadcastId":"admin-policy-stale",
-                    "message":"must not cross account fence"
+                    "message":"must not cross account fence",
+                    "targets":"all"
                 }),
             ).unwrap_err().contains("stale admin broadcast account fence"));
 
@@ -26410,16 +26450,17 @@ mod automation_event_trigger_wiring_tests {
                 .filter(|entry| entry["kind"] == "timeline-event-wake")
                 .filter(|entry| entry["event"]["type"] == "admin-broadcast")
                 .collect::<Vec<_>>();
-            assert_eq!(wakes.len(), 2, "same broadcast id must dedupe one wake per Agent");
+            assert_eq!(wakes.len(), 3, "duplicate broadcast id dedupes while a distinct targeted broadcast remains durable");
             assert!(wakes.iter().all(|entry| entry["accountFence"] == account_fence));
-            assert!(wakes.iter().all(|entry| entry["event"]["eventId"] == "admin-policy-42"));
+            assert_eq!(wakes.iter().filter(|entry| entry["event"]["eventId"] == "admin-policy-42").count(), 2);
+            assert_eq!(wakes.iter().filter(|entry| entry["event"]["eventId"] == "admin-policy-targeted").count(), 1);
         }
 
         let mut reopened = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
         sign_in_test_account(&mut reopened);
         reopened.recover_timeline_event_wakes().unwrap();
         let wakes = reopened.background_wakes.lock().unwrap();
-        assert_eq!(wakes.pending_event_wakes.get(&first_agent).map(Vec::len), Some(1));
+        assert_eq!(wakes.pending_event_wakes.get(&first_agent).map(Vec::len), Some(2));
         assert_eq!(wakes.pending_event_wakes.get(&second_agent).map(Vec::len), Some(1));
     }
 

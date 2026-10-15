@@ -185,12 +185,15 @@ fn admin_broadcast_uses_the_same_durable_timeline_owner() {
         "stale admin broadcast account fence",
         "\"type\":\"admin-broadcast\"",
         "\"eventId\":broadcast_id",
+        "build_admin_broadcast_wake_prompt",
+        "broadcastToAgents requires targets",
         "persist_timeline_event_wake",
     ] {
         assert!(runtime.contains(needle), "shipping admin-broadcast caller must contain {needle}");
     }
-    assert!(wakes.contains("\"admin-broadcast\" => format!"));
-    assert!(wakes.contains("administrator broadcast"));
+    assert!(wakes.contains("pub fn build_admin_broadcast_wake_prompt"));
+    assert!(wakes.contains("ADMIN_BROADCAST_WAKE_CUE"));
+    assert!(wakes.contains("The user says:"));
     assert!(!runtime.contains("ComposeAdminBroadcastQueue"));
     assert!(!runtime.contains("JniAdminBroadcastQueue"));
 }
