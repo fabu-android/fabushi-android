@@ -58916,6 +58916,541 @@
       "verification_status": "not-verified",
       "notes": "Real capability gap retained; extension/MIME classification is not counted as parity.",
       "android_head_at_update": "efbf0cf52f3d765c9d7dc79463d2b115ff53ecbd"
+    },
+    {
+      "responsibility_id": "AGENT-CLONE-DURABLE-CONFIG-ANDROID-001",
+      "domain": "agent-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_clone_contract.rs",
+          "blob_sha": "e991706c232a27be5f458ae19433645c68bbcae5",
+          "symbols": [
+            "clone_agent_dir",
+            "clone_agent_display_name"
+          ]
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Clone an Agent durable configuration into a new identity while excluding transcript/run history and cleaning partial targets on failure.",
+      "source_owner": "Desktop agent clone owner",
+      "direct_callers": [
+        "Agent duplicate/clone action"
+      ],
+      "downstream_dependencies": [
+        "agent profile/settings",
+        "avatar",
+        "workflow enablement",
+        "automation configs",
+        "session DB metadata"
+      ],
+      "state_owner": "Rust Host Agent/session owners",
+      "persistent_state": [
+        "new Agent profile/settings/avatar/workflow enablement/automation configs/session metadata"
+      ],
+      "protocol_wire_contract": [
+        "duplicate Agent action"
+      ],
+      "visible_effect": "Duplicating an Agent produces an independent configured copy without leaking prior conversation/run history.",
+      "failure_behavior": [
+        "partial target removed on failure",
+        "source remains unchanged"
+      ],
+      "cancellation_behavior": "clone must not expose a partially materialized Agent",
+      "retry_semantics": "retry creates/continues only a new target identity, never mutates source",
+      "idempotency_semantics": "target identity is unique; no transcript/run history copy",
+      "process_death_recovery": "must reconcile or remove incomplete target before exposing it",
+      "account_fencing": "clone stays inside current account Agent store",
+      "security_boundary": "only durable user configuration is copied; credentials/transcript history are not implicitly duplicated",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/extensions/session/production.rs",
+        "source/host/src/workflows/workflow_library.rs",
+        "source/host/src/automations/automation_store.rs"
+      ],
+      "android_owner": "Rust Host roster + canonical session/workflow/automation owners",
+      "platform_delta": "Android roster duplicate currently copies only roster fields; durable configuration cloning must be orchestrated across existing Rust owners without a second store.",
+      "implementation_status": "mapped",
+      "production_wiring": "Roster duplicate exists, but durable profile/settings/workflow/automation/session clone transaction is not yet wired.",
+      "unit_test": "required for durable clone/exclusions/cleanup",
+      "contract_test": "Desktop agent_clone_contract is authority",
+      "integration_test": "required through production duplicate route",
+      "packaged_test": "required in final Agent management acceptance",
+      "device_test": "required",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Kept mapped because current Android duplicate is materially narrower than Desktop clone semantics.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "TELEMETRY-AGENT-ERROR-ANDROID-001",
+      "domain": "observability",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_error_telemetry_contract.rs",
+          "blob_sha": "f543ebfbf605dbc57e87366270412f5d0dbd21d7",
+          "symbols": []
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Classify Agent runtime failures into stable summary/detail telemetry without leaking unbounded error text.",
+      "source_owner": "Desktop Host Rust runtime",
+      "direct_callers": [
+        "shipping Host gateway/turn runtime"
+      ],
+      "downstream_dependencies": [
+        "source/host/src/extensions/telemetry/agent_error_telemetry.rs",
+        "source/host/src/extensions/transcript/turn_runtime.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "state_owner": "Rust Host canonical Agent/session runtime",
+      "persistent_state": [
+        "existing app-private Agent/session stores where applicable"
+      ],
+      "protocol_wire_contract": [
+        "existing Host gateway and transcript contracts"
+      ],
+      "visible_effect": "Classify Agent runtime failures into stable summary/detail telemetry without leaking unbounded error text.",
+      "failure_behavior": [
+        "fail closed on owner/wiring failure",
+        "do not report success before canonical durable owner commits"
+      ],
+      "cancellation_behavior": "inherits durable Agent turn/lifecycle cancellation and account fencing",
+      "retry_semantics": "read-only operations may retry; side-effecting lifecycle/message operations require stable identity/reconciliation",
+      "idempotency_semantics": "stable Agent/request identities prevent duplicate durable effects",
+      "process_death_recovery": "durable owners recover committed state; incomplete mapped responsibilities require explicit reconciliation work",
+      "account_fencing": "current account/Agent epoch must fence stale callbacks and mutations",
+      "security_boundary": "UI remains projection-only; Host Rust owns durable Agent/session effects",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/agent_error_telemetry.rs",
+        "source/host/src/extensions/transcript/turn_runtime.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Android lifecycle/process model replaces Desktop app composition while preserving product responsibility.",
+      "implementation_status": "implemented",
+      "production_wiring": "AndroidJsonHost maps production Agent errors through the Rust classifier/projection before recording telemetry.",
+      "unit_test": "focused Rust coverage exists for implemented portions; mapped portions require additional tests",
+      "contract_test": "Desktop contract file is the authority; exact-head GitHub Actions required",
+      "integration_test": "required through production Host route",
+      "packaged_test": "required where user-visible",
+      "device_test": "required where user-visible",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Status intentionally reflects actual production wiring, not helper/file presence.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "AGENT-LIFECYCLE-GATEWAY-ANDROID-001",
+      "domain": "agent-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_lifecycle_contract.rs",
+          "blob_sha": "405cffce0d1d0364228b7eb17ed60fe8c5f7e6fc",
+          "symbols": []
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Own create/update/duplicate/delete Agent lifecycle transactions, cleanup ordering, active successor/fallback and transcript continuity.",
+      "source_owner": "Desktop Host Rust runtime",
+      "direct_callers": [
+        "shipping Host gateway/turn runtime"
+      ],
+      "downstream_dependencies": [
+        "source/host/src/extensions/transcript/agent_lifecycle.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/session/production.rs"
+      ],
+      "state_owner": "Rust Host canonical Agent/session runtime",
+      "persistent_state": [
+        "existing app-private Agent/session stores where applicable"
+      ],
+      "protocol_wire_contract": [
+        "existing Host gateway and transcript contracts"
+      ],
+      "visible_effect": "Own create/update/duplicate/delete Agent lifecycle transactions, cleanup ordering, active successor/fallback and transcript continuity.",
+      "failure_behavior": [
+        "fail closed on owner/wiring failure",
+        "do not report success before canonical durable owner commits"
+      ],
+      "cancellation_behavior": "inherits durable Agent turn/lifecycle cancellation and account fencing",
+      "retry_semantics": "read-only operations may retry; side-effecting lifecycle/message operations require stable identity/reconciliation",
+      "idempotency_semantics": "stable Agent/request identities prevent duplicate durable effects",
+      "process_death_recovery": "durable owners recover committed state; incomplete mapped responsibilities require explicit reconciliation work",
+      "account_fencing": "current account/Agent epoch must fence stale callbacks and mutations",
+      "security_boundary": "UI remains projection-only; Host Rust owns durable Agent/session effects",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/agent_lifecycle.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/extensions/session/production.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Android lifecycle/process model replaces Desktop app composition while preserving product responsibility.",
+      "implementation_status": "mapped",
+      "production_wiring": "Roster mutations and cleanup pieces exist, but the Desktop ProductionAgentLifecycle transaction owner is not yet fully wired.",
+      "unit_test": "focused Rust coverage exists for implemented portions; mapped portions require additional tests",
+      "contract_test": "Desktop contract file is the authority; exact-head GitHub Actions required",
+      "integration_test": "required through production Host route",
+      "packaged_test": "required where user-visible",
+      "device_test": "required where user-visible",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Status intentionally reflects actual production wiring, not helper/file presence.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "AGENT-LIFECYCLE-KICKSTART-ANDROID-001",
+      "domain": "agent-lifecycle",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_lifecycle_kickstart_production_contract.rs",
+          "blob_sha": "3bb75d53a91279a5b788410593c46051b7048bb1",
+          "symbols": []
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Run durable hidden onboarding/disk-saver kickstarts for newly created Agents with readiness, delivery, retry and resume semantics.",
+      "source_owner": "Desktop Host Rust runtime",
+      "direct_callers": [
+        "shipping Host gateway/turn runtime"
+      ],
+      "downstream_dependencies": [
+        "source/host/src/extensions/transcript/agent_lifecycle.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/production_turn_lifecycle.rs"
+      ],
+      "state_owner": "Rust Host canonical Agent/session runtime",
+      "persistent_state": [
+        "existing app-private Agent/session stores where applicable"
+      ],
+      "protocol_wire_contract": [
+        "existing Host gateway and transcript contracts"
+      ],
+      "visible_effect": "Run durable hidden onboarding/disk-saver kickstarts for newly created Agents with readiness, delivery, retry and resume semantics.",
+      "failure_behavior": [
+        "fail closed on owner/wiring failure",
+        "do not report success before canonical durable owner commits"
+      ],
+      "cancellation_behavior": "inherits durable Agent turn/lifecycle cancellation and account fencing",
+      "retry_semantics": "read-only operations may retry; side-effecting lifecycle/message operations require stable identity/reconciliation",
+      "idempotency_semantics": "stable Agent/request identities prevent duplicate durable effects",
+      "process_death_recovery": "durable owners recover committed state; incomplete mapped responsibilities require explicit reconciliation work",
+      "account_fencing": "current account/Agent epoch must fence stale callbacks and mutations",
+      "security_boundary": "UI remains projection-only; Host Rust owns durable Agent/session effects",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/transcript/agent_lifecycle.rs",
+        "source/host/src/android_json_runtime.rs",
+        "source/host/src/runner/production_turn_lifecycle.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Android lifecycle/process model replaces Desktop app composition while preserving product responsibility.",
+      "implementation_status": "mapped",
+      "production_wiring": "Prompt constants exist; CreatedAgentKickstartRuntimePort/run_created_agent_kickstart production composition is still missing.",
+      "unit_test": "focused Rust coverage exists for implemented portions; mapped portions require additional tests",
+      "contract_test": "Desktop contract file is the authority; exact-head GitHub Actions required",
+      "integration_test": "required through production Host route",
+      "packaged_test": "required where user-visible",
+      "device_test": "required where user-visible",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Status intentionally reflects actual production wiring, not helper/file presence.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "AGENT-TO-AGENT-MESSAGING-ANDROID-001",
+      "domain": "agent-messaging",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_messaging_contract.rs",
+          "blob_sha": "beb8e299a536a61224f1bd1dec664b7364a6d303",
+          "symbols": []
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Provide bounded asynchronous SendToAgent delivery, Agent/group directory context, priority wake semantics and durable duplicate/outcome fencing.",
+      "source_owner": "Desktop Host Rust runtime",
+      "direct_callers": [
+        "shipping Host gateway/turn runtime"
+      ],
+      "downstream_dependencies": [
+        "source/host/src/runner/agent_management.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "state_owner": "Rust Host canonical Agent/session runtime",
+      "persistent_state": [
+        "existing app-private Agent/session stores where applicable"
+      ],
+      "protocol_wire_contract": [
+        "existing Host gateway and transcript contracts"
+      ],
+      "visible_effect": "Provide bounded asynchronous SendToAgent delivery, Agent/group directory context, priority wake semantics and durable duplicate/outcome fencing.",
+      "failure_behavior": [
+        "fail closed on owner/wiring failure",
+        "do not report success before canonical durable owner commits"
+      ],
+      "cancellation_behavior": "inherits durable Agent turn/lifecycle cancellation and account fencing",
+      "retry_semantics": "read-only operations may retry; side-effecting lifecycle/message operations require stable identity/reconciliation",
+      "idempotency_semantics": "stable Agent/request identities prevent duplicate durable effects",
+      "process_death_recovery": "durable owners recover committed state; incomplete mapped responsibilities require explicit reconciliation work",
+      "account_fencing": "current account/Agent epoch must fence stale callbacks and mutations",
+      "security_boundary": "UI remains projection-only; Host Rust owns durable Agent/session effects",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/runner/agent_management.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Android lifecycle/process model replaces Desktop app composition while preserving product responsibility.",
+      "implementation_status": "mapped",
+      "production_wiring": "Android SendToAgent is production-wired with durable identity/wake delivery, but Desktop execution-admission persistence, file:// image materialization and explicit User-lane priority-preemption protection are not yet fully equivalent.",
+      "unit_test": "focused Rust coverage exists for implemented portions; mapped portions require additional tests",
+      "contract_test": "Desktop contract file is the authority; exact-head GitHub Actions required",
+      "integration_test": "required through production Host route",
+      "packaged_test": "required where user-visible",
+      "device_test": "required where user-visible",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Downgraded after auditing the deeper Desktop agent_to_agent_messaging_contract; shallow SendToAgent availability is not full delivery parity.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "AGENT-OPEN-PRODUCTION-ANDROID-001",
+      "domain": "agent-session",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_open_production_wiring_contract.rs",
+          "blob_sha": "3ab55bde63bca9270ff34bf443c3436b811c0dd4",
+          "symbols": []
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Use one canonical owner for active switch/tail/window Agent opens, viewed state and bounded transcript projections.",
+      "source_owner": "Desktop Host Rust runtime",
+      "direct_callers": [
+        "shipping Host gateway/turn runtime"
+      ],
+      "downstream_dependencies": [
+        "source/host/src/extensions/session/production.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "state_owner": "Rust Host canonical Agent/session runtime",
+      "persistent_state": [
+        "existing app-private Agent/session stores where applicable"
+      ],
+      "protocol_wire_contract": [
+        "existing Host gateway and transcript contracts"
+      ],
+      "visible_effect": "Use one canonical owner for active switch/tail/window Agent opens, viewed state and bounded transcript projections.",
+      "failure_behavior": [
+        "fail closed on owner/wiring failure",
+        "do not report success before canonical durable owner commits"
+      ],
+      "cancellation_behavior": "inherits durable Agent turn/lifecycle cancellation and account fencing",
+      "retry_semantics": "read-only operations may retry; side-effecting lifecycle/message operations require stable identity/reconciliation",
+      "idempotency_semantics": "stable Agent/request identities prevent duplicate durable effects",
+      "process_death_recovery": "durable owners recover committed state; incomplete mapped responsibilities require explicit reconciliation work",
+      "account_fencing": "current account/Agent epoch must fence stale callbacks and mutations",
+      "security_boundary": "UI remains projection-only; Host Rust owns durable Agent/session effects",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/session/production.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Android lifecycle/process model replaces Desktop app composition while preserving product responsibility.",
+      "implementation_status": "mapped",
+      "production_wiring": "DB page/window primitives exist, but one TranscriptManager-equivalent open owner is not yet wired through AndroidJsonHost.",
+      "unit_test": "focused Rust coverage exists for implemented portions; mapped portions require additional tests",
+      "contract_test": "Desktop contract file is the authority; exact-head GitHub Actions required",
+      "integration_test": "required through production Host route",
+      "packaged_test": "required where user-visible",
+      "device_test": "required where user-visible",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Status intentionally reflects actual production wiring, not helper/file presence.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "TELEMETRY-AGENT-OPEN-ANDROID-001",
+      "domain": "observability",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_open_telemetry_contract.rs",
+          "blob_sha": "e90a6e79010787abd920f02c90bf5d72cbd6d5a2",
+          "symbols": []
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Report sand.agent.open after successful Agent open with duration, entry_count and pre-operation was_active.",
+      "source_owner": "Desktop Host Rust runtime",
+      "direct_callers": [
+        "shipping Host gateway/turn runtime"
+      ],
+      "downstream_dependencies": [
+        "source/host/src/extensions/telemetry/agent_open_telemetry.rs",
+        "source/host/src/extensions/telemetry/host_telemetry_service.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "state_owner": "Rust Host canonical Agent/session runtime",
+      "persistent_state": [
+        "existing app-private Agent/session stores where applicable"
+      ],
+      "protocol_wire_contract": [
+        "existing Host gateway and transcript contracts"
+      ],
+      "visible_effect": "Report sand.agent.open after successful Agent open with duration, entry_count and pre-operation was_active.",
+      "failure_behavior": [
+        "fail closed on owner/wiring failure",
+        "do not report success before canonical durable owner commits"
+      ],
+      "cancellation_behavior": "inherits durable Agent turn/lifecycle cancellation and account fencing",
+      "retry_semantics": "read-only operations may retry; side-effecting lifecycle/message operations require stable identity/reconciliation",
+      "idempotency_semantics": "stable Agent/request identities prevent duplicate durable effects",
+      "process_death_recovery": "durable owners recover committed state; incomplete mapped responsibilities require explicit reconciliation work",
+      "account_fencing": "current account/Agent epoch must fence stale callbacks and mutations",
+      "security_boundary": "UI remains projection-only; Host Rust owns durable Agent/session effects",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/telemetry/agent_open_telemetry.rs",
+        "source/host/src/extensions/telemetry/host_telemetry_service.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Android lifecycle/process model replaces Desktop app composition while preserving product responsibility.",
+      "implementation_status": "mapped",
+      "production_wiring": "Mapper exists and is tested, but no production AndroidJsonHost report_agent_open call is wired after open.",
+      "unit_test": "focused Rust coverage exists for implemented portions; mapped portions require additional tests",
+      "contract_test": "Desktop contract file is the authority; exact-head GitHub Actions required",
+      "integration_test": "required through production Host route",
+      "packaged_test": "required where user-visible",
+      "device_test": "required where user-visible",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Status intentionally reflects actual production wiring, not helper/file presence.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "AGENT-PROFILE-FILE-ANDROID-001",
+      "domain": "agent-profile",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_profile_contract.rs",
+          "blob_sha": "a96d435cefddbc872ab0aea523c710e031ee51c5",
+          "symbols": []
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Persist normalized Agent profile fields atomically and read tolerant legacy avatar metadata without creating a second profile owner.",
+      "source_owner": "Desktop Host Rust runtime",
+      "direct_callers": [
+        "shipping Host gateway/turn runtime"
+      ],
+      "downstream_dependencies": [
+        "source/host/src/agents/agent_profile.rs",
+        "source/host/src/extensions/session/session_profile_files.rs"
+      ],
+      "state_owner": "Rust Host canonical Agent/session runtime",
+      "persistent_state": [
+        "existing app-private Agent/session stores where applicable"
+      ],
+      "protocol_wire_contract": [
+        "existing Host gateway and transcript contracts"
+      ],
+      "visible_effect": "Persist normalized Agent profile fields atomically and read tolerant legacy avatar metadata without creating a second profile owner.",
+      "failure_behavior": [
+        "fail closed on owner/wiring failure",
+        "do not report success before canonical durable owner commits"
+      ],
+      "cancellation_behavior": "inherits durable Agent turn/lifecycle cancellation and account fencing",
+      "retry_semantics": "read-only operations may retry; side-effecting lifecycle/message operations require stable identity/reconciliation",
+      "idempotency_semantics": "stable Agent/request identities prevent duplicate durable effects",
+      "process_death_recovery": "durable owners recover committed state; incomplete mapped responsibilities require explicit reconciliation work",
+      "account_fencing": "current account/Agent epoch must fence stale callbacks and mutations",
+      "security_boundary": "UI remains projection-only; Host Rust owns durable Agent/session effects",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/agents/agent_profile.rs",
+        "source/host/src/extensions/session/session_profile_files.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Android lifecycle/process model replaces Desktop app composition while preserving product responsibility.",
+      "implementation_status": "implemented",
+      "production_wiring": "Direct Rust port is used by session materialization/summaries and preserves atomic profile-file normalization.",
+      "unit_test": "focused Rust coverage exists for implemented portions; mapped portions require additional tests",
+      "contract_test": "Desktop contract file is the authority; exact-head GitHub Actions required",
+      "integration_test": "required through production Host route",
+      "packaged_test": "required where user-visible",
+      "device_test": "required where user-visible",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Status intentionally reflects actual production wiring, not helper/file presence.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
+    },
+    {
+      "responsibility_id": "AGENT-SESSION-FACADE-ANDROID-001",
+      "domain": "agent-session",
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/agent_session_contract.rs",
+          "blob_sha": "93e45c1a8a536726b1a52265cef98590e4012e92",
+          "symbols": []
+        }
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+      "responsibility": "Expose one session facade over Agent roster, active pointer, settings, transcript, interaction state, stores and pending approval cleanup.",
+      "source_owner": "Desktop Host Rust runtime",
+      "direct_callers": [
+        "shipping Host gateway/turn runtime"
+      ],
+      "downstream_dependencies": [
+        "source/host/src/extensions/session/production.rs",
+        "source/host/src/extensions/session/agent_db.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "state_owner": "Rust Host canonical Agent/session runtime",
+      "persistent_state": [
+        "existing app-private Agent/session stores where applicable"
+      ],
+      "protocol_wire_contract": [
+        "existing Host gateway and transcript contracts"
+      ],
+      "visible_effect": "Expose one session facade over Agent roster, active pointer, settings, transcript, interaction state, stores and pending approval cleanup.",
+      "failure_behavior": [
+        "fail closed on owner/wiring failure",
+        "do not report success before canonical durable owner commits"
+      ],
+      "cancellation_behavior": "inherits durable Agent turn/lifecycle cancellation and account fencing",
+      "retry_semantics": "read-only operations may retry; side-effecting lifecycle/message operations require stable identity/reconciliation",
+      "idempotency_semantics": "stable Agent/request identities prevent duplicate durable effects",
+      "process_death_recovery": "durable owners recover committed state; incomplete mapped responsibilities require explicit reconciliation work",
+      "account_fencing": "current account/Agent epoch must fence stale callbacks and mutations",
+      "security_boundary": "UI remains projection-only; Host Rust owns durable Agent/session effects",
+      "android_disposition": "android-adapted",
+      "android_target": [
+        "source/host/src/extensions/session/production.rs",
+        "source/host/src/extensions/session/agent_db.rs",
+        "source/host/src/android_agent_roster.rs",
+        "source/host/src/android_json_runtime.rs"
+      ],
+      "android_owner": "Rust Host",
+      "platform_delta": "Android lifecycle/process model replaces Desktop app composition while preserving product responsibility.",
+      "implementation_status": "mapped",
+      "production_wiring": "Many underlying Rust owners exist, but AndroidJsonHost still composes AndroidAgentRoster separately instead of a proven single SandAgentSessionStore-equivalent facade.",
+      "unit_test": "focused Rust coverage exists for implemented portions; mapped portions require additional tests",
+      "contract_test": "Desktop contract file is the authority; exact-head GitHub Actions required",
+      "integration_test": "required through production Host route",
+      "packaged_test": "required where user-visible",
+      "device_test": "required where user-visible",
+      "artifact": null,
+      "verification_status": "not-verified",
+      "notes": "Status intentionally reflects actual production wiring, not helper/file presence.",
+      "android_head_at_update": "e849ee590189ee775c92f56da9bb7c0514a7af63"
     }
   ],
   "traceability": {
