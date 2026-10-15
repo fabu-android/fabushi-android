@@ -3,6 +3,7 @@ use crate::box_store_hydration::{
     remove_hydration_handoff_marker, write_hydration_handoff_marker,
     BOX_STORE_HYDRATION_HANDOFF_FILE_NAME,
 };
+use crate::box_store_workspace_ignore::{load_workspace_ignore, WorkspaceIgnore};
 use crate::server::{
     RemoteBackendCancelOutcome, RemoteBackendReconcileOutcome, RemoteBackendStartOutcome,
     RemoteExecutionBackend, RemoteRequestIdentity,
@@ -335,7 +336,15 @@ impl RemoteBoxStoreBackend {
                 continue;
             }
             let mut captured = Vec::new();
-            collect_files(root, root, category, &mut captured, &mut total_bytes)?;
+            let workspace_ignore = (category == "workspace").then(|| load_workspace_ignore(root));
+            collect_files(
+                root,
+                root,
+                category,
+                &mut captured,
+                &mut total_bytes,
+                workspace_ignore.as_ref(),
+            )?;
             for mut entry in captured {
                 let source = root.join(rel_path_to_path(&entry.rel_path)?);
                 let bytes = read_bounded_file(&source)?;
@@ -645,6 +654,7 @@ fn collect_files(
     category: &str,
     output: &mut Vec<ManifestEntry>,
     total_bytes: &mut u64,
+    ignore: Option<&WorkspaceIgnore>,
 ) -> Result<(), ActionError> {
     let mut children = fs::read_dir(directory)
         .map_err(|error| ActionError::SafeReject(format!("read {}: {error}", directory.display())))?
@@ -657,22 +667,34 @@ fn collect_files(
                 "box-store snapshot exceeds entry limit".into(),
             ));
         }
-        let metadata = fs::symlink_metadata(child.path())
+        let path = child.path();
+        let metadata = fs::symlink_metadata(&path)
             .map_err(|error| ActionError::SafeReject(format!("stat snapshot path: {error}")))?;
         if metadata.file_type().is_symlink() {
             continue;
         }
+        let relative = path
+            .strip_prefix(root)
+            .map_err(|_| ActionError::SafeReject("snapshot path escaped category root".into()))?
+            .to_path_buf();
+        let rel_path = path_to_rel_string(&relative)?;
         if metadata.is_dir() {
-            collect_files(root, &child.path(), category, output, total_bytes)?;
+            if ignore.is_some_and(|rules| rules.can_prune_dir(&rel_path)) {
+                continue;
+            }
+            collect_files(root, &path, category, output, total_bytes, ignore)?;
             continue;
         }
         if !metadata.is_file() {
             continue;
         }
+        if ignore.is_some_and(|rules| rules.ignores(&rel_path)) {
+            continue;
+        }
         if metadata.len() > MAX_FILE_BYTES {
             return Err(ActionError::SafeReject(format!(
                 "box-store file exceeds per-file limit: {}",
-                child.path().display()
+                path.display()
             )));
         }
         *total_bytes = total_bytes.saturating_add(metadata.len());
@@ -681,13 +703,7 @@ fn collect_files(
                 "box-store snapshot exceeds total byte limit".into(),
             ));
         }
-        let relative = child
-            .path()
-            .strip_prefix(root)
-            .map_err(|_| ActionError::SafeReject("snapshot path escaped category root".into()))?
-            .to_path_buf();
-        let rel_path = path_to_rel_string(&relative)?;
-        let bytes = read_bounded_file(&child.path())?;
+        let bytes = read_bounded_file(&path)?;
         output.push(ManifestEntry {
             category: category.to_string(),
             rel_path,
