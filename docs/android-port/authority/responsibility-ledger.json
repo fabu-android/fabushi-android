@@ -1352,11 +1352,13 @@
         },
         {
           "path": "source/host/src/runner/tools/sand_browser_tools.rs",
-          "blob_sha": "ae6c6b8e802bf7ff4855f0625fa2d06541c40df6",
+          "blob_sha": "792d30fd9db1e7c97f98386ca3f1531d91c63f58",
           "symbols": [
             "BrowserToolExecutor",
             "ProductionBrowserToolExecutor",
-            "SandBrowserToolBridge"
+            "SandBrowserToolBridge",
+            "browser_tool_specs",
+            "expectedGeneration"
           ]
         },
         {
@@ -1459,9 +1461,19 @@
             "snapshot generation fence",
             "lease-fenced execution"
           ]
+        },
+        {
+          "path": "source/host/src/runner/tools/sand_browser_driver_source.rs",
+          "blob_sha": "1f8c795800334415b63c06669373aa66470fa074",
+          "symbols": [
+            "SAND_BROWSER_DRIVER_SOURCE",
+            "GENERATION_FENCED_OPS",
+            "requireExpectedGeneration",
+            "freshViewGeneration"
+          ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Own remote device identity, pairing/revoke, command lifecycle, reconnect, human takeover and side-effect reconciliation.",
       "source_owner": "Mahayana platform/remote runtime",
       "direct_callers": [
@@ -1519,7 +1531,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps."
+      "notes": "Implementation is recorded as implemented only after Desktop main 92fcc2b0 protocol merge, Android native data-plane review, and Android client create-outcome reconciliation wiring. Verification remains not-verified until descendant exact-head compile/unit/package/device evidence succeeds. Release signing, protected account and Authorized Remote Runner enrollment remain separate hard blockers. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d delta audit at Android 70cef594d202971c2ff3b960ab0e542952cc0751: newly changed/added source anchors were attached conservatively; mapping does not claim equivalent production implementation or verification. Local staged upload has shipping code pending exact-head CI; network-worker/enrollment/sensitive-input/native-target deltas remain partial gaps. Desktop 2026-10-15 rebaseline re-audited browser tools/driver at blobs 792d30fd9db1e7c97f98386ca3f1531d91c63f58 and 1f8c795800334415b63c06669373aa66470fa074: refresh/back/forward are generation-fenced; Android Remote Runner parity and real G11 acceptance remain open."
     },
     {
       "responsibility_id": "COMMERCE-LIFECYCLE-001",
@@ -6012,9 +6024,18 @@
             "encode_send_message_wire",
             "encode_text_content"
           ]
+        },
+        {
+          "path": "source/host/src/runner/agent_v1_wire.rs",
+          "blob_sha": "69819604644fd76c3b0ff9222a104b0b08019e56",
+          "symbols": [
+            "AgentToolCall",
+            "SendMessageToolCall",
+            "SendMessageResult"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Expose root-Agent SendMessage as a user-visible mid-turn side effect with strict per-type validation, durable transcript idempotency, awaiting-user widget fencing, account/cancellation fencing and explicit outcome-unknown semantics. Android currently closes text, attachment and widget; cursor-agent and secret-request remain open.",
       "source_owner": "Desktop Rust SendMessageToolBridge over the canonical visible-message sink",
       "direct_callers": [
@@ -6197,9 +6218,28 @@
             "sand_error_detail",
             "NoopSandTelemetry"
           ]
+        },
+        {
+          "path": "source/host/src/runner/sand_action_audit.rs",
+          "blob_sha": "ad4986cc8f6cfdf93029730503d31f6fb03241c2",
+          "symbols": [
+            "ActionAuditRecord",
+            "ActionAuditSink",
+            "AuditedRoutedToolBridge",
+            "normalize_navigation_url"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/bot_block_detection.rs",
+          "blob_sha": "05a566eff8b87b7f69be39a3eded8ae6d914af07",
+          "symbols": [
+            "BOT_BLOCK_SIGNATURES",
+            "classify_bot_block_page",
+            "BotBlockDetectionSink"
+          ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
       "responsibility": "Preserve one Host-owned structured logging/telemetry boundary for runtime, turn, automation, Box, MCP, WebAuthn, recovery and diagnostic events; require real production producers, bounded/redacted fields, terminal settlement and exact-head evidence instead of treating mapper existence as parity.",
       "source_owner": "Desktop HostStructuredLogTelemetry / SandStructuredLogTelemetry production facade",
       "direct_callers": [
@@ -19903,6 +19943,15 @@
             "ForwardedUpdate",
             "ForwardingOutcome",
             "forward_agent_update"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/agent_v1_wire.rs",
+          "blob_sha": "69819604644fd76c3b0ff9222a104b0b08019e56",
+          "symbols": [
+            "AgentToolCall",
+            "CommunicateUpdateToolCall",
+            "CommunicateUpdateResult"
           ]
         }
       ],
