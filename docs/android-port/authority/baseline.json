@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "observed_date": "2026-10-11",
+  "observed_date": "2026-10-15",
   "desktop_repository": "bhrumom/fabushi-desktop",
   "desktop_branch": "main",
-  "desktop_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
-  "desktop_root_tree": "3116c54a1e36da95189c740bdc789ad543ce2d20",
+  "desktop_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+  "desktop_root_tree": "ca4777b5e3b03395da5e8f28aa2d3cfe5169113a",
   "android_repository": "fabu-android/fabushi-android",
   "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
   "android_pr": 3,
