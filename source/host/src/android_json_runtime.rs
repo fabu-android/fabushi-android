@@ -167,8 +167,9 @@ use crate::extensions::webauthn_proxy::{
 };
 use crate::runner::{
     append_android_agent_profile_system_instructions,
+    append_android_remote_runtime_system_instructions,
     append_android_team_rules_system_instructions, build_android_root_system_instructions,
-    AndroidHostInferenceProvider, AndroidInferenceMode,
+    AndroidHostInferenceProvider, AndroidInferenceMode, AndroidRemotePromptState,
     AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
@@ -2560,6 +2561,32 @@ impl AndroidJsonHost {
                     "error":format!("{error:?}"),
                 }))
             }
+        }
+    }
+
+    fn remote_prompt_state(&self) -> AndroidRemotePromptState {
+        let status = self.remote_binding_status();
+        AndroidRemotePromptState {
+            ready: status
+                .get("ready")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            paused: status
+                .get("paused")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            has_desktop: status
+                .get("hasDesktop")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            executors: status
+                .get("executors")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect(),
         }
     }
 
@@ -12040,6 +12067,11 @@ impl AndroidJsonHost {
                 &team_rules,
             );
         }
+        let remote_prompt_state = self.remote_prompt_state();
+        append_android_remote_runtime_system_instructions(
+            &mut system_instructions,
+            &remote_prompt_state,
+        );
         if let Some(existing) = self
             .turn_journal
             .lock()

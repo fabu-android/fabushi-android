@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use serde_json::Value;
 
 /// Android-adapted root Agent instructions.
@@ -118,6 +120,57 @@ pub fn append_android_agent_profile_system_instructions(
     instructions.push_str(&lines.join("\n"));
 }
 
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AndroidRemotePromptState {
+    pub ready: bool,
+    pub paused: bool,
+    pub has_desktop: bool,
+    pub executors: Vec<String>,
+}
+
+pub fn append_android_remote_runtime_system_instructions(
+    instructions: &mut String,
+    state: &AndroidRemotePromptState,
+) {
+    let executors = state
+        .executors
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+
+    let section = if state.paused {
+        "## Remote computer\nThe authorized Remote Runner is currently paused for this account. Do not claim to read, control, or mutate the user's other computer, and do not substitute local Android actions for unavailable remote access. Wait until the canonical runtime resumes the binding before attempting a remote action.".to_string()
+    } else if !state.ready {
+        "## Remote computer\nNo authorized Remote Runner is ready for the current account and turn. Do not claim to read, control, or mutate the user's other computer, and do not route around this boundary with local Android APIs or unsanctioned network access.".to_string()
+    } else {
+        let executor_summary = if executors.is_empty() {
+            "The binding currently grants no executor capabilities.".to_string()
+        } else {
+            format!(
+                "Authorized executor capabilities reported by the binding: {}.",
+                executors.join(", ")
+            )
+        };
+        let desktop_summary = if state.has_desktop {
+            "The binding reports desktop-capable remote resources."
+        } else {
+            "The binding does not report desktop-capable remote resources."
+        };
+        format!(
+            "## Remote computer\nAn authorized Remote Runner is ready for the current account and turn. {desktop_summary} {executor_summary} This is informational context only: the routed tool graph, Capability Broker, current account/device/epoch fence, approval state, and executor-specific validation remain the execution authority. Never infer a capability from this prompt when the corresponding tool is not exposed."
+        )
+    };
+
+    if !instructions.trim().is_empty() {
+        instructions.push_str("\n\n");
+    }
+    instructions.push_str(&section);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -167,6 +220,49 @@ mod tests {
         assert!(prompt.contains("Never mutate production without approval."));
         assert!(prompt.contains("### team rule\nUse least privilege."));
         assert!(!prompt.contains("### empty"));
+    }
+
+    #[test]
+    fn remote_runner_prompt_is_fail_closed_and_never_grants_capability() {
+        let mut unavailable = build_android_root_system_instructions("", None);
+        append_android_remote_runtime_system_instructions(
+            &mut unavailable,
+            &AndroidRemotePromptState {
+                ready: false,
+                paused: false,
+                has_desktop: false,
+                executors: vec!["computer".into()],
+            },
+        );
+        assert!(unavailable.contains("No authorized Remote Runner is ready"));
+        assert!(!unavailable.contains("Authorized executor capabilities reported"));
+
+        let mut paused = build_android_root_system_instructions("", None);
+        append_android_remote_runtime_system_instructions(
+            &mut paused,
+            &AndroidRemotePromptState {
+                ready: false,
+                paused: true,
+                has_desktop: false,
+                executors: Vec::new(),
+            },
+        );
+        assert!(paused.contains("Remote Runner is currently paused"));
+
+        let mut ready = build_android_root_system_instructions("", None);
+        append_android_remote_runtime_system_instructions(
+            &mut ready,
+            &AndroidRemotePromptState {
+                ready: true,
+                paused: false,
+                has_desktop: true,
+                executors: vec!["external-shell".into(), "computer".into(), "computer".into()],
+            },
+        );
+        assert!(ready.contains("desktop-capable remote resources"));
+        assert!(ready.contains("computer, external-shell"));
+        assert!(ready.contains("informational context only"));
+        assert!(ready.contains("tool is not exposed"));
     }
 
     #[test]
