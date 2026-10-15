@@ -76,6 +76,7 @@ pub struct AndroidHostInferenceProvider {
     tool_call_observation_sink: Option<Arc<dyn AndroidToolCallObservationSink>>,
     request_timeout: Option<Duration>,
     turn_tool_session_reminders_enabled: bool,
+    silence_allowed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -104,6 +105,7 @@ impl AndroidHostInferenceProvider {
             tool_call_observation_sink: None,
             request_timeout: None,
             turn_tool_session_reminders_enabled: false,
+            silence_allowed: false,
         }
     }
 
@@ -124,6 +126,7 @@ impl AndroidHostInferenceProvider {
             tool_call_observation_sink: None,
             request_timeout: None,
             turn_tool_session_reminders_enabled: false,
+            silence_allowed: false,
         })
     }
 
@@ -323,6 +326,7 @@ impl AndroidHostInferenceProvider {
             tool_call_observation_sink: None,
             request_timeout: None,
             turn_tool_session_reminders_enabled: false,
+            silence_allowed: false,
         }
     }
 
@@ -341,6 +345,11 @@ impl AndroidHostInferenceProvider {
 
     pub fn with_turn_tool_session_reminders(mut self, enabled: bool) -> Self {
         self.turn_tool_session_reminders_enabled = enabled;
+        self
+    }
+
+    pub fn with_silence_allowed(mut self, allowed: bool) -> Self {
+        self.silence_allowed = allowed;
         self
     }
 
@@ -425,8 +434,8 @@ impl AndroidHostInferenceProvider {
         // itself as progress before invoking the bridge. This keeps StreamAttemptHost from blindly
         // replaying the whole Responses turn when a later provider/tool/network leg fails.
         let mut routed_tool_dispatch_started = false;
-        let mut turn_tool_session_reminders = self
-            .turn_tool_session_reminders_enabled
+        let mut turn_tool_session_reminders = (self.turn_tool_session_reminders_enabled
+            && !self.silence_allowed)
             .then(TurnToolSessionReminderState::default);
 
         for _tool_step in 0..SAND_AGENT_MAX_STEPS {
