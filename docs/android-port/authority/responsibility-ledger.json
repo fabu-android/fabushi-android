@@ -17101,7 +17101,7 @@
       "android_owner": "Future Rust Host auto-review service layered above Capability Broker; UI only projects waiting/result state",
       "platform_delta": "No Android-specific reason to move the classifier/security state into Kotlin; only presentation and lifecycle adapters differ. Manual approval remains the fail-closed fallback until this Host service is real.",
       "implementation_status": "mapped",
-      "production_wiring": "Missing. Android currently has manual approval/Capability Broker plus Dashboard backend primitives, but no auto-review service, awaiting bridge, stale-settled fencing or classifier lifecycle.",
+      "production_wiring": "Partial source only. Android has sand_auto_review controller plus classifier/automation/cloud/computer/subagent modules, AutoReviewService, awaiting bridge and stale-card sweep primitives. However current exact-branch production reachability audit found AndroidJsonHost does not construct/retain AutoReviewService and there is no shipping AutoReviewService::bind_runner call; android_json_runtime.rs only resolves configured modes. Manual Capability Broker remains the actual shipping approval boundary.",
       "unit_test": "required for settled-memory cap, stale race, cancellation/completion race, expiry sweep and mode parsing",
       "contract_test": "required for classifier wire/auth/privacy semantics and no implicit grant on classifier failure",
       "integration_test": "required with real approval flow and Capability Broker consumption",
@@ -17109,7 +17109,7 @@
       "device_test": "required for smart/manual approval behavior, account switch and process-death recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep fail-closed: absence/failure of auto-review must never turn into automatic approval.",
+      "notes": "Keep fail-closed: absence/failure of auto-review must never turn into automatic approval. 3cf4a3d7fc2e9c770e88e001dafe37293a0f9b2f re-audit corrected the stale blanket 'no auto-review source' claim: controller/classifier/service source exists, but production composition is still missing. Six newly reviewed source rows remain mapped, not implemented.",
       "desktop_sources": [
         {
           "path": "source/host/src/runner/auto_review_gate.rs",
@@ -17118,6 +17118,48 @@
             "AutoReviewGate",
             "AutoReviewGateDependencies",
             "ShellApprovalSurface"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/sand_auto_review.rs",
+          "blob_sha": "b1d3ecf702e1bca6c92dbfa4876ef9e187d8d56a",
+          "symbols": [
+            "Sand Auto Review controller/classifier/tool-family decision responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/sand_auto_review_classifier_run.rs",
+          "blob_sha": "51df23ec6dfb4f4a08cc0345d320aa070055be68",
+          "symbols": [
+            "Sand Auto Review controller/classifier/tool-family decision responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/sand_automation_auto_review.rs",
+          "blob_sha": "6b33465519565a59fe9996e058e5c875f3309030",
+          "symbols": [
+            "Sand Auto Review controller/classifier/tool-family decision responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/sand_cloud_agent_auto_review.rs",
+          "blob_sha": "6a6186d74c2bdcb4cef125f1d1d0b2751380523c",
+          "symbols": [
+            "Sand Auto Review controller/classifier/tool-family decision responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/sand_computer_auto_review.rs",
+          "blob_sha": "2dba5a4aa62e36f9d597b49ab2d048f793f791fd",
+          "symbols": [
+            "Sand Auto Review controller/classifier/tool-family decision responsibility"
+          ]
+        },
+        {
+          "path": "source/host/src/runner/sand_subagent_auto_review.rs",
+          "blob_sha": "d7a4221a18c0a9f88f664bd54cac7987561d9c48",
+          "symbols": [
+            "Sand Auto Review controller/classifier/tool-family decision responsibility"
           ]
         }
       ]
