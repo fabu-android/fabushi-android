@@ -130,7 +130,7 @@ pub fn build_notification_content(transition: &NotificationTransition) -> (Strin
             (
                 name.to_string(),
                 if preview.is_empty() {
-                    "Open Grok Bot to see what it did.".into()
+                    "Open Fabushi to see what it did.".into()
                 } else {
                     truncate_body(preview)
                 },
