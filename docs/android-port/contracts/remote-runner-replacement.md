@@ -1,6 +1,6 @@
 # Android Remote Runner replacement contract
 
-Authority lock: \`bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61\`.
+Authority lock: `bhrumom/fabushi-desktop@12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`); historical `3bc924...` is predecessor provenance only.
 
 ## Disposition
 
