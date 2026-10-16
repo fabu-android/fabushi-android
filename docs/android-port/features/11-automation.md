@@ -1,5 +1,9 @@
 # 11 — 工作流、自动化、记忆与多 Agent 编排
 
+## Current authority
+
+bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+
 ## 完整责任，而不是定时器 Demo
 
 迁移工作流定义、触发条件、步骤依赖、模型/工具执行、权限审批、人工参与、状态持久化、重试、取消、恢复、日志和结果入口；同时核对 Desktop 真实存在的记忆与多 Agent 协作责任。只有一个“定时发送消息”按钮不能代表完整自动化 parity。
