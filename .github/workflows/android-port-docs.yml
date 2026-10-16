@@ -15,6 +15,7 @@ on:
   workflow_dispatch:
 permissions:
   contents: write
+  actions: write
 concurrency:
   group: android-port-docs-${{ github.ref_name }}
   cancel-in-progress: true
@@ -103,6 +104,10 @@ jobs:
           fi
           git commit -m "chore(android): persist exact Desktop main authority evidence"
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
+          NEW_HEAD="$(git rev-parse HEAD)"
+          echo "Persisted authority at exact Android HEAD ${NEW_HEAD}"
+          gh workflow run grok-android-architecture.yml --ref "${GITHUB_REF_NAME}"
+          gh workflow run android-parity-full-ci.yml --ref "${GITHUB_REF_NAME}"
       - name: Package documentation and source evidence
         if: always()
         run: python3 scripts/android-port-docs.py bundle
