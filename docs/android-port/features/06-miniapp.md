@@ -52,10 +52,10 @@ Bootstrap 使用 `type = mahayana/bridge-init`、`bridgeVersion = 2.0`、`plugin
 
 ## 参考
 
-[Desktop bridge](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/frontend/packages/mcp-app-sdk/src/bridge.ts)；[Desktop WebMCP](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/mcp-app-sdk/src/webmcp.ts)；[Android WebView native bridge 风险](https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges)。
+[Desktop bridge](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/frontend/packages/mcp-app-sdk/src/bridge.ts)；[Desktop WebMCP](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/frontend/packages/mcp-app-sdk/src/webmcp.ts)；[Android WebView native bridge 风险](https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges)。
 
 ## 状态、追溯与使用规则
 
 本文件原写于 2026-10-09，现作为 Android 仓库中的实施规范；不代表代码已实现或产品测试通过。本文中的新模块、内部模型、状态名称和错误类别是 Android 设计要求，除明确引用的 Desktop 符号外不冒充真实 wire API。开发者须绑定到 Desktop 固定 SHA 的真实符号、调用者、测试和 Android shipping 路由；构建和验收仅在 GitHub Actions 执行。
 
-统一源锁：`bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61`。源码清单已登记 8,172 个文件条目，不代表人工逐文件验收。
+统一源锁：`bhrumom/fabushi-desktop@12a4e29819592e3a7e32f7435cb0cf2e3cc53848`。源码清单已登记 8,258 个文件条目，不代表人工逐文件验收。
