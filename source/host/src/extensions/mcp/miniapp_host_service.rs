@@ -754,6 +754,8 @@ impl MiniAppHostService {
                 })
             })
             .collect::<Vec<_>>();
+        let package_digest = package.digest().to_string();
+        let entrypoint = package.entrypoint().to_string();
         self.leases.insert(
             load_id.clone(),
             HostMiniAppInstanceLease {
@@ -766,8 +768,8 @@ impl MiniAppHostService {
             "loadId": load_id,
             "appId": app_id,
             "version": proof.authorization.version,
-            "packageDigest": package.digest(),
-            "entrypoint": package.entrypoint(),
+            "packageDigest": package_digest,
+            "entrypoint": entrypoint,
             "resources": resources,
             "generation": scope.generation,
             "operationId": operation_id
