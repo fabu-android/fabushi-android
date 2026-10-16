@@ -74,6 +74,7 @@ jobs:
             'tracked_non_tree_entries':m.get('tracked_non_tree_entries'),
             'android_pr_head_sha':m.get('android_pr_head_sha'),
             'android_tested_checkout_sha':m.get('android_tested_checkout_sha'),
+            'workflow_sha':m.get('workflow_sha'),
             'expected_android_head':expected,
             'ledger_sha256':m.get('ledger_sha256')
           }, sort_keys=True))
@@ -83,6 +84,7 @@ jobs:
           assert m['tree_entries']==9412
           assert m['android_pr_head_sha']==expected
           assert m['android_tested_checkout_sha']==expected
+          assert m['workflow_sha']==expected
           r=json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
           assert len(r.get('responsibilities',[]))==306
           PY

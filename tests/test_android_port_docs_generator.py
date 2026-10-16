@@ -106,6 +106,160 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertTrue(module._is_semantic_source_anchor(explicit["responsibility_id"], explicit))
         self.assertTrue(module._is_semantic_source_anchor(authored["responsibility_id"], authored))
 
+
+    def test_exact_head_provenance_requires_manifest_ledger_and_responsibility_agreement(self):
+        module = load_generator()
+        android_head = "a" * 40
+        source_path = "source/host/src/lib.rs"
+        source_blob = "1" * 40
+        row = {
+            "source_path": source_path,
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "source_blob_sha": source_blob,
+            "source_type": "blob",
+            "source_mode": "100644",
+            "evidence": [{
+                "source_path": source_path,
+                "source_blob_sha": source_blob,
+                "desktop_commit": CURRENT_DESKTOP_COMMIT,
+                "desktop_root_tree": CURRENT_DESKTOP_TREE,
+                "android_head": android_head,
+                "workflow_run_id": 456,
+            }],
+        }
+        manifest = {
+            "desktop_commit": CURRENT_DESKTOP_COMMIT,
+            "desktop_root_tree": CURRENT_DESKTOP_TREE,
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
+            "workflow_run_id": 456,
+        }
+        responsibilities = [{
+            "responsibility_id": "RESP-001",
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "android_head_at_update": android_head,
+            "desktop_sources": [{
+                "path": source_path,
+                "blob_sha": source_blob,
+                "source_mode": "100644",
+                "source_type": "blob",
+            }],
+        }]
+        responsibilities.extend({
+            "responsibility_id": f"RESP-{index:03d}",
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "android_head_at_update": android_head,
+            "desktop_sources": [],
+        } for index in range(2, 307))
+        responsibility_doc = {
+            "authority": {
+                "desktop_commit": CURRENT_DESKTOP_COMMIT,
+                "desktop_root_tree": CURRENT_DESKTOP_TREE,
+            },
+            "responsibilities": responsibilities,
+        }
+        module.validate_exact_head_provenance(manifest, [row], responsibility_doc, android_head)
+
+        for field in ("android_pr_head_sha", "android_tested_checkout_sha", "workflow_sha"):
+            stale_manifest = dict(manifest)
+            stale_manifest[field] = "b" * 40
+            with self.assertRaisesRegex(ValueError, field):
+                module.validate_exact_head_provenance(stale_manifest, [row], responsibility_doc, android_head)
+
+        stale_rows = json.loads(json.dumps([row]))
+        stale_rows[0]["evidence"][0]["android_head"] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "source evidence has stale Android head"):
+            module.validate_exact_head_provenance(manifest, stale_rows, responsibility_doc, android_head)
+
+        stale_responsibilities = json.loads(json.dumps(responsibility_doc))
+        stale_responsibilities["responsibilities"][0]["android_head_at_update"] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "responsibility has stale Android head"):
+            module.validate_exact_head_provenance(manifest, [row], stale_responsibilities, android_head)
+
+    def test_non_target_consumer_labels_are_filtered_without_verification_promotion(self):
+        module = load_generator()
+        with tempfile.TemporaryDirectory() as temp:
+            module.OUT = Path(temp)
+            android_head = "a" * 40
+            source_path = "source/host/src/lib.rs"
+            source_blob = "1" * 40
+            real_target = "source/host/src/lib.rs"
+            invalid_targets = [
+                "source/android-host-jni typed Host dispatch path",
+                "frontend MessagingViewModel JSON projection consumer",
+            ]
+            predecessor = {
+                "authority": {
+                    "desktop_commit": CURRENT_DESKTOP_COMMIT,
+                    "desktop_root_tree": CURRENT_DESKTOP_TREE,
+                },
+                "responsibilities": padded_responsibilities({
+                    "responsibility_id": "RESP-001",
+                    "source_owner": "canonical Rust Host owner",
+                    "android_owner": "Android Host dispatch",
+                    "android_target": [real_target] + invalid_targets,
+                    "desktop_sources": [{
+                        "path": source_path,
+                        "blob_sha": source_blob,
+                        "symbols": ["Host::dispatch"],
+                        "source_mode": "100644",
+                        "source_type": "blob",
+                    }],
+                }),
+            }
+            provenance = {
+                "android_repository": "fabu-android/fabushi-android",
+                "android_pr": 3,
+                "android_pr_head_sha": android_head,
+                "android_pr_head_ref": "spec/grok-bot-018-android-parity-20260922",
+                "android_pr_base_sha": "b" * 40,
+                "android_pr_base_ref": "main",
+                "android_checkout_sha": android_head,
+                "workflow_event": "push",
+                "workflow_run_id": 456,
+                "run_attempt": 1,
+                "workflow_sha": android_head,
+                "workflow_ref": "ref",
+                "run_url": "https://example.invalid/run/456",
+                "generated_at_utc": "2026-10-17T00:00:00Z",
+            }
+            rows = [{
+                "source_path": source_path,
+                "source_commit": CURRENT_DESKTOP_COMMIT,
+                "source_blob_sha": source_blob,
+                "source_type": "blob",
+                "source_mode": "100644",
+                "disposition": "direct-port",
+                "implementation_status": "unreviewed",
+                "evidence": [],
+            }]
+            inventory = {
+                source_path: {
+                    "path": source_path,
+                    "sha": source_blob,
+                    "type": "blob",
+                    "mode": "100644",
+                }
+            }
+            with patch.object(
+                module, "load_predecessor_responsibility_mapping",
+                return_value=(predecessor, {}, "current-responsibility-ledger+validated-local-coverage",
+                              {"artifact_id": None, "artifact_digest": None,
+                               "source_manifest_run_id": 456, "source_manifest_android_head": android_head}),
+            ), patch.object(module, "current_android_provenance", return_value=provenance):
+                result = module.merge_responsibility_mapping(
+                    Path("responsibility-ledger.json"), rows, inventory,
+                    CURRENT_DESKTOP_COMMIT, CURRENT_DESKTOP_TREE,
+                )
+
+            self.assertEqual(result["responsibilities"][0]["android_target"], [real_target])
+            self.assertEqual(rows[0]["android_targets"], [real_target])
+            self.assertEqual(rows[0]["implementation_status"], "unreviewed")
+            self.assertEqual(rows[0]["evidence"][0]["status"], "provenance-only")
+            self.assertEqual(rows[0]["evidence"][0]["verification_status"], "not-verified")
+            self.assertEqual(result["responsibilities"][0]["verification_status"], "not-verified")
+
     def test_merge_preserves_unmapped_rows_without_fabricating_closure(self):
         module = load_generator()
         with tempfile.TemporaryDirectory() as temp:

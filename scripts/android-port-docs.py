@@ -35,6 +35,10 @@ ALLOWED_SOURCE_DISPOSITIONS = frozenset({
     'not-applicable-with-replacement',
     'mixed',
 })
+INVALID_ANDROID_TARGET_LABELS = frozenset({
+    'source/android-host-jni typed host dispatch path',
+    'frontend messagingviewmodel json projection consumer',
+})
 LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'RUST-ANDROID-RUNTIME-GATE-001',
     'AUTHORITY-CANONICAL-MIGRATION-SOURCE-001',
@@ -65,6 +69,9 @@ def current_android_provenance() -> dict:
     require(SHA.fullmatch(head or '') is not None, 'Invalid Android PR head SHA')
     checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     require(checkout == head, f'Android checkout/head mismatch: checkout={checkout} head={head}')
+    workflow_sha = os.environ.get('GITHUB_WORKFLOW_SHA') or None
+    require(workflow_sha == checkout,
+            f'Android workflow SHA/checkout mismatch: workflow={workflow_sha} checkout={checkout}')
     run_id = os.environ.get('GITHUB_RUN_ID')
     run_attempt = os.environ.get('GITHUB_RUN_ATTEMPT')
     repository = os.environ.get('GITHUB_REPOSITORY', 'fabu-android/fabushi-android')
@@ -86,7 +93,7 @@ def current_android_provenance() -> dict:
         'workflow_event': os.environ.get('GITHUB_EVENT_NAME'),
         'workflow_run_id': int(run_id) if run_id else None,
         'run_attempt': int(run_attempt) if run_attempt else None,
-        'workflow_sha': os.environ.get('GITHUB_WORKFLOW_SHA') or None,
+        'workflow_sha': workflow_sha,
         'workflow_ref': os.environ.get('GITHUB_WORKFLOW_REF') or None,
         'run_url': (
             f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
@@ -173,6 +180,20 @@ def serialize_source_inventory_ledger(rows: list[dict]) -> str:
     require(len(paths) == len(set(paths)), 'duplicate path in source inventory serialization')
     require(paths == sorted(paths), 'source inventory rows must use canonical sorted path order')
     return ''.join(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n' for row in rows)
+
+def _real_android_targets(targets: object) -> list[str]:
+    """Keep concrete Android owner targets; drop legacy consumer labels that are not targets."""
+    if not isinstance(targets, list):
+        return []
+    cleaned = set()
+    for target in targets:
+        if not isinstance(target, str):
+            continue
+        normalized = re.sub(r'\s+', ' ', target).strip()
+        if not normalized or normalized.casefold() in INVALID_ANDROID_TARGET_LABELS:
+            continue
+        cleaned.add(normalized)
+    return sorted(cleaned)
 
 
 def _source_mapping_quality(responsibility_id: str, source: dict) -> str:
@@ -365,6 +386,78 @@ def _parse_persisted_source_inventory(
     return source_rows
 
 
+def validate_exact_head_provenance(
+    manifest: dict,
+    ledger_rows: list[dict],
+    responsibility_doc: dict,
+    expected_android_checkout_sha: str,
+) -> None:
+    """Validate persisted provenance without upgrading mapping or implementation status."""
+    require(SHA.fullmatch(expected_android_checkout_sha or '') is not None,
+            'invalid expected Android checkout SHA')
+    for field in ('android_pr_head_sha', 'android_tested_checkout_sha', 'workflow_sha'):
+        require(manifest.get(field) == expected_android_checkout_sha,
+                f'exact-head manifest mismatch for {field}: expected {expected_android_checkout_sha}')
+    desktop_commit = manifest.get('desktop_commit')
+    desktop_tree = manifest.get('desktop_root_tree')
+    run_id = manifest.get('workflow_run_id')
+    require(SHA.fullmatch(str(desktop_commit or '')) is not None,
+            'exact-head manifest has invalid Desktop commit')
+    require(SHA.fullmatch(str(desktop_tree or '')) is not None,
+            'exact-head manifest has invalid Desktop tree')
+    require(isinstance(run_id, int) and run_id > 0,
+            'exact-head manifest has invalid workflow run id')
+
+    authority = responsibility_doc.get('authority') or {}
+    require(authority.get('desktop_commit') == desktop_commit,
+            'exact-head responsibility ledger Desktop commit mismatch')
+    require(authority.get('desktop_root_tree') == desktop_tree,
+            'exact-head responsibility ledger Desktop tree mismatch')
+    responsibilities = responsibility_doc.get('responsibilities')
+    require(isinstance(responsibilities, list) and len(responsibilities) == EXPECTED_RESPONSIBILITY_COUNT,
+            f'exact-head responsibility ledger must retain {EXPECTED_RESPONSIBILITY_COUNT} definitions')
+
+    rows_by_path = {}
+    for row in ledger_rows:
+        path = row.get('source_path')
+        require(isinstance(path, str) and path and path not in rows_by_path,
+                'exact-head source ledger contains a missing or duplicate path')
+        require(row.get('source_commit') == desktop_commit,
+                'exact-head source ledger has stale Desktop source commit: ' + path)
+        evidence = row.get('evidence')
+        require(isinstance(evidence, list) and evidence,
+                'exact-head source ledger row lacks provenance evidence: ' + path)
+        for item in evidence:
+            require(isinstance(item, dict), 'exact-head source ledger has malformed evidence: ' + path)
+            require(item.get('source_path') == path
+                    and item.get('source_blob_sha') == row.get('source_blob_sha'),
+                    'exact-head source evidence does not match current source object: ' + path)
+            require(item.get('desktop_commit') == desktop_commit
+                    and item.get('desktop_root_tree') == desktop_tree,
+                    'exact-head source evidence has stale Desktop authority: ' + path)
+            require(item.get('android_head') == expected_android_checkout_sha,
+                    'exact-head source evidence has stale Android head: ' + path)
+            require(item.get('workflow_run_id') == run_id,
+                    'exact-head source evidence has stale workflow run: ' + path)
+        rows_by_path[path] = row
+
+    for responsibility in responsibilities:
+        rid = responsibility.get('responsibility_id') or '<missing-id>'
+        require(responsibility.get('source_commit') == desktop_commit,
+                'exact-head responsibility has stale Desktop source commit: ' + rid)
+        require(responsibility.get('android_head_at_update') == expected_android_checkout_sha,
+                'exact-head responsibility has stale Android head: ' + rid)
+        for source in responsibility.get('desktop_sources') or []:
+            path = source.get('path')
+            row = rows_by_path.get(path)
+            require(row is not None,
+                    'exact-head responsibility anchor is absent from source ledger: ' + str(path))
+            require(source.get('blob_sha') == row.get('source_blob_sha')
+                    and source.get('source_mode') == row.get('source_mode')
+                    and source.get('source_type') == row.get('source_type'),
+                    'exact-head responsibility anchor differs from current Desktop object: ' + str(path))
+
+
 def _load_local_persisted_mapping(
     responsibility_path: Path,
     current_candidate: dict,
@@ -513,11 +606,26 @@ def merge_responsibility_mapping(
         item['desktop_sources'] = cleaned
 
     ids = {item.get('responsibility_id') for item in responsibilities}
+    for item in responsibilities:
+        raw_targets = item.get('android_target')
+        filtered_targets = _real_android_targets(raw_targets)
+        if raw_targets != filtered_targets:
+            item['android_target'] = filtered_targets
+            note = (
+                'Removed non-target consumer labels from android_target; concrete Android owner '
+                'targets remain provenance-only until exact-head implementation verification.'
+            )
+            notes = item.get('notes')
+            if isinstance(notes, str):
+                if note not in notes:
+                    item['notes'] = notes + ' ' + note
+            elif isinstance(notes, list):
+                if note not in notes:
+                    notes.append(note)
+            else:
+                item['notes'] = note
     targets_by_rid = {
-        item['responsibility_id']: sorted({
-            str(target) for target in (item.get('android_target') or [])
-            if isinstance(target, str) and target.strip()
-        })
+        item['responsibility_id']: _real_android_targets(item.get('android_target'))
         for item in responsibilities
     }
 
@@ -876,6 +984,15 @@ def rebaseline() -> None:
         manifest['responsibility_mapping_artifact_digest'] = mapping_authority.get('responsibility_mapping_artifact_digest')
         save(responsibility_path, responsibility_doc)
         save(manifest_path, manifest)
+        persisted_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        persisted_responsibilities = json.loads(responsibility_path.read_text(encoding='utf-8'))
+        persisted_rows = _parse_persisted_source_inventory(
+            ledger_path.read_text(encoding='utf-8'), persisted_manifest
+        )
+        validate_exact_head_provenance(
+            persisted_manifest, list(persisted_rows.values()), persisted_responsibilities,
+            android['android_checkout_sha'],
+        )
 
     summary = {
         'desktop_commit': current,
@@ -947,7 +1064,16 @@ def inventory() -> None:
             'Persistent source inventory manifest must preserve all 8258 tracked non-tree entries')
     require(authority_manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
             'Persistent source inventory manifest row count mismatch')
-    _parse_persisted_source_inventory(authority_ledger_text, authority_manifest, expected_paths=by_path)
+    authority_rows = _parse_persisted_source_inventory(
+        authority_ledger_text, authority_manifest, expected_paths=by_path
+    )
+    responsibility_path = DOC / 'authority/responsibility-ledger.json'
+    require(responsibility_path.is_file(), 'Persistent responsibility ledger is missing')
+    responsibility_doc = json.loads(responsibility_path.read_text(encoding='utf-8'))
+    validate_exact_head_provenance(
+        authority_manifest, list(authority_rows.values()), responsibility_doc,
+        android['android_checkout_sha'],
+    )
     manifest = {'schema_version': 2, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': android['android_checkout_sha'], 'android_repository': android['android_repository'], 'android_pr': android['android_pr'], 'android_pr_head_sha': android['android_pr_head_sha'], 'android_pr_head_ref': android['android_pr_head_ref'], 'android_pr_base_sha': android['android_pr_base_sha'], 'android_pr_base_ref': android['android_pr_base_ref'], 'workflow_event': android['workflow_event'], 'workflow_run_id': android['workflow_run_id'], 'run_attempt': android['run_attempt'], 'workflow_sha': android['workflow_sha'], 'workflow_ref': android['workflow_ref'], 'run_url': android['run_url'], 'generated_at_utc': android['generated_at_utc'], 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(authority_ledger_text.encode('utf-8')).hexdigest() if authority_ledger_text else None, 'authority_ledger_rows': len([line for line in authority_ledger_text.splitlines() if line.strip()]), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
     save(OUT / 'source-manifest.json', manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
