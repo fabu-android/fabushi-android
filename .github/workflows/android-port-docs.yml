@@ -20,7 +20,7 @@ permissions:
   contents: write
 concurrency:
   group: android-port-docs-${{ github.head_ref || github.ref_name }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 jobs:
   source-inventory:
     name: Pinned Desktop complete source inventory
@@ -40,7 +40,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/android-port-docs.py inventory
       - name: Commit regenerated exact-main authority manifest
-        if: github.event_name == 'push'
+        if: ${{ false }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
