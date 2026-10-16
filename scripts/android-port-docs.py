@@ -25,8 +25,7 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / 'docs/android-port'
 OUT = DOC / 'generated'
-SHA = re.compile(r'^[0-9a-f]{40}$')
-
+SHA = re.compile(r"^[0-9a-f]{40}$")
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
