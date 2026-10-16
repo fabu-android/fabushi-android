@@ -1,0 +1,883 @@
+use super::{AndroidMcpAuthWatchManager, CursorDashboardMcpAuthBackend, McpAuthBackendPort};
+use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
+    classify_backend_auth_status, gate_auth_server, McpAuthPollOutcome, McpAuthPollSettlement,
+    McpAuthPollTick, McpAuthServerGate, McpAuthServerSnapshot, McpAuthStatusDecision,
+    McpAuthWatchCompletion, PendingMcpAuthWatch,
+};
+use fabushi_android_shared::node::mcp::mcp_server_id::parse_i32_mcp_server_id;
+use std::collections::{BTreeSet, VecDeque};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const OWNER_TICK_MS: u64 = 250;
+
+pub trait McpAuthAdminPolicyPort: Send + Sync {
+    fn fresh_server_snapshot(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<McpAuthServerSnapshot>, String>;
+}
+
+impl McpAuthAdminPolicyPort for CursorDashboardMcpAuthBackend {
+    fn fresh_server_snapshot(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<McpAuthServerSnapshot>, String> {
+        CursorDashboardMcpAuthBackend::fresh_server_snapshot(self, server_id)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum McpAuthOwnerEvent {
+    Completed(McpAuthWatchCompletion),
+    Cancelled(McpAuthWatchCompletion),
+    Expired(McpAuthWatchCompletion),
+    BackendUnavailable {
+        generation: u64,
+        server_id: String,
+        account_key: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum McpAuthenticateResult {
+    AlreadyAuthenticated,
+    AuthorizationRequired {
+        authorization_url: String,
+        watch: PendingMcpAuthWatch,
+        replaced: Option<PendingMcpAuthWatch>,
+    },
+    NotConfigured,
+    AdminBlocked,
+    UnsupportedTransport,
+    Unreachable(String),
+    NotSupported(String),
+}
+
+pub struct AndroidMcpAuthWatchOwner {
+    manager: Arc<Mutex<AndroidMcpAuthWatchManager>>,
+    events: Arc<Mutex<VecDeque<McpAuthOwnerEvent>>>,
+    announced_completions: Arc<Mutex<BTreeSet<String>>>,
+    stop: Arc<AtomicBool>,
+    backend: Arc<dyn McpAuthBackendPort>,
+    policy: Arc<dyn McpAuthAdminPolicyPort>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl AndroidMcpAuthWatchOwner {
+    pub fn start(
+        manager: Arc<Mutex<AndroidMcpAuthWatchManager>>,
+        backend: Arc<dyn McpAuthBackendPort>,
+        policy: Arc<dyn McpAuthAdminPolicyPort>,
+    ) -> Result<Self, String> {
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        let announced_completions = Arc::new(Mutex::new(BTreeSet::new()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let manager_for_worker = Arc::clone(&manager);
+        let events_for_worker = Arc::clone(&events);
+        let announced_for_worker = Arc::clone(&announced_completions);
+        let stop_for_worker = Arc::clone(&stop);
+        let backend_for_worker = Arc::clone(&backend);
+        let policy_for_worker = Arc::clone(&policy);
+        let worker = thread::Builder::new()
+            .name("fabushi-mcp-auth-watch-owner".into())
+            .spawn(move || {
+                while !stop_for_worker.load(Ordering::Acquire) {
+                    announce_pending_completions(
+                        &manager_for_worker,
+                        &events_for_worker,
+                        &announced_for_worker,
+                    );
+                    advance_all(
+                        &manager_for_worker,
+                        backend_for_worker.as_ref(),
+                        policy_for_worker.as_ref(),
+                        &events_for_worker,
+                        system_now_ms(),
+                    );
+                    announce_pending_completions(
+                        &manager_for_worker,
+                        &events_for_worker,
+                        &announced_for_worker,
+                    );
+                    let mut remaining = OWNER_TICK_MS;
+                    while remaining > 0 && !stop_for_worker.load(Ordering::Acquire) {
+                        let slice = remaining.min(50);
+                        thread::sleep(Duration::from_millis(slice));
+                        remaining -= slice;
+                    }
+                }
+            })
+            .map_err(|error| format!("failed to start MCP auth watch owner: {error}"))?;
+        Ok(Self {
+            manager,
+            events,
+            announced_completions,
+            stop,
+            backend,
+            policy,
+            worker: Some(worker),
+        })
+    }
+
+    pub fn manager(&self) -> Arc<Mutex<AndroidMcpAuthWatchManager>> {
+        Arc::clone(&self.manager)
+    }
+
+    pub fn complete_oauth(&self, state_id: &str, authorization_code: &str) -> Result<(), String> {
+        self.backend.complete_oauth(state_id, authorization_code)
+    }
+
+    pub fn authenticate(
+        &self,
+        now_ms: u64,
+        server_id: &str,
+        account_key: &str,
+        oauth_redirect_uri: &str,
+        requesting_agent_id: Option<&str>,
+        force_reauth: bool,
+    ) -> Result<McpAuthenticateResult, String> {
+        let mut manager = self
+            .manager
+            .lock()
+            .map_err(|_| "MCP auth watch manager lock poisoned".to_string())?;
+        authenticate_and_register(
+            &mut manager,
+            self.backend.as_ref(),
+            self.policy.as_ref(),
+            now_ms,
+            server_id,
+            account_key,
+            oauth_redirect_uri,
+            requesting_agent_id,
+            force_reauth,
+        )
+    }
+
+    pub fn drain_events(&self) -> Result<Vec<McpAuthOwnerEvent>, String> {
+        let drained = {
+            let mut events = self
+                .events
+                .lock()
+                .map_err(|_| "MCP auth owner event queue lock poisoned".to_string())?;
+            events.drain(..).collect::<Vec<_>>()
+        };
+        if let Ok(mut announced) = self.announced_completions.lock() {
+            for event in &drained {
+                if let McpAuthOwnerEvent::Completed(completion) = event {
+                    announced.remove(&completion_key(completion));
+                }
+            }
+        }
+        Ok(drained)
+    }
+
+    pub fn stop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+impl Drop for AndroidMcpAuthWatchOwner {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+pub fn authenticate_and_register(
+    manager: &mut AndroidMcpAuthWatchManager,
+    backend: &dyn McpAuthBackendPort,
+    policy: &dyn McpAuthAdminPolicyPort,
+    now_ms: u64,
+    server_id: &str,
+    account_key: &str,
+    oauth_redirect_uri: &str,
+    requesting_agent_id: Option<&str>,
+    force_reauth: bool,
+) -> Result<McpAuthenticateResult, String> {
+    let initial = policy.fresh_server_snapshot(server_id)?;
+    let fresh = if initial
+        .as_ref()
+        .is_some_and(|snapshot| snapshot.disabled_by_team_admin_policy)
+    {
+        policy.fresh_server_snapshot(server_id)?
+    } else {
+        None
+    };
+    let eligible = match gate_auth_server(initial.as_ref(), fresh.as_ref()) {
+        McpAuthServerGate::Eligible(snapshot) => snapshot,
+        McpAuthServerGate::NotConfigured => return Ok(McpAuthenticateResult::NotConfigured),
+        McpAuthServerGate::AdminBlocked => return Ok(McpAuthenticateResult::AdminBlocked),
+        McpAuthServerGate::UnsupportedTransport => {
+            return Ok(McpAuthenticateResult::UnsupportedTransport)
+        }
+    };
+    let server_number = parse_i32_mcp_server_id(&eligible.server_id)
+        .map_err(|error| error.to_string())?;
+    let status = backend.check_auth_status(
+        server_number,
+        account_key,
+        oauth_redirect_uri,
+        force_reauth,
+    )?;
+    match classify_backend_auth_status(
+        eligible.server_url.as_deref(),
+        &status,
+        force_reauth,
+    ) {
+        McpAuthStatusDecision::AlreadyAuthenticated => {
+            backend.reload_server_tools(&eligible.server_id)?;
+            Ok(McpAuthenticateResult::AlreadyAuthenticated)
+        }
+        McpAuthStatusDecision::Start { authorization_url } => {
+            let server_url = eligible
+                .server_url
+                .as_deref()
+                .ok_or("MCP auth server URL is required")?;
+            let (watch, replaced) = manager.begin_watch(
+                now_ms,
+                &eligible.server_id,
+                &eligible.server_name,
+                server_url,
+                account_key,
+                requesting_agent_id,
+                force_reauth,
+            )?;
+            Ok(McpAuthenticateResult::AuthorizationRequired {
+                authorization_url,
+                watch,
+                replaced,
+            })
+        }
+        McpAuthStatusDecision::Unreachable { detail } => {
+            Ok(McpAuthenticateResult::Unreachable(detail))
+        }
+        McpAuthStatusDecision::NotSupported { detail } => {
+            Ok(McpAuthenticateResult::NotSupported(detail))
+        }
+    }
+}
+
+fn completion_key(completion: &McpAuthWatchCompletion) -> String {
+    format!(
+        "{}::{}::{}",
+        completion.generation, completion.server_id, completion.account_key
+    )
+}
+
+fn announce_pending_completions(
+    manager: &Arc<Mutex<AndroidMcpAuthWatchManager>>,
+    events: &Arc<Mutex<VecDeque<McpAuthOwnerEvent>>>,
+    announced: &Arc<Mutex<BTreeSet<String>>>,
+) {
+    let pending = match manager.lock() {
+        Ok(manager) => manager.pending_completions(),
+        Err(_) => return,
+    };
+    let mut announced = match announced.lock() {
+        Ok(announced) => announced,
+        Err(_) => return,
+    };
+    let mut events = match events.lock() {
+        Ok(events) => events,
+        Err(_) => return,
+    };
+    for completion in pending {
+        let key = completion_key(&completion);
+        if announced.contains(&key) {
+            continue;
+        }
+        let already_queued = events.iter().any(|event| {
+            matches!(
+                event,
+                McpAuthOwnerEvent::Completed(queued)
+                    if completion_key(queued) == key
+            )
+        });
+        if !already_queued {
+            events.push_back(McpAuthOwnerEvent::Completed(completion));
+        }
+        announced.insert(key);
+    }
+}
+
+fn advance_all(
+    manager: &Arc<Mutex<AndroidMcpAuthWatchManager>>,
+    backend: &dyn McpAuthBackendPort,
+    policy: &dyn McpAuthAdminPolicyPort,
+    events: &Arc<Mutex<VecDeque<McpAuthOwnerEvent>>>,
+    now_ms: u64,
+) {
+    let watches = match manager.lock() {
+        Ok(manager) => manager.watches(),
+        Err(_) => return,
+    };
+    for watch in watches {
+        let tick = match manager.lock() {
+            Ok(mut manager) => manager.poll_tick(
+                now_ms,
+                &watch.server_id,
+                &watch.account_key,
+            ),
+            Err(_) => return,
+        };
+        let Ok(tick) = tick else {
+            continue;
+        };
+        match tick {
+            McpAuthPollTick::Idle | McpAuthPollTick::Suppressed => {}
+            McpAuthPollTick::Expired(completion) => {
+                push_event(events, McpAuthOwnerEvent::Expired(completion));
+            }
+            McpAuthPollTick::Request(request) => {
+                let poll_started = Instant::now();
+                let outcome = match policy.fresh_server_snapshot(&request.server_id) {
+                    Ok(Some(snapshot)) if snapshot.disabled_by_team_admin_policy => {
+                        McpAuthPollOutcome::AdminBlocked
+                    }
+                    Ok(Some(snapshot)) if snapshot.server_id == request.server_id => {
+                        match backend.validate_token(&request.server_url, &request.account_key) {
+                            Ok(true) => {
+                                match policy.fresh_server_snapshot(&request.server_id) {
+                                    Ok(Some(fresh))
+                                        if fresh.server_id == request.server_id
+                                            && !fresh.disabled_by_team_admin_policy =>
+                                    {
+                                        match backend.reload_server_tools(&request.server_id) {
+                                            Ok(_) => McpAuthPollOutcome::TokenValid,
+                                            Err(_) => McpAuthPollOutcome::Unreachable,
+                                        }
+                                    }
+                                    Ok(_) => McpAuthPollOutcome::AdminBlocked,
+                                    Err(_) => McpAuthPollOutcome::Unreachable,
+                                }
+                            }
+                            Ok(false) => McpAuthPollOutcome::TokenInvalid,
+                            Err(_) => {
+                                push_event(
+                                    events,
+                                    McpAuthOwnerEvent::BackendUnavailable {
+                                        generation: request.generation,
+                                        server_id: request.server_id.clone(),
+                                        account_key: request.account_key.clone(),
+                                    },
+                                );
+                                McpAuthPollOutcome::Unreachable
+                            }
+                        }
+                    }
+                    Ok(_) => McpAuthPollOutcome::AdminBlocked,
+                    Err(_) => McpAuthPollOutcome::Unreachable,
+                };
+                let elapsed_ms = poll_started.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
+                let settled_at = now_ms.saturating_add(elapsed_ms);
+                let settlement = match manager.lock() {
+                    Ok(mut manager) => {
+                        if settled_at > request.deadline_ms {
+                            manager.poll_failed(settled_at, &request)
+                        } else {
+                            manager.settle_poll(settled_at, &request, outcome)
+                        }
+                    }
+                    Err(_) => return,
+                };
+                if let Ok(settlement) = settlement {
+                    match settlement {
+                        McpAuthPollSettlement::Completed(completion) => {
+                            push_event(events, McpAuthOwnerEvent::Completed(completion))
+                        }
+                        McpAuthPollSettlement::Cancelled(completion) => {
+                            push_event(events, McpAuthOwnerEvent::Cancelled(completion))
+                        }
+                        McpAuthPollSettlement::Pending | McpAuthPollSettlement::Stale => {}
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn push_event(
+    events: &Arc<Mutex<VecDeque<McpAuthOwnerEvent>>>,
+    event: McpAuthOwnerEvent,
+) {
+    if let Ok(mut events) = events.lock() {
+        events.push_back(event);
+    }
+}
+
+fn system_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabushi_android_shared::node::mcp::mcp_auth_watch::{
+        AUTH_WATCH_POLL_INTERVAL_MS, AUTH_WATCH_POLL_TIMEOUT_MS,
+    };
+    use fabushi_android_shared::node::mcp::mcp_auth_watch_lifecycle::{
+        McpAuthServerSnapshot, McpAuthTransport, McpBackendAuthStatus,
+    };
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct FakeBackend {
+        validations: AtomicUsize,
+        reloads: AtomicUsize,
+        reload_ok: bool,
+        valid: bool,
+        check: McpBackendAuthStatus,
+    }
+
+    impl McpAuthBackendPort for FakeBackend {
+        fn check_auth_status(
+            &self,
+            _server_id: i32,
+            _account_key: &str,
+            _oauth_redirect_uri: &str,
+            _force_reauth: bool,
+        ) -> Result<McpBackendAuthStatus, String> {
+            Ok(self.check.clone())
+        }
+
+        fn complete_oauth(&self, _state_id: &str, _authorization_code: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn validate_token(&self, _server_url: &str, _account_key: &str) -> Result<bool, String> {
+            self.validations.fetch_add(1, Ordering::SeqCst);
+            Ok(self.valid)
+        }
+
+        fn reload_server_tools(&self, _server_id: &str) -> Result<usize, String> {
+            self.reloads.fetch_add(1, Ordering::SeqCst);
+            if self.reload_ok {
+                Ok(2)
+            } else {
+                Err("tool reload unavailable".into())
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct FakePolicy {
+        blocked: bool,
+    }
+
+    impl McpAuthAdminPolicyPort for FakePolicy {
+        fn fresh_server_snapshot(
+            &self,
+            server_id: &str,
+        ) -> Result<Option<McpAuthServerSnapshot>, String> {
+            Ok(Some(McpAuthServerSnapshot {
+                server_id: server_id.to_string(),
+                server_name: "Calendar".into(),
+                server_url: Some("https://mcp.example.test".into()),
+                transport: McpAuthTransport::Http,
+                disabled_by_team_admin_policy: self.blocked,
+            }))
+        }
+    }
+
+    fn temp_store(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "fabushi-mcp-owner-{name}-{}-{}.json",
+            std::process::id(),
+            system_now_ms()
+        ))
+    }
+
+    fn backend(valid: bool) -> FakeBackend {
+        FakeBackend {
+            validations: AtomicUsize::new(0),
+            reloads: AtomicUsize::new(0),
+            reload_ok: true,
+            valid,
+            check: McpBackendAuthStatus {
+                is_available: false,
+                requires_auth: true,
+                has_valid_token: false,
+                auth_url: "https://auth.example.test".into(),
+                error: String::new(),
+            },
+        }
+    }
+
+    #[test]
+    fn authenticate_checks_status_then_registers_durable_watch() {
+        let path = temp_store("authenticate");
+        let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
+        let result = authenticate_and_register(
+            &mut manager,
+            &backend(false),
+            &FakePolicy { blocked: false },
+            0,
+            "17",
+            "default",
+            "http://127.0.0.1:18080/oauth/callback",
+            Some("agent-a"),
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            result,
+            McpAuthenticateResult::AuthorizationRequired { ref watch, .. }
+                if watch.requesting_agent_id.as_deref() == Some("agent-a")
+        ));
+        assert_eq!(manager.len(), 1);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn already_authenticated_path_reloads_tools_before_reporting_ready() {
+        let path = temp_store("already-authenticated");
+        let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
+        let backend = FakeBackend {
+            validations: AtomicUsize::new(0),
+            reloads: AtomicUsize::new(0),
+            reload_ok: true,
+            valid: true,
+            check: McpBackendAuthStatus {
+                is_available: true,
+                requires_auth: false,
+                has_valid_token: true,
+                auth_url: String::new(),
+                error: String::new(),
+            },
+        };
+        let result = authenticate_and_register(
+            &mut manager,
+            &backend,
+            &FakePolicy { blocked: false },
+            0,
+            "17",
+            "default",
+            "http://127.0.0.1:18080/oauth/callback",
+            Some("agent-a"),
+            false,
+        )
+        .unwrap();
+        assert_eq!(result, McpAuthenticateResult::AlreadyAuthenticated);
+        assert_eq!(backend.reloads.load(Ordering::SeqCst), 1);
+        assert!(manager.is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn admin_block_fails_closed_before_watch_registration() {
+        let path = temp_store("admin");
+        let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
+        let result = authenticate_and_register(
+            &mut manager,
+            &backend(false),
+            &FakePolicy { blocked: true },
+            0,
+            "17",
+            "default",
+            "http://127.0.0.1:18080/oauth/callback",
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(result, McpAuthenticateResult::AdminBlocked);
+        assert!(manager.is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn valid_token_completes_current_generation_after_fresh_policy_recheck() {
+        let path = temp_store("valid");
+        let manager = Arc::new(Mutex::new(
+            AndroidMcpAuthWatchManager::open(&path, 0).unwrap(),
+        ));
+        manager
+            .lock()
+            .unwrap()
+            .begin_watch(
+                0,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "default",
+                Some("agent-a"),
+                false,
+            )
+            .unwrap();
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        advance_all(
+            &manager,
+            &backend(true),
+            &FakePolicy { blocked: false },
+            &events,
+            AUTH_WATCH_POLL_INTERVAL_MS,
+        );
+        assert!(matches!(
+            events.lock().unwrap().front(),
+            Some(McpAuthOwnerEvent::Completed(completion))
+                if completion.requesting_agent_id.as_deref() == Some("agent-a")
+        ));
+        assert!(manager.lock().unwrap().is_empty());
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn tool_reload_failure_keeps_watch_pending_for_retry() {
+        let path = temp_store("reload-unreachable");
+        let manager = Arc::new(Mutex::new(
+            AndroidMcpAuthWatchManager::open(&path, 0).unwrap(),
+        ));
+        manager
+            .lock()
+            .unwrap()
+            .begin_watch(
+                0,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "default",
+                Some("agent-a"),
+                false,
+            )
+            .unwrap();
+        let backend = FakeBackend {
+            validations: AtomicUsize::new(0),
+            reloads: AtomicUsize::new(0),
+            reload_ok: false,
+            valid: true,
+            check: McpBackendAuthStatus {
+                is_available: false,
+                requires_auth: true,
+                has_valid_token: false,
+                auth_url: "https://auth.example.test".into(),
+                error: String::new(),
+            },
+        };
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        advance_all(
+            &manager,
+            &backend,
+            &FakePolicy { blocked: false },
+            &events,
+            AUTH_WATCH_POLL_INTERVAL_MS,
+        );
+        assert!(events.lock().unwrap().is_empty());
+        assert_eq!(backend.validations.load(Ordering::SeqCst), 1);
+        assert_eq!(backend.reloads.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            manager.lock().unwrap().watch("17", "default").unwrap().generation,
+            1
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn invalid_token_stays_pending_and_stale_generation_cannot_complete() {
+        let path = temp_store("invalid");
+        let manager = Arc::new(Mutex::new(
+            AndroidMcpAuthWatchManager::open(&path, 0).unwrap(),
+        ));
+        let first = manager
+            .lock()
+            .unwrap()
+            .begin_watch(
+                0,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "default",
+                Some("agent-a"),
+                false,
+            )
+            .unwrap()
+            .0;
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        advance_all(
+            &manager,
+            &backend(false),
+            &FakePolicy { blocked: false },
+            &events,
+            AUTH_WATCH_POLL_INTERVAL_MS,
+        );
+        assert!(events.lock().unwrap().is_empty());
+        let replacement = manager
+            .lock()
+            .unwrap()
+            .begin_watch(
+                AUTH_WATCH_POLL_INTERVAL_MS + 1,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "default",
+                Some("agent-b"),
+                false,
+            )
+            .unwrap()
+            .0;
+        assert!(replacement.generation > first.generation);
+        assert_eq!(
+            manager.lock().unwrap().watch("17", "default").unwrap().generation,
+            replacement.generation
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn deadline_is_bounded_and_process_death_restores_then_advances_watch() {
+        let path = temp_store("restore");
+        {
+            let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
+            manager
+                .begin_watch(
+                    0,
+                    "17",
+                    "Calendar",
+                    "https://mcp.example.test",
+                    "default",
+                    Some("agent-a"),
+                    false,
+                )
+                .unwrap();
+        }
+        let manager = Arc::new(Mutex::new(
+            AndroidMcpAuthWatchManager::open(&path, AUTH_WATCH_POLL_INTERVAL_MS).unwrap(),
+        ));
+        let restored = manager
+            .lock()
+            .unwrap()
+            .watch("17", "default")
+            .cloned()
+            .unwrap();
+        assert!(!restored.is_polling);
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        advance_all(
+            &manager,
+            &backend(true),
+            &FakePolicy { blocked: false },
+            &events,
+            AUTH_WATCH_POLL_INTERVAL_MS,
+        );
+        assert!(matches!(
+            events.lock().unwrap().front(),
+            Some(McpAuthOwnerEvent::Completed(_))
+        ));
+        assert!(AUTH_WATCH_POLL_TIMEOUT_MS <= 30_000);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn background_owner_advances_reopened_watch_without_external_poll_or_settle() {
+        let path = temp_store("background-restore");
+        let now = system_now_ms();
+        {
+            let mut manager = AndroidMcpAuthWatchManager::open(&path, now).unwrap();
+            manager
+                .begin_watch(
+                    now.saturating_sub(AUTH_WATCH_POLL_INTERVAL_MS),
+                    "17",
+                    "Calendar",
+                    "https://mcp.example.test",
+                    "default",
+                    Some("agent-a"),
+                    false,
+                )
+                .unwrap();
+        }
+
+        let manager = Arc::new(Mutex::new(
+            AndroidMcpAuthWatchManager::open(&path, now).unwrap(),
+        ));
+        let backend_impl = Arc::new(backend(true));
+        let backend: Arc<dyn McpAuthBackendPort> = backend_impl.clone();
+        let policy: Arc<dyn McpAuthAdminPolicyPort> =
+            Arc::new(FakePolicy { blocked: false });
+        let mut owner = AndroidMcpAuthWatchOwner::start(
+            Arc::clone(&manager),
+            backend,
+            policy,
+        )
+        .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let completed = loop {
+            let events = owner.drain_events().unwrap();
+            if let Some(completion) = events.into_iter().find_map(|event| match event {
+                McpAuthOwnerEvent::Completed(completion) => Some(completion),
+                _ => None,
+            }) {
+                break Some(completion);
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(20));
+        };
+
+        owner.stop();
+        let completion = completed.expect("background owner should complete restored watch");
+        assert_eq!(completion.server_id, "17");
+        assert_eq!(completion.requesting_agent_id.as_deref(), Some("agent-a"));
+        assert!(manager.lock().unwrap().is_empty());
+        assert!(backend_impl.validations.load(Ordering::SeqCst) >= 1);
+        assert!(backend_impl.reloads.load(Ordering::SeqCst) >= 1);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn cancel_and_admin_recheck_are_terminal_and_late_callbacks_stay_stale() {
+        let path = temp_store("cancel");
+        let mut manager = AndroidMcpAuthWatchManager::open(&path, 0).unwrap();
+        manager
+            .begin_watch(
+                0,
+                "17",
+                "Calendar",
+                "https://mcp.example.test",
+                "work",
+                None,
+                false,
+            )
+            .unwrap();
+        let cancelled = manager.cancel_watch("17", "work").unwrap().unwrap();
+        assert_eq!(cancelled.outcome, "cancelled");
+        assert!(manager.note_auth_completed_elsewhere("17", "work").unwrap().is_none());
+
+        manager
+            .begin_watch(
+                1,
+                "18",
+                "Drive",
+                "https://mcp.example.test",
+                "work",
+                None,
+                false,
+            )
+            .unwrap();
+        let manager = Arc::new(Mutex::new(manager));
+        let events = Arc::new(Mutex::new(VecDeque::new()));
+        advance_all(
+            &manager,
+            &backend(true),
+            &FakePolicy { blocked: true },
+            &events,
+            1 + AUTH_WATCH_POLL_INTERVAL_MS,
+        );
+        assert!(matches!(
+            events.lock().unwrap().front(),
+            Some(McpAuthOwnerEvent::Cancelled(completion))
+                if completion.server_id == "18"
+        ));
+        let _ = fs::remove_file(path);
+    }
+}
