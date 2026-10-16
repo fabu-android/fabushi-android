@@ -253,6 +253,7 @@ def merge_responsibility_mapping(
     new_by_path: dict[str, dict],
     current: str,
     tree_sha: str,
+    expected_responsibility_count: int | None = None,
 ) -> dict:
     predecessor, predecessor_source_rows, mapping_origin, mapping_provenance = load_predecessor_responsibility_mapping(responsibility_path)
     android = current_android_provenance()
@@ -263,8 +264,9 @@ def merge_responsibility_mapping(
             'responsibility mapping authority Desktop tree does not match current Desktop main')
 
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
-    require(len(responsibilities) == EXPECTED_RESPONSIBILITY_COUNT,
-            f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(responsibilities)}')
+    if expected_responsibility_count is not None:
+        require(len(responsibilities) == expected_responsibility_count,
+                f'expected {expected_responsibility_count} responsibility definitions, got {len(responsibilities)}')
 
     rid_by_path: dict[str, set[str]] = {}
     source_symbols_by_path: dict[str, set[str]] = {}
@@ -560,7 +562,14 @@ def rebaseline() -> None:
     touched_responsibilities = 0
     deleted_anchor_count = 0
     if responsibility_path.is_file():
-        responsibility_doc = merge_responsibility_mapping(responsibility_path, new_rows, new_by_path, current, tree_sha)
+        responsibility_doc = merge_responsibility_mapping(
+            responsibility_path,
+            new_rows,
+            new_by_path,
+            current,
+            tree_sha,
+            expected_responsibility_count=EXPECTED_RESPONSIBILITY_COUNT,
+        )
         authority = responsibility_doc.setdefault('authority', {})
         authority['desktop_commit'] = current
         authority['desktop_root_tree'] = tree_sha
