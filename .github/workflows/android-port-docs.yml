@@ -105,9 +105,19 @@ jobs:
               assert source['source_mode']==row['source_mode']
               assert source['source_type']==row['source_type']
           coverage=json.loads(Path('docs/android-port/generated/packages-semantic-coverage.json').read_text(encoding='utf-8'))
+          package_rows=[row for row in rows if row['source_path'].startswith('source/packages/')]
+          assert len(package_rows)==852
           assert coverage['expected_source_rows']==852 and coverage['observed_source_rows']==852
-          assert coverage['strict_incomplete_rows']>=0
+          assert coverage['complete_rows'] + coverage['strict_incomplete_rows'] == 852
+          assert coverage['strict_incomplete_rows'] == sum(row.get('package_semantic_coverage_status') == 'incomplete' for row in package_rows)
+          assert coverage['complete_rows'] == sum(row.get('package_semantic_coverage_status') == 'complete' for row in package_rows)
+          assert all(row.get('package_semantic_coverage_status') in ('complete','incomplete') for row in package_rows)
+          assert coverage['status'] == ('passed' if coverage['strict_incomplete_rows'] == 0 else 'incomplete')
+          for key in ('semantic_responsibility_rows','real_source_owner_rows','real_android_owner_rows','valid_android_target_rows','valid_disposition_rows'):
+            assert 0 <= coverage[key] <= 852, (key,coverage[key])
           rejected=json.loads(Path('docs/android-port/generated/rejected-android-targets.json').read_text(encoding='utf-8'))
+          assert rejected['count']==len(rejected['rejected_targets'])
+          assert rejected['status']==('incomplete' if rejected['count'] else 'passed')
           print(json.dumps({
             'android_head':expected,
             'desktop_commit':m['desktop_commit'],
@@ -130,7 +140,16 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/android-port/authority/baseline.json docs/android-port/authority/source-inventory-manifest.json docs/android-port/authority/responsibility-ledger.json docs/android-port/authority/source-inventory-ledger.jsonl
+          git add docs/android-port/authority/baseline.json \
+            docs/android-port/authority/source-inventory-manifest.json \
+            docs/android-port/authority/responsibility-ledger.json \
+            docs/android-port/authority/source-inventory-ledger.jsonl \
+            docs/android-port/generated/packages-semantic-coverage.json \
+            docs/android-port/generated/rejected-android-targets.json \
+            docs/android-port/generated/responsibility-mapping-summary.json \
+            docs/android-port/generated/unmapped-source-rows.json \
+            docs/android-port/generated/source-manifest.json \
+            docs/android-port/generated/rebaseline-summary.json
           if git diff --cached --quiet; then
             echo "No regenerated authority changes to commit."
             exit 0
