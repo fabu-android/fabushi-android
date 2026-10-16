@@ -6,9 +6,9 @@
     "desktop_root_tree": "72fc5f777012f6e7bf5f5f471b6f121fd3612bb2",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "295bba01a6cfcd0003444951f97db957a08eb97a",
+    "android_head_at_update": "6e75ffd304c737443a959517e8c2a8f81ea27611",
     "status": "incomplete",
-    "note": "Current-main rebaseline; exact Desktop source anchors added for the ten previously anchorless existing responsibilities. Implementation and verification states remain unchanged and unverified."
+    "note": "Current-main rebaseline; unique source-directory mappings added where a source row had exactly one existing responsibility owner. No implementation or verification promotion."
   },
   "responsibilities": [
     {
