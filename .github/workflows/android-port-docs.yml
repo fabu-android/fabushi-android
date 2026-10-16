@@ -50,26 +50,36 @@ jobs:
           ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py inventory
       - name: Verify generated exact authority bookkeeping
-        env:
-          EXPECTED_ANDROID_HEAD: ${{ github.sha }}
         run: |
           set -euo pipefail
+          EXPECTED_ANDROID_HEAD="$(git rev-parse HEAD)"
           test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8258
-          python3 - <<'PY'
-          import json, os
+          python3 - "$EXPECTED_ANDROID_HEAD" <<'PY'
+          import json, sys
           from pathlib import Path
+          expected=sys.argv[1]
           m=json.loads(Path('docs/android-port/authority/source-inventory-manifest.json').read_text(encoding='utf-8'))
+          print(json.dumps({
+            'desktop_commit':m.get('desktop_commit'),
+            'desktop_root_tree':m.get('desktop_root_tree'),
+            'tree_entries':m.get('tree_entries'),
+            'tracked_non_tree_entries':m.get('tracked_non_tree_entries'),
+            'android_pr_head_sha':m.get('android_pr_head_sha'),
+            'android_tested_checkout_sha':m.get('android_tested_checkout_sha'),
+            'expected_android_head':expected,
+            'ledger_sha256':m.get('ledger_sha256')
+          }, sort_keys=True))
           assert m['desktop_commit']=='12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
           assert m['desktop_root_tree']=='72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
           assert m['tracked_non_tree_entries']==8258
           assert m['tree_entries']==9412
-          assert m['android_pr_head_sha']==os.environ['EXPECTED_ANDROID_HEAD']
-          assert m['android_tested_checkout_sha']==os.environ['EXPECTED_ANDROID_HEAD']
+          assert m['android_pr_head_sha']==expected
+          assert m['android_tested_checkout_sha']==expected
           r=json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
           assert len(r.get('responsibilities',[]))==306
           PY
       - name: Commit regenerated exact-main authority to PR branch
-        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'spec/grok-bot-018-android-parity-20260922' }}
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'spec/grok-bot-018-android-parity-20260922' && !startsWith(github.event.head_commit.message, 'chore(android): persist exact Desktop main authority evidence') }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -114,6 +124,8 @@ jobs:
           persist-credentials: false
       - name: Validate documentation completeness
         run: python3 scripts/android-port-docs.py validate
+      - name: Assert documentation validation report exists
+        run: test -s docs/android-port/generated/docs-validation.json
       - name: Upload documentation validation report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
