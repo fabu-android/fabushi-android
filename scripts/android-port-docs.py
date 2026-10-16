@@ -167,11 +167,25 @@ def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[di
         'DESKTOP_SOURCE_CLOSURE.md': 'AUTHORITY-SOURCE-CLOSURE-REPLACEMENT-001',
     }
     ids = {item.get('responsibility_id') for item in responsibilities}
+    targets_by_rid = {
+        item['responsibility_id']: sorted({
+            str(target)
+            for target in (item.get('android_target') or [])
+            if isinstance(target, str) and target.strip()
+        })
+        for item in responsibilities
+    }
     for row in ledger_rows:
         path = row['source_path']
         links = rid_by_path.get(path) or {choices.get(path.split('/')[0], 'GOVERNANCE-REPOSITORY-BOUNDARY-001')}
         require(all(rid in ids for rid in links), 'missing closure responsibility definition')
         row['responsibilities'] = sorted(links)
+        row['android_targets'] = sorted({
+            target
+            for rid in links
+            for target in targets_by_rid.get(rid, [])
+        })
+        row['android_target_provenance'] = 'responsibility-ledger-projection; provenance-only; not semantic verification'
         if row.get('disposition') is None:
             row['disposition'] = 'not-applicable-with-replacement' if path.startswith(('docs/', '.github/')) or path in {'AGENTS.md','README.md','MIGRATION_SOURCE.md','RUST_RUNTIME_SOURCE.md','DESKTOP_SOURCE_CLOSURE.md'} else 'android-adapted'
         row['implementation_status'] = 'unreviewed'
