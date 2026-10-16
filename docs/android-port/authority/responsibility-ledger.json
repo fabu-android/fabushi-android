@@ -8,7 +8,7 @@
     "android_pr": 3,
     "android_head_at_update": null,
     "status": "incomplete",
-    "note": "Current-main rebaseline generated from the specified Desktop authority. Responsibility implementation and verification states were reset; no historical verified state is inherited."
+    "note": "Current-main rebaseline. Responsibility implementation and verification states were reset; no historical verified state is inherited."
   },
   "responsibilities": [
     {
