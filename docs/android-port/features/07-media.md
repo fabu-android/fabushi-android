@@ -1,5 +1,9 @@
 # 07 — 文件、附件、媒体、通话与离线语音
 
+## Current authority
+
+bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+
 ## 覆盖与不变量
 
 分别处理文件选择、拍摄、图库、附件上传/下载、语音消息、语音输入、离线转写、音视频播放，以及经 Desktop shipping 审计确认存在的通话/屏幕媒体职责。不能把“能选择文件”当作全部附件 parity，也不能把麦克风用途声明当作已经实现音视频通话。
