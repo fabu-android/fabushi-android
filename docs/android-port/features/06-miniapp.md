@@ -52,7 +52,7 @@ Bootstrap 使用 `type = mahayana/bridge-init`、`bridgeVersion = 2.0`、`plugin
 
 ## 参考
 
-[Desktop bridge](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/mcp-app-sdk/src/bridge.ts)；[Desktop WebMCP](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/mcp-app-sdk/src/webmcp.ts)；[Android WebView native bridge 风险](https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges)。
+[Desktop bridge](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/frontend/packages/mcp-app-sdk/src/bridge.ts)；[Desktop WebMCP](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/mcp-app-sdk/src/webmcp.ts)；[Android WebView native bridge 风险](https://developer.android.com/privacy-and-security/risks/insecure-webview-native-bridges)。
 
 ## 状态、追溯与使用规则
 
