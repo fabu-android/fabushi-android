@@ -48,4 +48,4 @@ Actions 单位/合同测试覆盖 pending→purchased、重复回调、服务端
 
 本文件原写于 2026-10-09，现作为 Android 原生迁移实施规范入库，不代表商业能力已通过 Play 和产品验收。新设计字段、流程与 owner 不冒充已存在的后端 wire。需审计当前 Desktop 固定 SHA 的实际入口与受测效果，全部构建和测试在 GitHub Actions。
 
-源锁：`bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61`，8,172 项初始清单不等于已验证完成。
+当前源锁：`bhrumom/fabushi-desktop@12a4e29819592e3a7e32f7435cb0cf2e3cc53848` / tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`；历史 8,172 项清单不等于当前已验证完成。
