@@ -48,7 +48,17 @@ jobs:
           BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/android-port/authority
+          test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8258
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
+          assert len(data.get('responsibilities', [])) == 306
+          assert data.get('authority', {}).get('desktop_commit') == '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
+          assert data.get('authority', {}).get('desktop_root_tree') == '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
+          PY
+          # Semantic ledgers are durable review state; do not let this machine rebaseline job overwrite them.
+          git add docs/android-port/authority/baseline.json docs/android-port/authority/source-inventory-manifest.json
           if git diff --cached --quiet; then
             echo "No regenerated authority changes to commit."
             exit 0
