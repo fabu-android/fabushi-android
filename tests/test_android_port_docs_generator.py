@@ -817,5 +817,16 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn('docs/android-port/generated/rejected-android-targets.json', workflow)
         self.assertIn("assert coverage['complete_rows'] + coverage['strict_incomplete_rows'] == 852", workflow)
 
+
+    def test_persistence_dispatches_docs_on_persisted_head_without_push_loop(self):
+        workflow = (ROOT / ".github" / "workflows" / "android-port-docs.yml").read_text(encoding="utf-8")
+        self.assertIn("group: android-port-docs-${{ github.ref_name }}", workflow)
+        self.assertIn('gh workflow run android-port-docs.yml --ref "${GITHUB_REF_NAME}"', workflow)
+        self.assertIn('if [[ "$(git log -1 --format=%s)" == "chore(android): persist exact Desktop main authority evidence" ]]; then', workflow)
+        self.assertLess(
+            workflow.index('gh workflow run android-parity-full-ci.yml --ref "${GITHUB_REF_NAME}"'),
+            workflow.index('gh workflow run android-port-docs.yml --ref "${GITHUB_REF_NAME}"'),
+        )
+
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ permissions:
   contents: write
   actions: write
 concurrency:
-  group: android-port-docs-${{ github.ref_name }}-${{ github.run_id }}
+  group: android-port-docs-${{ github.ref_name }}
   cancel-in-progress: false
 jobs:
   source-inventory:
@@ -160,8 +160,10 @@ jobs:
           echo "Persisted authority at exact Android HEAD ${NEW_HEAD}"
           gh workflow run grok-android-architecture.yml --ref "${GITHUB_REF_NAME}"
           gh workflow run android-parity-full-ci.yml --ref "${GITHUB_REF_NAME}"
-          # The persistence commit changes docs/android-port/** and triggers this workflow via push.
-          # Do not dispatch a duplicate run; the next run validates the persisted exact HEAD.
+          # GITHUB_TOKEN pushes do not trigger another push workflow. Explicitly re-run
+          # documentation on the persistence commit so its artifact captures that exact
+          # checkout. The next run sees this persistence commit and skips another commit.
+          gh workflow run android-port-docs.yml --ref "${GITHUB_REF_NAME}"
       - name: Package documentation and source evidence
         if: always()
         run: python3 scripts/android-port-docs.py bundle
