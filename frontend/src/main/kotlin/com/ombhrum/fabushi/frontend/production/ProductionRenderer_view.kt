@@ -81,6 +81,18 @@ internal fun ProductionRenderer(
                 val autoUpdateWhenIdleOptIn by updateModel.autoUpdateWhenIdleOptIn.collectAsState()
                 val autoUpdateWhenIdleGateEnabled by updateModel.autoUpdateWhenIdleGateEnabled.collectAsState()
                 var openedMiniApp by remember { mutableStateOf<MarketplacePlugin?>(null) }
+                var hostInstalledMiniAppIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+                LaunchedEffect(openedMiniApp?.pluginId) {
+                    hostInstalledMiniAppIds = runCatching {
+                        val apps = coordinator.listInstalledMiniApps().optJSONArray("apps") ?: JSONArray()
+                        buildSet {
+                            for (index in 0 until apps.length()) {
+                                apps.optJSONObject(index)?.optString("appId")?.trim()
+                                    ?.takeIf(String::isNotBlank)?.let(::add)
+                            }
+                        }
+                    }.getOrDefault(emptySet())
+                }
                 var rendererRoute by remember { mutableStateOf(RendererRoute.GROK_HOME) }
                 var commandPaletteOpen by remember { mutableStateOf(false) }
                 var commandPaletteAgentFilter by remember { mutableStateOf<String?>(null) }
@@ -767,7 +779,12 @@ internal fun ProductionRenderer(
                     )
                 }
 
-                val active = openedMiniApp
+                // A Mini App surface is an activation of an installed Host ledger entry, never a
+                // marketplace projection. If the ledger no longer contains it, do not mount a WebView.
+                val active = openedMiniApp?.takeIf { it.pluginId in hostInstalledMiniAppIds }
+                if (openedMiniApp != null && active == null) {
+                    LaunchedEffect(openedMiniApp?.pluginId) { openedMiniApp = null }
+                }
                 if (active != null) {
                     val miniAppPlatformBridge = remember(active.pluginId, coordinator) {
                         MiniAppPlatformBridge(coordinator)
