@@ -72,3 +72,28 @@ pub fn invariant_failure() -> ! {
     }
     panic!("{STRIPPED_INVARIANT_MESSAGE}");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[test]
+    fn reporter_observes_invariant_site_and_guard_removes_it() {
+        let reports = Arc::new(Mutex::new(Vec::<SandInvariantReport>::new()));
+        let sink = Arc::clone(&reports);
+        let guard = install_invariant_reporter(Arc::new(move |report| {
+            sink.lock().unwrap().push(report.clone());
+        }));
+
+        let result = catch_unwind(AssertUnwindSafe(|| invariant_failure()));
+        assert!(result.is_err());
+
+        let captured = reports.lock().unwrap().clone();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(captured[0].name, SAND_INVARIANT_VIOLATION_NAME);
+        assert!(captured[0].frame.as_deref().is_some_and(|frame| frame.contains("host_invariant.rs:")));
+
+        drop(guard);
+    }
+}

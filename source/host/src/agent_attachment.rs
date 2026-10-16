@@ -175,6 +175,57 @@ impl DurableAgentAttachmentOwner {
         self.root.join("files")
     }
 
+    pub fn attachment_ids_for_agent(
+        &self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<Vec<String>, String> {
+        validate_scope(account_slot, account_fence, agent_id)?;
+        let mut ids = std::collections::BTreeSet::new();
+        for (id, record) in &self.state.staged {
+            if record.account_slot.as_deref() == account_slot
+                && record.account_fence == account_fence
+                && record.agent_id == agent_id
+            {
+                ids.insert(id.clone());
+            }
+        }
+        for (id, record) in &self.state.completed {
+            if record.account_slot.as_deref() == account_slot
+                && record.account_fence == account_fence
+                && record.agent_id == agent_id
+            {
+                ids.insert(id.clone());
+            }
+        }
+        Ok(ids.into_iter().collect())
+    }
+
+    pub fn clear_agent(
+        &mut self,
+        account_slot: Option<&str>,
+        account_fence: &str,
+        agent_id: &str,
+    ) -> Result<usize, String> {
+        let ids = self.attachment_ids_for_agent(account_slot, account_fence, agent_id)?;
+        let mut removed = 0usize;
+        for id in ids {
+            if self.state.staged.remove(&id).is_some() {
+                let _ = fs::remove_file(self.staging_path(&id));
+                removed = removed.saturating_add(1);
+            }
+            if self.state.completed.remove(&id).is_some() {
+                let _ = fs::remove_file(self.completed_path(&id));
+                removed = removed.saturating_add(1);
+            }
+        }
+        if removed != 0 {
+            self.persist()?;
+        }
+        Ok(removed)
+    }
+
     pub fn begin(
         &mut self,
         account_slot: Option<&str>,
@@ -770,6 +821,25 @@ mod tests {
             )
             .unwrap_err()
             .contains("four MiB"));
+    }
+
+    #[test]
+    fn deleting_an_agent_clears_only_that_account_scoped_attachment_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("attachments");
+        let mut owner = DurableAgentAttachmentOwner::open(&root).unwrap();
+
+        let id = owner.begin(Some("slot-a"), "session:a", "agent-a", "kept.txt", Some("text/plain"), Some(4)).unwrap();
+        owner.append(Some("slot-a"), "session:a", "agent-a", &id, 0, b"kept").unwrap();
+        owner.finish(Some("slot-a"), "session:a", "agent-a", &id).unwrap();
+
+        let other = owner.begin(Some("slot-b"), "session:b", "agent-a", "other.txt", Some("text/plain"), Some(5)).unwrap();
+        owner.append(Some("slot-b"), "session:b", "agent-a", &other, 0, b"other").unwrap();
+        owner.finish(Some("slot-b"), "session:b", "agent-a", &other).unwrap();
+
+        assert_eq!(owner.clear_agent(Some("slot-a"), "session:a", "agent-a").unwrap(), 1);
+        assert!(owner.attachment_ids_for_agent(Some("slot-a"), "session:a", "agent-a").unwrap().is_empty());
+        assert_eq!(owner.attachment_ids_for_agent(Some("slot-b"), "session:b", "agent-a").unwrap(), vec![other]);
     }
 
     #[test]

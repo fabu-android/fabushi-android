@@ -47,6 +47,10 @@ use crate::android_sidebar_sections::{AndroidSidebarSection, AndroidSidebarSecti
 use crate::android_session_projection::project_agent_session;
 use crate::android_user_settings::{AndroidUserSettings, LocalToolPermission};
 use crate::host_secret_store::get_or_create_host_machine_id;
+use crate::host_invariant::{install_invariant_reporter, InstalledInvariantReporter};
+use crate::host_paths::get_android_invariant_report_path;
+use crate::host_request_context::{create_host_request_context, HostRequestContext};
+use crate::host_roster_bookkeeping::HostRosterBookkeeping;
 use crate::onepassword_provisioning::{DurableOnePasswordProvisioningOwner, DurableProvisioningPhase};
 use crate::human_call_runtime::HumanCallRuntime;
 use crate::human_remote_outbound::DurableHumanRemoteOutboundOwner;
@@ -1484,6 +1488,8 @@ pub struct AndroidJsonHost {
     edge_failures: EdgeFailureBuffer,
     structured_log_spool: Arc<Mutex<AndroidStructuredLogSpool>>,
     structured_log_counter_id: String,
+    _invariant_reporter: Option<InstalledInvariantReporter>,
+    host_roster_bookkeeping: HostRosterBookkeeping,
     structured_log_shipping: Arc<AtomicBool>,
     _event_loop_telemetry: AndroidEventLoopTelemetryRuntime,
     process_metrics: AndroidProcessMetricsCollector,
@@ -1753,6 +1759,9 @@ impl AndroidJsonHost {
         app_version: &str,
     ) -> Self {
         let app_data_dir = app_data_dir.into();
+        let host_runtime_root = crate::host_paths::get_android_host_runtime_root(&app_data_dir);
+        std::fs::create_dir_all(&host_runtime_root)
+            .unwrap_or_else(|error| panic!("failed to create Android Host runtime root: {error}"));
         let preexisting_account_durable_data = has_existing_account_durable_data(&app_data_dir);
         let startup_has_protected_session = mode == AndroidHostMode::Production
             && initial_account_session_json.is_some_and(|raw| !raw.trim().is_empty());
@@ -1830,6 +1839,28 @@ impl AndroidJsonHost {
         .unwrap_or_else(|error| {
             panic!("failed to open durable Android structured-log spill: {error}")
         });
+        let invariant_report_path = get_android_invariant_report_path(&app_data_dir);
+        let invariant_reporter = if mode == AndroidHostMode::Production {
+            let report_path = invariant_report_path.clone();
+            Some(install_invariant_reporter(Arc::new(move |report| {
+                let payload = json!({
+                    "name": report.name,
+                    "frame": report.frame,
+                    "recordedAtMs": now_ms(),
+                });
+                let Ok(encoded) = serde_json::to_vec(&payload) else { return; };
+                let Ok(mut file) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&report_path)
+                else { return; };
+                let _ = std::io::Write::write_all(&mut file, &encoded);
+                let _ = std::io::Write::write_all(&mut file, b"\n");
+                let _ = file.sync_data();
+            })))
+        } else {
+            None
+        };
         let (agent_roster, agent_roster_recovery) =
             AndroidAgentRoster::open_recovering(app_data_dir.join("agents.json"))
                 .unwrap_or_else(|error| {
@@ -2739,6 +2770,8 @@ impl AndroidJsonHost {
             edge_failures: EdgeFailureBuffer::default(),
             structured_log_spool,
             structured_log_counter_id,
+            _invariant_reporter: invariant_reporter,
+            host_roster_bookkeeping: HostRosterBookkeeping::default(),
             structured_log_shipping: Arc::new(AtomicBool::new(false)),
             _event_loop_telemetry: event_loop_telemetry,
             process_metrics: AndroidProcessMetricsCollector::default(),
@@ -4894,6 +4927,7 @@ impl AndroidJsonHost {
 
     pub fn dispatch(&mut self, method: &str, params: &Value) -> Result<Value, String> {
         let command_started_at = Instant::now();
+        let request_context = self.request_context_for(params)?;
         let result = match method {
             "host.platform" => Ok(json!({"platform":"android"})),
             "feature.info" => Ok(json!({
@@ -5570,7 +5604,7 @@ impl AndroidJsonHost {
                     .min(u64::MAX as u128) as u64,
                 // Android typed JNI does not carry Desktop HTTP gateway headers. Business
                 // requestId fields are canonical operation IDs, not transport request identity.
-                request_id: None,
+                request_id: request_context.as_ref().map(|context| context.request_id.clone()),
                 reason: None,
                 error_class: None,
             };
@@ -9439,6 +9473,22 @@ impl AndroidJsonHost {
         }))
     }
 
+    fn request_context_for(&self, params: &Value) -> Result<Option<HostRequestContext>, String> {
+        let Some(request_id) = params.get("requestId").and_then(Value::as_str) else {
+            return Ok(None);
+        };
+        let account_id = params
+            .get("accountId")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| self.account.account_storage_scope());
+        let detected_time_zone = self.detected_time_zone.lock().ok().and_then(|value| value.clone());
+        let time_zone = params.get("timeZone").and_then(Value::as_str).or(detected_time_zone.as_deref());
+        create_host_request_context(request_id, account_id.as_deref(), time_zone)
+            .map(Some)
+            .map_err(str::to_string)
+    }
+
     fn cleanup_agent_before_delete(
         &mut self,
         account_fence: &str,
@@ -9449,20 +9499,46 @@ impl AndroidJsonHost {
             return Ok(());
         }
 
+        let account_slot = self.account.account_storage_scope();
+        if !self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .page_for_agent(agent_id, None, 1)
+            .map_err(|error| format!("failed to inspect deleted-Agent transcript: {error}"))?
+            .0
+            .is_empty()
+        {
+            self.host_roster_bookkeeping.record_transcript(agent_id);
+        }
+        let attachment_ids = self
+            .agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment lock poisoned".to_string())?
+            .attachment_ids_for_agent(account_slot.as_deref(), account_fence, agent_id)?;
+        for attachment_id in attachment_ids {
+            self.host_roster_bookkeeping.record_attachment(agent_id, &attachment_id);
+        }
+        if self
+            .box_handoff
+            .lock()
+            .map_err(|_| "box handoff lock poisoned".to_string())?
+            .pending_for(account_fence, agent_id)?
+            .is_some()
+        {
+            self.host_roster_bookkeeping.record_box(agent_id);
+        }
+
         self.agent_turn_interruptions
             .interrupt_for_deletion(agent_id, account_fence)?;
 
         self.visible_ack_obligations
             .clear_agent(account_fence, agent_id)
-            .map_err(|error| {
-                format!("failed to clear deleted-Agent acknowledgement obligation: {error}")
-            })?;
+            .map_err(|error| format!("failed to clear deleted-Agent acknowledgement obligation: {error}"))?;
 
         self.pending_wake_store
             .clear_agent(account_fence, agent_id)
-            .map_err(|error| {
-                format!("failed to clear deleted-Agent pending wakes: {error}")
-            })?;
+            .map_err(|error| format!("failed to clear deleted-Agent pending wakes: {error}"))?;
 
         self.messaging
             .lock()
@@ -9491,6 +9567,36 @@ impl AndroidJsonHost {
             }
         }
 
+        self.transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .clear_agent(account_fence, agent_id)
+            .map_err(|error| format!("failed to clear deleted-Agent transcript: {error}"))?;
+        let transcript_snapshot = self
+            .transcript
+            .lock()
+            .map_err(|_| "transcript lock poisoned".to_string())?
+            .get_transcript();
+        self.content_search.reconcile(&transcript_snapshot)?;
+        self.agent_attachments
+            .lock()
+            .map_err(|_| "Agent attachment lock poisoned".to_string())?
+            .clear_agent(account_slot.as_deref(), account_fence, agent_id)?;
+        self.box_handoff
+            .lock()
+            .map_err(|_| "box handoff lock poisoned".to_string())?
+            .forget_agent(account_fence, agent_id)?;
+
+        let channel_root = self
+            .agent_channels_root
+            .join(crate::sha256::sha256_hex(account_fence.as_bytes()))
+            .join(crate::sha256::sha256_hex(agent_id.as_bytes()));
+        if channel_root.exists() {
+            std::fs::remove_dir_all(&channel_root)
+                .map_err(|error| format!("failed to clear deleted-Agent channel state: {error}"))?;
+        }
+
+        self.host_roster_bookkeeping.remove_agent(agent_id);
         Ok(())
     }
 
@@ -19131,6 +19237,27 @@ fn sign_in_test_account(host: &mut AndroidJsonHost) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn request_context_for_dispatch_uses_explicit_scope_and_detected_timezone() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = AndroidJsonHost::new(dir.path(), AndroidHostMode::Test);
+        {
+            let mut detected = host.detected_time_zone.lock().unwrap();
+            *detected = Some("America/Los_Angeles".into());
+        }
+        let context = host
+            .request_context_for(&json!({
+                "requestId": "request-context-test",
+                "accountId": "account-a"
+            }))
+            .unwrap()
+            .unwrap();
+        assert_eq!(context.request_id, "request-context-test");
+        assert_eq!(context.account_id.as_deref(), Some("account-a"));
+        assert_eq!(context.time_zone, "America/Los_Angeles");
+    }
+
+
     use super::*;
 
     #[test]

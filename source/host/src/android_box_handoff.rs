@@ -280,6 +280,25 @@ impl AndroidBoxHandoffOwner {
         Ok(true)
     }
 
+    pub fn forget_agent(&mut self, account_fence: &str, agent_id: &str) -> Result<bool, String> {
+        let (account_fence, agent_id) = validate_scope(account_fence, agent_id)?;
+        if let Some(pending) = self.state.pending_by_agent.get(agent_id) {
+            if pending.account_fence != account_fence {
+                return Err("box handoff agent is fenced to a different account session".into());
+            }
+        }
+        let mut changed = self.state.pending_by_agent.remove(agent_id).is_some();
+        let before = self.state.resume_by_request.len();
+        self.state
+            .resume_by_request
+            .retain(|_, ended| !(ended.account_fence == account_fence && ended.agent_id == agent_id));
+        changed |= self.state.resume_by_request.len() != before;
+        if changed {
+            self.persist()?;
+        }
+        Ok(changed)
+    }
+
     pub fn forget_account(&mut self, account_fence: &str) -> Result<usize, String> {
         let account_fence = account_fence.trim();
         if account_fence.is_empty() {
@@ -539,6 +558,21 @@ mod tests {
             .unwrap()
             .is_empty());
     }
+    #[test]
+    fn agent_cleanup_removes_pending_and_resume_obligations_for_one_fenced_agent() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("box-handoff.json");
+        let mut owner = AndroidBoxHandoffOwner::open(&path).unwrap();
+        let AndroidHandoffStart::Started(a) = owner.start("session:a", "agent-a", "A", 1).unwrap() else { panic!() };
+        let AndroidHandoffStart::Started(b) = owner.start("session:a", "agent-b", "B", 2).unwrap() else { panic!() };
+        owner.end("session:a", "agent-a", &a.request_id, Some("done"), Some("user")).unwrap();
+        assert!(owner.forget_agent("session:a", "agent-a").unwrap());
+        assert!(owner.pending_for("session:a", "agent-a").unwrap().is_none());
+        assert!(owner.pending_resumes_for_account("session:a").unwrap().is_empty());
+        assert!(owner.pending_for("session:a", "agent-b").unwrap().is_some());
+        assert_eq!(owner.pending_for("session:a", "agent-b").unwrap().unwrap().request_id, b.request_id);
+    }
+
     #[test]
     fn account_cleanup_removes_pending_and_terminal_resume_obligations_only_for_that_account() {
         let root = tempfile::tempdir().unwrap();

@@ -421,6 +421,29 @@ impl TranscriptStore {
         Ok(true)
     }
 
+    pub fn clear_agent(&mut self, account_fence: &str, agent_id: &str) -> io::Result<usize> {
+        let account_fence = account_fence.trim();
+        let agent_id = agent_id.trim();
+        if account_fence.is_empty() || agent_id.is_empty() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "transcript agent cleanup scope is required"));
+        }
+        let before = self.entries.len();
+        self.entries.retain(|entry| {
+            if entry.get("agentId").and_then(Value::as_str) != Some(agent_id) {
+                return true;
+            }
+            entry
+                .get("accountFence")
+                .and_then(Value::as_str)
+                .is_some_and(|fence| fence != account_fence)
+        });
+        let removed = before.saturating_sub(self.entries.len());
+        if removed != 0 {
+            self.persist()?;
+        }
+        Ok(removed)
+    }
+
     pub fn clear_transcript(&mut self) -> io::Result<()> {
         let previous = std::mem::take(&mut self.entries);
         if let Err(error) = self.persist() {
@@ -1237,6 +1260,28 @@ mod tests {
             .user_entry_by_client_nonce("agent-a", "nonce-a", "account-a")
             .is_some());
         let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn clear_agent_is_account_fenced_and_durable() {
+        let path = temp_path();
+        let mut store = TranscriptStore::open(&path).unwrap();
+        store.append_entry(json!({"id":"a1","agentId":"agent-a","accountFence":"account-a","kind":"message"})).unwrap();
+        store.append_entry(json!({"id":"a2","agentId":"agent-a","accountFence":"account-b","kind":"message"})).unwrap();
+        store.append_entry(json!({"id":"legacy","agentId":"agent-a","kind":"message"})).unwrap();
+        store.append_entry(json!({"id":"b1","agentId":"agent-b","accountFence":"account-a","kind":"message"})).unwrap();
+
+        assert_eq!(store.clear_agent("account-a", "agent-a").unwrap(), 2);
+        assert_eq!(
+            store.get_transcript().iter().map(|entry| entry["id"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["a2", "b1"],
+        );
+        drop(store);
+        let reopened = TranscriptStore::open(&path).unwrap();
+        assert_eq!(reopened.get_transcript().len(), 2);
+        assert_eq!(reopened.get_transcript()[0]["id"], "a2");
+        assert_eq!(reopened.get_transcript()[1]["id"], "b1");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
