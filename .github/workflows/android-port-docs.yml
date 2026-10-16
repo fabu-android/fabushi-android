@@ -39,8 +39,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/android-port-docs.py inventory
-      - name: Commit regenerated exact-main authority evidence
-        if: github.event_name == 'push' || github.event_name == 'pull_request'
+      - name: Commit regenerated exact-main authority manifest
+        if: ${{ false }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
