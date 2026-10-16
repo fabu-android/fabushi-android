@@ -17,7 +17,7 @@ on:
       - '.github/workflows/android-port-docs.yml'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
 concurrency:
   group: android-port-docs-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -39,6 +39,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/android-port-docs.py inventory
+      - name: Commit regenerated exact-main authority evidence
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/android-port/authority
+          if git diff --cached --quiet; then
+            echo "No regenerated authority changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(android): persist exact Desktop main authority evidence"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${BRANCH}"
       - name: Package documentation and source evidence
         if: always()
         run: python3 scripts/android-port-docs.py bundle
