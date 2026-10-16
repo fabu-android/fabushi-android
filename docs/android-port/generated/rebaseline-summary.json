@@ -1,14 +1,10 @@
 {
   "desktop_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
   "desktop_root_tree": "72fc5f777012f6e7bf5f5f471b6f121fd3612bb2",
-  "android_head": "6a96011c2a5866b6f73d32c5fbdbb6d53b106a74",
   "tracked_non_tree_entries": 8258,
-  "recursive_tree_entries": 9412,
   "preserved_rows": 8258,
   "reset_rows": 0,
   "deleted_rows": 0,
-  "touched_responsibilities": 306,
-  "deleted_responsibility_anchors": 0,
-  "source_closure_status": "open",
-  "note": "Current exact-head rebaseline. All 8258 source rows are intentionally unreviewed after rebinding; no historical verified state is inherited. Product and release verification remain fail-closed."
+  "touched_responsibilities": 0,
+  "deleted_responsibility_anchors": 0
 }
