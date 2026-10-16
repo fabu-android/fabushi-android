@@ -6,8 +6,8 @@
   "desktop_main_after": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
   "authority_current": true,
   "android_tested_checkout_sha": null,
-  "workflow_run_id": "manual-current-main-rebaseline",
-  "run_attempt": null,
+  "workflow_run_id": "38902655547",
+  "run_attempt": "1",
   "tree_entries": 9412,
   "tracked_non_tree_entries": 8258,
   "root_counts": {
@@ -31,7 +31,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": null,
-  "closure_review": "pending-current-main-rebaseline",
+  "ledger_sha256": "ea24444e02a48cac09fd4ac6be707f64d98287ad388808161189e02160e7ce5a",
+  "closure_review": "incremental-rebaseline-preserved-8258-reset-0-deleted-0",
   "product_acceptance": "not-claimed"
 }
