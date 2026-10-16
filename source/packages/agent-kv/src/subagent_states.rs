@@ -1,9 +1,11 @@
-use std::collections::BTreeMap;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SubagentState { Idle, Running, Completed, Failed, Cancelled }
-#[derive(Default)]
-pub struct SubagentStates { states: BTreeMap<String, SubagentState> }
-impl SubagentStates {
-    pub fn set(&mut self, id: impl Into<String>, state: SubagentState) { self.states.insert(id.into(), state); }
-    pub fn get(&self, id: &str) -> Option<SubagentState> { self.states.get(id).copied() }
+use std::{collections::BTreeMap,thread};use crate::reference::BlobRef;
+pub const SUBAGENT_STATE_BLOB_FETCH_CONCURRENCY:usize=8;
+#[derive(Debug)]pub struct SubagentResolution<T>{pub states:BTreeMap<String,T>,pub inline_fallback_ids:Vec<String>}
+enum Outcome<T>{Loaded(T),Missing,Failed(String)}
+pub fn resolve_subagent_state_references<T,L,D>(mut inline:BTreeMap<String,T>,refs:BTreeMap<String,BlobRef>,load:L,decode:D)->Result<SubagentResolution<T>,String>where T:Send,L:Fn(&BlobRef)->Result<Option<Vec<u8>>,String>+Sync,D:Fn(&[u8])->Result<T,String>+Sync{
+ let entries=refs.iter().map(|(id,r)|(id.clone(),r.clone())).collect::<Vec<_>>();let mut missing=Vec::new();let mut failed=Vec::new();let mut fallback=Vec::new();
+ for chunk in entries.chunks(SUBAGENT_STATE_BLOB_FETCH_CONCURRENCY){let results=thread::scope(|scope|{let hs=chunk.iter().map(|(id,r)|{let id=id.clone();let r=r.clone();(id.clone(),scope.spawn(move||match load(&r){Ok(Some(b))=>decode(&b).map(Outcome::Loaded).unwrap_or_else(|e|Outcome::Failed(format!("invalid referenced subagent state for {id}: {e}"))),Ok(None)=>Outcome::Missing,Err(e)=>Outcome::Failed(format!("failed to load subagent state for {id}: {e}"))}))}).collect::<Vec<_>>();hs.into_iter().map(|(id,h)|(id,h.join().unwrap_or_else(|_|Outcome::Failed(format!("loader panicked for {id}"))))).collect::<Vec<_>>()});for(id,outcome)in results{match outcome{Outcome::Loaded(s)=>{inline.insert(id,s);},Outcome::Missing if inline.contains_key(&id)=>fallback.push(id),Outcome::Missing=>missing.push(format!("{}:{}",id,refs[&id].as_str())),Outcome::Failed(e)=>failed.push(e)}}}
+ if !missing.is_empty(){return Err(format!("subagent state ref blob not found: {}",missing.join(",")))}if let Some(e)=failed.into_iter().next(){return Err(e)}Ok(SubagentResolution{states:inline,inline_fallback_ids:fallback})
 }
+#[cfg(test)]mod tests{use super::*;use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};use std::time::Duration;#[test]fn inline_fallback_and_missing_diagnostic(){let r=BlobRef::from_content(b"x");let refs=BTreeMap::from([("a".into(),r.clone())]);let got=resolve_subagent_state_references(BTreeMap::from([("a".into(),"inline".to_string())]),refs,|_|Ok(None),|b|Ok(String::from_utf8_lossy(b).into_owned())).unwrap();assert_eq!(got.states["a"],"inline");assert_eq!(got.inline_fallback_ids,vec!["a"]);let e=resolve_subagent_state_references(BTreeMap::<String,String>::new(),BTreeMap::from([("a".into(),r.clone())]),|_|Ok(None),|b|Ok(String::from_utf8_lossy(b).into_owned())).unwrap_err();assert!(e.contains(r.as_str()))}
+#[test]fn fetches_concurrently_with_bound(){let mut refs=BTreeMap::new();let mut blobs=BTreeMap::new();for i in 0..16{let b=format!("{i}").into_bytes();let r=BlobRef::from_content(&b);refs.insert(i.to_string(),r.clone());blobs.insert(r,b);}let blobs=Arc::new(blobs);let active=Arc::new(AtomicUsize::new(0));let max=Arc::new(AtomicUsize::new(0));let a=active.clone();let m=max.clone();let result=resolve_subagent_state_references(BTreeMap::<String,String>::new(),refs,move|r|{let n=a.fetch_add(1,Ordering::SeqCst)+1;m.fetch_max(n,Ordering::SeqCst);thread::sleep(Duration::from_millis(5));let b=blobs.get(r).cloned();a.fetch_sub(1,Ordering::SeqCst);Ok(b)},|b|Ok(String::from_utf8_lossy(b).into_owned())).unwrap();assert_eq!(result.states.len(),16);assert!(max.load(Ordering::SeqCst)>1);assert!(max.load(Ordering::SeqCst)<=8)}}
