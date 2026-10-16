@@ -2,13 +2,13 @@
   "schema_version": 1,
   "authority": {
     "desktop_repository": "bhrumom/fabushi-desktop",
-    "desktop_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
+    "desktop_commit": "e875a19b03b11d0de8eae5cbb671076d0b4cf638",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
     "android_head_at_update": "d644e8a205d3e8b83530e7a49ed69e94120f4868",
     "status": "incomplete",
     "note": "Desktop canonical rebaselined to c33a9495fc1e640557d65f3e2daedc1449be7fcb / root tree 906b3f414b5ff343a5f0e627fa31b98778dfbf54 from GitHub Actions run 38731258547 artifact 11971095464. 13 changed/new source rows were reset for semantic re-audit; REMOTE-COMPUTER-001 was conservatively invalidated. Android migration remains incomplete pending source/responsibility closure and same-exact-head package/device/release evidence. Metadata correction: responsibility source_commit fields are normalized to the current Desktop authority because their referenced desktop source blobs are checked against the current full inventory; this does not promote implementation or verification status.",
-    "desktop_root_tree": "906b3f414b5ff343a5f0e627fa31b98778dfbf54"
+    "desktop_root_tree": "a95d4e16ce599aa3270e9116868f7b1570e0e443"
   },
   "responsibilities": [
     {
@@ -145,7 +145,7 @@
       "desktop_sources": [
         {
           "path": "source/product/fabushi/fabushi-account-service.ts",
-          "blob_sha": "d81cbde8d549c2a636911fb62092fb41466b3a8e",
+          "blob_sha": "0521d25cd9a00ebe03a254918e8218166afd47d6",
           "symbols": [
             "FabushiAuthService",
             "currentSession",
@@ -158,7 +158,7 @@
         },
         {
           "path": "source/product/fabushi/fabushi-account-policy.ts",
-          "blob_sha": "c7faad3934f84b088736409fc490ba50597fce58",
+          "blob_sha": "291fd47ae89aca36a24ca6f1866f2099af2b4a5f",
           "symbols": [
             "FabushiSession",
             "normalizeFabushiApiBaseUrl",
@@ -343,7 +343,7 @@
       "device_test": "blocked by protected test-account secrets until CI-AUTH-001 is resolved",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification. Desktop account-authorization.ts adds a pre-scope authorization/foreign-durable-data fence. Android current Host/session/epoch owners are mapped, but exact descriptor-to-existing-data claim parity remains open and therefore not verified. Desktop cursor-machine-id.ts was re-audited at blob dc762cb2bbe73c54740cd0219d0739b7980852c6; Android production now preserves its stable encrypted-device-identity responsibility through AndroidMachineIdStore + typed JNI, without creating a second Rust production identity owner. Desktop env-descriptor-account-binding.ts (7584b45f...) and production-account-authorization.ts (10ed5490...) were re-audited against the Android Host. The Android replacement uses normalized Fabushi API descriptor plus hashed account storage scope, performs binding before accepting new production session truth, and reserves existing-data migration for an already-protected startup session. Desktop cursor-avatar.ts blob f59db646b964a8c1142fda525e07d9049816beb4 was re-audited against the current Desktop account menu. Android now preserves the user-visible avatar capability in both Settings and Home while keeping bearer/session ownership in Host; exact-head CI/package/device rendering remains required. Desktop account-revoke.ts (751383358ea46f2a5adc89fda977806f9f95c7b9) and account-transition-cleanup.ts (f5734b4114866e02ff0a7fcc83d7128be6f9afa8) were re-read at Desktop main. Android keeps revocation/session truth in the auth owner and now centralizes transition cleanup instead of leaving switch/logout paths divergent. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 26aed63fe6766b73b71481ffa43c790ee7d49c5f exact-blob source re-audit: source/product/fabushi/fabushi-account-service.ts -> mapped (android-adapted); source status does not promote responsibility verification. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/src/extensions/auth/auth_service.rs blob e063f2d072d64559544fc1cb8a1050f5999599e3 audited at Android f43715d62bc006382eb8b6338b0afa82a4f96769: Desktop separates Cursor/Sand renewal from first-party Fabushi Core credentials, reads Core credentials on demand to avoid stale-account caching, and fails closed on expiry/malformed identity. Android adapts this into Rust AndroidAccountService with protected AndroidAccountSessionStore persistence and revocation fencing; provider-specific inference renewal closure is not claimed by this mapping.",
+      "notes": "Implemented from exact Desktop account source facts. Production feature.auth.oauthStart/oauthPoll no longer uses fabushi.invalid or consumes a pending attempt. Do not mark verified until the new exact HEAD passes Rust/Kotlin/package evidence and protected packaged/device login proves durable restore, cancellation, refresh, stale callback/account fencing. FBCP Revision 7 is a cross-cutting source authority for this responsibility; this mapping does not upgrade implementation_status or verification_status. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification. Desktop account-authorization.ts adds a pre-scope authorization/foreign-durable-data fence. Android current Host/session/epoch owners are mapped, but exact descriptor-to-existing-data claim parity remains open and therefore not verified. Desktop cursor-machine-id.ts was re-audited at blob dc762cb2bbe73c54740cd0219d0739b7980852c6; Android production now preserves its stable encrypted-device-identity responsibility through AndroidMachineIdStore + typed JNI, without creating a second Rust production identity owner. Desktop env-descriptor-account-binding.ts (7584b45f...) and production-account-authorization.ts (10ed5490...) were re-audited against the Android Host. The Android replacement uses normalized Fabushi API descriptor plus hashed account storage scope, performs binding before accepting new production session truth, and reserves existing-data migration for an already-protected startup session. Desktop cursor-avatar.ts blob f59db646b964a8c1142fda525e07d9049816beb4 was re-audited against the current Desktop account menu. Android now preserves the user-visible avatar capability in both Settings and Home while keeping bearer/session ownership in Host; exact-head CI/package/device rendering remains required. Desktop account-revoke.ts (751383358ea46f2a5adc89fda977806f9f95c7b9) and account-transition-cleanup.ts (f5734b4114866e02ff0a7fcc83d7128be6f9afa8) were re-read at Desktop main. Android keeps revocation/session truth in the auth owner and now centralizes transition cleanup instead of leaving switch/logout paths divergent. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 26aed63fe6766b73b71481ffa43c790ee7d49c5f exact-blob source re-audit: source/product/fabushi/fabushi-account-service.ts -> mapped (android-adapted); source status does not promote responsibility verification. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/src/extensions/auth/auth_service.rs blob e063f2d072d64559544fc1cb8a1050f5999599e3 audited at Android f43715d62bc006382eb8b6338b0afa82a4f96769: Desktop separates Cursor/Sand renewal from first-party Fabushi Core credentials, reads Core credentials on demand to avoid stale-account caching, and fails closed on expiry/malformed identity. Android adapts this into Rust AndroidAccountService with protected AndroidAccountSessionStore persistence and revocation fencing; provider-specific inference renewal closure is not claimed by this mapping. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit.",
       "android_head_at_update": "170facdd2f04e0fb51301e5dbdcdcbbec31fdb2d"
     },
     {
@@ -1067,7 +1067,7 @@
         },
         {
           "path": "source/mahayana/mahayana-rs/mahayana-runtime/src/lib.rs",
-          "blob_sha": "96a29466fc30467266686a56273cfb4726bbf4d6",
+          "blob_sha": "d9d5a6541ed48ce8eaade65d14d7221fe6f3bed4",
           "symbols": [
             "RuntimeCommand::AuthorizeCapability",
             "RuntimeCommand::InvokeCapability",
@@ -1079,7 +1079,7 @@
         },
         {
           "path": "source/mahayana/mahayana-rs/mahayana-runtime/src/runtime_store.rs",
-          "blob_sha": "63c4934d3cf53d1b76d247ba604852912a7d5eee",
+          "blob_sha": "881d960dc7c58684e9c739a15b4edc41e0ddb29a",
           "symbols": [
             "RuntimeStore capability_audit persistence"
           ]
@@ -1171,7 +1171,7 @@
       ],
       "android_owner": "Rust CapabilityBroker under Android Host",
       "platform_delta": "Android uses native Compose/platform adapters + typed JNI while preserving canonical Rust owners where platform-independent.",
-      "implementation_status": "implemented",
+      "implementation_status": "mapped",
       "production_wiring": "Rust CapabilityBroker is the production execution boundary for runtime.call and one-time feature approvals. runtime.call binds exact plugin/tool capability, bounded JSON arguments, immutable-release permission set, hashed account-session fence, runtime generation and stable requestId before DeepSeekJsHost execution. A process-shared cancellation control registry is exposed through a cancellation-only JNI side channel so runtime.cancel, runtime.stop, grant revoke and logout can signal an in-flight call without concurrent mutable Host/QuickJS access; post-dispatch release/grant/account/generation/cancellation are rechecked and uncertainty settles outcome-unknown. feature.approval.resolve consumes durable account-fenced one-time approval state; the legacy capability_broker_execution_not_migrated placeholder is absent.",
       "unit_test": "Broker tests cover Allow/NeedsUser/Deny, parameter/target/permission validation, durable one-time approval accept/decline, duplicate consume, stale-account fencing, cancellation/restart, duplicate call, deadline/generation/account fencing and audit persistence. Host contract drives real DeepSeekJsHost success/error/duplicate/timeout plus concurrent request cancel and stop/call signalling. Exact-head Actions required.",
       "contract_test": "Production runtime.call requires active immutable release, every declared persisted grant, plugin-scoped registered tool, stable requestId, bounded object arguments, session-specific account fence and runtime generation. Cancellation JNI path only touches Arc/Atomic control state while normal dispatch remains serialized. Same exact-head CI required.",
@@ -1180,7 +1180,7 @@
       "device_test": "required on emulator/physical device as applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented production Rust authorization/cancellation boundary and intentionally remains not-verified pending same-exact-HEAD package/device evidence. For Box/External/Computer/Browser, authorization is necessary but not sufficient: Desktop current-main exposes those capabilities only through explicit resource/executor ports, while current Android Host has no proven outbound executor adapter. The inbound FabushiRemoteDeviceGateway must not be reused as outbound execution authority and no transport may be invented. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Auto-review source audit at Android 7de28f271ef94c3bd47d2deeef1d67c539be359f confirms durable approval/account/operation identity exists. Missing parity is the Desktop Shell/MCP escalation/recheck contract, browser post-review state recheck, and Shell target-definition enrichment; integrate into existing broker/review owners, not a parallel registry. Desktop source/host/src/runner/tools/sand_permission_request.rs is intentionally not direct-ported: current Desktop defines this helper as a legacy, non-actionable summary only. Android replaces that inert wire artifact with the existing Host Capability Broker/native approval lifecycle, preserving real user authorization while avoiding a second stale permission truth.",
+      "notes": "Implemented production Rust authorization/cancellation boundary and intentionally remains not-verified pending same-exact-HEAD package/device evidence. For Box/External/Computer/Browser, authorization is necessary but not sufficient: Desktop current-main exposes those capabilities only through explicit resource/executor ports, while current Android Host has no proven outbound executor adapter. The inbound FabushiRemoteDeviceGateway must not be reused as outbound execution authority and no transport may be invented. Current Desktop rows 571-574 (box-exec Cargo/CLI/lib/entrypoint) were reviewed against the Android Remote Runner crate. Android intentionally replaces the desktop-local daemon process lifecycle with TLS/device-bound remote execution plus durable execute/reconcile/cancel semantics; this mapping remains not-verified pending exact-head production/package/device evidence. Auto-review source audit at Android 7de28f271ef94c3bd47d2deeef1d67c539be359f confirms durable approval/account/operation identity exists. Missing parity is the Desktop Shell/MCP escalation/recheck contract, browser post-review state recheck, and Shell target-definition enrichment; integrate into existing broker/review owners, not a parallel registry. Desktop source/host/src/runner/tools/sand_permission_request.rs is intentionally not direct-ported: current Desktop defines this helper as a legacy, non-actionable summary only. Android replaces that inert wire artifact with the existing Host Capability Broker/native approval lifecycle, preserving real user authorization while avoiding a second stale permission truth. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit.",
       "android_head_at_update": "7de28f271ef94c3bd47d2deeef1d67c539be359f"
     },
     {
@@ -2795,7 +2795,7 @@
       "desktop_sources": [
         {
           "path": "source/product/fabushi/fabushi-account-service.ts",
-          "blob_sha": "d81cbde8d549c2a636911fb62092fb41466b3a8e",
+          "blob_sha": "0521d25cd9a00ebe03a254918e8218166afd47d6",
           "symbols": [
             "login",
             "cancelLogin",
@@ -2866,7 +2866,7 @@
       "device_test": "blocked only for protected-account journey by FABUSHI_CI_TEST_USERNAME/PASSWORD; non-secret tests proceed in Actions",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Source implemented, not verified. Stale callback/account-switch fencing still needs protected integration evidence. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 26aed63fe6766b73b71481ffa43c790ee7d49c5f exact-blob source re-audit: source/product/fabushi/fabushi-account-service.ts -> mapped (android-adapted); source status does not promote responsibility verification."
+      "notes": "Source implemented, not verified. Stale callback/account-switch fencing still needs protected integration evidence. Source audit c36d3d48ec44bacaea14b024b2a73f043ac1977b: linked current Desktop access/account UI contract anchors; mapped/implemented source rows retain their own exact status and do not upgrade this responsibility verification. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 26aed63fe6766b73b71481ffa43c790ee7d49c5f exact-blob source re-audit: source/product/fabushi/fabushi-account-service.ts -> mapped (android-adapted); source status does not promote responsibility verification. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "ACCOUNT-MACHINE-ID-ANDROID-001",
@@ -3278,7 +3278,7 @@
         },
         {
           "path": "source/mahayana/mahayana-rs/mahayana-runtime/src/runtime_store.rs",
-          "blob_sha": "63c4934d3cf53d1b76d247ba604852912a7d5eee",
+          "blob_sha": "881d960dc7c58684e9c739a15b4edc41e0ddb29a",
           "symbols": [
             "record_turn",
             "record_run",
@@ -3367,7 +3367,7 @@
       ],
       "android_owner": "Rust DurableTurnJournal + ProductionTurnAgentOwner under Host",
       "platform_delta": "Android process death is treated as a first-class lifecycle boundary; persistent journal replaces desktop-process lifetime assumptions.",
-      "implementation_status": "implemented",
+      "implementation_status": "mapped",
       "production_wiring": "queue_chat_turn persists the durable run before thread/provider dispatch; completion/failure/cancel/spawn/provider-init failures settle the same record; cold start fences in-flight records as outcome-unknown.",
       "unit_test": "Rust tests cover duplicate request, account/generation stale fencing, terminal race, process restart outcome-unknown, cancellation persistence/idempotency; exact-head Actions required.",
       "contract_test": "Existing Host production chat path must compile/run against the journal on same exact HEAD.",
@@ -3376,7 +3376,7 @@
       "device_test": "Blocked on protected-account emulator journey until Actions secrets are configured.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Implemented source/production wiring, intentionally not verified until same exact-head CI plus packaged process-death evidence. Coordinator pending/event replay remains an adjacent open responsibility. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/turn_runtime.rs@50272d988ed531632d970cf2904138f92f392172 — Desktop turn runtime owns terminal projection, bounded reply/closing-send nudges and queued stale-turn supersession. Android has durable turn identity and kickstart nudge pieces, but full three-nudge/closing-send/queued-stale semantics remain not fully closed."
+      "notes": "Implemented source/production wiring, intentionally not verified until same exact-head CI plus packaged process-death evidence. Coordinator pending/event replay remains an adjacent open responsibility. docs/fabu-agent-architecture-parity.md is an architecture/reference authority rather than shipping production code; it reinforces per-Agent ownership, bounded inference context over durable transcript, per-turn runner lifetime, independent subagent lineage and no renderer-global canonical run truth. Keep non-verified until the concrete shipping responsibilities and exact-head evidence close. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/turn_runtime.rs@50272d988ed531632d970cf2904138f92f392172 — Desktop turn runtime owns terminal projection, bounded reply/closing-send nudges and queued stale-turn supersession. Android has durable turn identity and kickstart nudge pieces, but full three-nudge/closing-send/queued-stale semantics remain not fully closed. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "REMOTE-COMMAND-JOURNAL-001",
@@ -4272,7 +4272,7 @@
         },
         {
           "path": "projects/grok-fabu-parity/architecture-semantic-adaptations.json",
-          "blob_sha": "393689406db74fbbf19e2060e2e7f4e32869813c",
+          "blob_sha": "5b241d25a3b38eff8732a7ae20b489383d571963",
           "symbols": [
             "semantic source/responsibility authority reviewed at current Desktop main"
           ]
@@ -4329,7 +4329,7 @@
       "device_test": "Not applicable: no user-visible runtime mechanism exists to execute on device.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Audit conclusion: the Desktop writeback importer is intentionally absent on Android. The user-visible/product-quality requirement—reproducible, non-drifting migration authority—is retained by the pinned Desktop-main inventory/checker. This row remains not-verified until the ledger-update exact HEAD passes the same authority workflows. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked desktop/tsconfig.grok-electron.json at Desktop blob 9bf6d4880371b60ce2becfc39f56cae6b333c34f as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked projects/grok-fabu-parity/architecture-semantic-adaptations.json at Desktop blob 393689406db74fbbf19e2060e2e7f4e32869813c as not-applicable-with-replacement; this does not promote verification."
+      "notes": "Audit conclusion: the Desktop writeback importer is intentionally absent on Android. The user-visible/product-quality requirement—reproducible, non-drifting migration authority—is retained by the pinned Desktop-main inventory/checker. This row remains not-verified until the ledger-update exact HEAD passes the same authority workflows. Rows 556-570 of current Desktop authority were semantically reviewed as historical TDRP/Grok discovery, architecture-import and Rust-finalization tooling; Android maps their applicable fail-closed authority/provenance duties to current Desktop source closure and exact-head CI without inheriting historical completion. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked desktop/tsconfig.grok-electron.json at Desktop blob 9bf6d4880371b60ce2becfc39f56cae6b333c34f as not-applicable-with-replacement; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked projects/grok-fabu-parity/architecture-semantic-adaptations.json at Desktop blob 393689406db74fbbf19e2060e2e7f4e32869813c as not-applicable-with-replacement; this does not promote verification. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "CI-RUST-PARITY-FINALIZE-REPLACEMENT-001",
@@ -4462,7 +4462,7 @@
       "desktop_sources": [
         {
           "path": ".github/workflows/release-macos-main.yml",
-          "blob_sha": "e602f5e89059a76f79372a6212b9a886a6425e9c",
+          "blob_sha": "97d72b4e51ffe467d56687f2903f513089b11428",
           "symbols": [
             "publish",
             "exact-source package",
@@ -4620,7 +4620,7 @@
       "device_test": "Open: real device clean install, same-signature upgrade, process death/restart during journeys, account/chat/tools/MCP/Mini App/notifications/offline/upgrade remain P01-P24 requirements; protected account secrets are currently unavailable.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "This row is mapped, not implemented/verified. The macOS workflow carries applicable release-quality responsibilities that Android must preserve through native platform mechanisms; current Android CI closes only part of that release envelope. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/release-macos-main.yml at Desktop blob e602f5e89059a76f79372a6212b9a886a6425e9c as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked desktop/scripts/notarize-after-sign.cjs at Desktop blob 5f140c6ff8587b4969e1611ec9030a8c5dc5a6f1 as not-applicable-with-replacement; this does not promote verification."
+      "notes": "This row is mapped, not implemented/verified. The macOS workflow carries applicable release-quality responsibilities that Android must preserve through native platform mechanisms; current Android CI closes only part of that release envelope. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/release-macos-main.yml at Desktop blob e602f5e89059a76f79372a6212b9a886a6425e9c as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked desktop/scripts/notarize-after-sign.cjs at Desktop blob 5f140c6ff8587b4969e1611ec9030a8c5dc5a6f1 as not-applicable-with-replacement; this does not promote verification. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "RUST-ANDROID-RUNTIME-GATE-001",
@@ -14467,7 +14467,7 @@
         },
         {
           "path": "frontend/src/recovered/features/plugins/overlay/desktop-surface.tsx",
-          "blob_sha": "bc259edbbe8ff8f4639af6e557e7914163391517",
+          "blob_sha": "a899cdcb1d12ae1631986b569a9c04feb1e454f5",
           "symbols": [
             "plugins overlay native presentation/model semantics"
           ]
@@ -14488,7 +14488,7 @@
         },
         {
           "path": "frontend/src/recovered/features/plugins/overlay/view.tsx",
-          "blob_sha": "cfab87428ce2a74eb6cc48abb53971f090aee3a1",
+          "blob_sha": "d1b80a3c0d850b9c637faf3ca4e9f98ada004625",
           "symbols": [
             "plugins overlay native presentation/model semantics"
           ]
@@ -14548,7 +14548,7 @@
       "device_test": "required",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Keep mapped until the full overlay interaction set is production-wired and same-head package/device evidence passes.",
+      "notes": "Keep mapped until the full overlay interaction set is production-wired and same-head package/device evidence passes. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit.",
       "android_head_at_update": "c3523f6ddf474c507e1d724592f400bf6437ea0f"
     },
     {
@@ -16702,7 +16702,7 @@
       "desktop_sources": [
         {
           "path": "source/electron-main/startup/desktop-user-data-bootstrap.ts",
-          "blob_sha": "95b67e98e09038a32935b4d51f9cf41173986fa2"
+          "blob_sha": "089200ea0477712de5d7d4edf3331181032df50a"
         },
         {
           "path": "source/electron-main/startup/startup-data-root-migration.ts",
@@ -16740,7 +16740,7 @@
       "device_test": "required: upgrade/process-kill/account-switch and Keystore invalidation behavior",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Desktop path/PID mechanisms are not portable, but the migration/conflict/recovery product responsibility remains applicable. Do not mark implemented from individual store versions alone."
+      "notes": "Desktop path/PID mechanisms are not portable, but the migration/conflict/recovery product responsibility remains applicable. Do not mark implemented from individual store versions alone. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "TELEMETRY-AGENT-LOAD-ANDROID-001",
@@ -19356,7 +19356,7 @@
       "desktop_sources": [
         {
           "path": "source/host/src/extensions/session/native_messaging.rs",
-          "blob_sha": "984c5e023bdf2475cbec5f5db73330ad162dd78d",
+          "blob_sha": "08e0921e9826006e109ed4253d518fad8bf4c68c",
           "symbols": [
             "upload_direct_message_resource",
             "send_direct_message",
@@ -19413,7 +19413,7 @@
       ],
       "android_owner": "Rust Host canonical messaging/account/outbound owners",
       "platform_delta": "Desktop NativeMessagingClient couples transport to the desktop session extension. Android keeps the same backend wire contract but splits canonical blob ownership, account-bound binary transport, and durable side-effect journals behind the typed Host/JNI runtime.",
-      "implementation_status": "implemented",
+      "implementation_status": "mapped",
       "production_wiring": "AndroidJsonHost derives attachment intent from canonical messaging, uploads canonical owned blob bytes through AndroidAccountService, durably settles resource outcome, includes resource IDs in the message outbound identity/body, then reconciles server echo.",
       "unit_test": "account_service device_bound_human_resource_transport_preserves_binary_contract; messaging_service remote_human_send_intent_is_owned_by_canonical_direct_conversation; human_remote_resource_outbound reopen/payload/stale/rejection tests; human_remote_outbound attachment_resource_ids_are_part_of_idempotency_identity. Exact-head CI pending.",
       "contract_test": "Desktop multipart/resource limits/device-header contract mirrored in Rust; exact-head Actions pending.",
@@ -19422,7 +19422,7 @@
       "device_test": "required on protected Android device/emulator with attachment send and process-death replay fencing",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Outbound attachment responsibility only. Desktop native_messaging.rs remains mapped because inbound resource download, full call/ICE/device acceptance and same-final-head evidence are not closed."
+      "notes": "Outbound attachment responsibility only. Desktop native_messaging.rs remains mapped because inbound resource download, full call/ICE/device acceptance and same-final-head evidence are not closed. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "HOST-EVENT-BUS-ANDROID-001",
@@ -22060,7 +22060,7 @@
         },
         {
           "path": "source/host/src/host_gateway_api.rs",
-          "blob_sha": "b983d0d112a1cc30c8ca2c1d4678704ddf88890f",
+          "blob_sha": "e93659285baf4903d3c97cf85629864341ad4126",
           "symbols": [
             "HostGatewayOwner",
             "CreateAgentNonceLedger",
@@ -22076,7 +22076,7 @@
         },
         {
           "path": "source/host/app/src/main.rs",
-          "blob_sha": "4488df58e2739e11955a885c3845b95caf318c55",
+          "blob_sha": "b2a43eaaaa3109b7a45f7e1b428144cd3606e980",
           "symbols": [
             "main",
             "HostLaneRequest",
@@ -22150,7 +22150,7 @@
       "device_test": "required: login/chat/tools/MCP/WebAuthn/remote reconnect/process-death/account-switch journeys",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Semantic mapping only. Do not mark implemented/verified until every applicable Desktop gateway responsibility is proven through Android shipping composition plus same-exact-HEAD integration/package/device evidence. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/transport.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop SandTransport records assigned send/reaction outcomes from ingested updates. Android replaces this with Host event/transcript mutation ownership plus durable send acknowledgements and typed Agent reaction desired-state reconciliation. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner."
+      "notes": "Semantic mapping only. Do not mark implemented/verified until every applicable Desktop gateway responsibility is proven through Android shipping composition plus same-exact-HEAD integration/package/device evidence. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/transport.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop SandTransport records assigned send/reaction outcomes from ingested updates. Android replaces this with Host event/transcript mutation ownership plus durable send acknowledgements and typed Agent reaction desired-state reconciliation. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "TRANSCRIPT-INITIAL-LOAD-ANDROID-001",
@@ -22300,7 +22300,7 @@
         },
         {
           "path": "source/host/app/src/main.rs",
-          "blob_sha": "4488df58e2739e11955a885c3845b95caf318c55",
+          "blob_sha": "b2a43eaaaa3109b7a45f7e1b428144cd3606e980",
           "symbols": [
             "main",
             "acquire_host_lock"
@@ -22345,7 +22345,7 @@
       ],
       "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
       "platform_delta": "Android removes arbitrary process command inspection/termination and uses fail-closed stale/live PID ownership.",
-      "implementation_status": "implemented",
+      "implementation_status": "mapped",
       "production_wiring": "Production AndroidNativeRuntime constructs AndroidHostBootstrapGuard under the app-private host-runtime root, acquires host.lock through Rust acquire_host_lock, publishes generation-fenced JNI native-runtime discovery, and removes only owned lock/discovery state on drop. Android never kills a competing process; stale/foreign PID handling is fail-closed/reclaim-only. Process reopen increments Coordinator generation and surfaces unresolved work as outcome-unknown instead of replaying side effects.",
       "unit_test": "Exact HEAD a2fb6651d7106683b83fa4bbf8f166102da27850 Grok Android Architecture run 38813077143 / rust-runtime-foundation job 116690882300 passed workspace/all-targets. android-host-jni production_runtime_owns_host_lock_and_generation_fenced_native_discovery and production_reopen_surfaces_coordinator_outcome_unknown_instead_of_replaying_request passed.",
       "contract_test": "source/host/tests/android_bootstrap_shipping_contract.rs proves the production JNI owner constructs AndroidHostBootstrapGuard, uses app-private host.lock/native discovery, forbids process kill, reclaims unrelated stale PID ownership without takeover, and fences discovery clear by pid+generation.",
@@ -22354,7 +22354,7 @@
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Shipping lifecycle proof is present in Rust/JNI production composition. Promoted to implemented only; verification remains open for final packaged/device lifecycle acceptance on a descendant exact HEAD.",
+      "notes": "Shipping lifecycle proof is present in Rust/JNI production composition. Promoted to implemented only; verification remains open for final packaged/device lifecycle acceptance on a descendant exact HEAD. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit.",
       "android_head_at_update": "a2fb6651d7106683b83fa4bbf8f166102da27850"
     },
     {
@@ -22454,7 +22454,7 @@
         },
         {
           "path": "source/host/app/src/main.rs",
-          "blob_sha": "4488df58e2739e11955a885c3845b95caf318c55",
+          "blob_sha": "b2a43eaaaa3109b7a45f7e1b428144cd3606e980",
           "symbols": [
             "main",
             "start_production_host_extensions",
@@ -22512,7 +22512,7 @@
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "ProductionExtensionRegistry is not a shipping proof; full extension composition remains open. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/mod.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop ports module is composition-only for transport/computer/analytics/box/MCP ports. Android deliberately decomposes these into typed platform/runtime owners; host production composition is the replacement seam. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner."
+      "notes": "ProductionExtensionRegistry is not a shipping proof; full extension composition remains open. Desktop authority b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d source source/host/src/ports/mod.rs mapped at Android b1085504afbf51b9e5e6c127ce0353d6a746f898: Desktop ports module is composition-only for transport/computer/analytics/box/MCP ports. Android deliberately decomposes these into typed platform/runtime owners; host production composition is the replacement seam. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "HOST-REQUEST-CONTEXT-ANDROID-001",
@@ -22670,7 +22670,7 @@
         },
         {
           "path": "source/host/app/src/main.rs",
-          "blob_sha": "4488df58e2739e11955a885c3845b95caf318c55",
+          "blob_sha": "b2a43eaaaa3109b7a45f7e1b428144cd3606e980",
           "symbols": [
             "main",
             "HostRunnerComposition",
@@ -22719,7 +22719,7 @@
       ],
       "android_owner": "Rust Host/domain owner plus Android-specific lifecycle/storage/transport adapter",
       "platform_delta": "Desktop local/Box production turn surfaces become AndroidLocalRunner plus authenticated Remote Runner with explicit account/grant transport fencing.",
-      "implementation_status": "implemented",
+      "implementation_status": "mapped",
       "production_wiring": "Shipping AndroidJsonHost owns one AndroidLocalRunner and one optional AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>. set_remote_binding_json validates the account-fenced RemoteDispatchBinding, constructs the authenticated TLS transport plus durable remote execution journal, and clears both binding and runner together. Root turn composition passes the same local_runner into with_local_file_tools and the same remote_runner/binding into with_remote_routed_tools; RemoteRoutedTools only exposes executors advertised by the live account-fenced binding. AuthenticatedRemoteHostRunner persists the maybe-sent boundary before transport dispatch, returns outcome-unknown rather than replaying ambiguous side effects, and requires explicit reconcile_authorized for unknown completion. No UI/Compose execution owner or implicit local-to-remote fallback is introduced.",
       "unit_test": "host_runner_composition focused tests cover authenticated remote execution, durable sent/outcome-unknown/reconcile/cancel semantics and local/remote target separation; remote_routed_tools and local_routed_tools focused tests cover capability/approval/account/cancel bounds. Exact-head GitHub Actions required.",
       "contract_test": "AndroidJsonHost -> with_local_file_tools/with_remote_routed_tools -> AndroidLocalRunner/AuthenticatedRemoteHostRunner shipping call chain re-read at exact head; same-head architecture/Rust/full CI still required.",
@@ -22728,7 +22728,7 @@
       "device_test": "required for lifecycle/process-death/account-switch behavior where applicable",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Promoted from mapped to implemented only after direct caller/shipping-composition audit on 8e60857a67bf318201b5a5c8538b6e65a661af36. Not verified: strict source ledger, signed package and device acceptance remain open; Remote executors not advertised by the binding remain intentionally unavailable. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner."
+      "notes": "Promoted from mapped to implemented only after direct caller/shipping-composition audit on 8e60857a67bf318201b5a5c8538b6e65a661af36. Not verified: strict source ledger, signed package and device acceptance remain open; Remote executors not advertised by the binding remain intentionally unavailable. Desktop 8148bfb9e747d446dd3d97342c3cf04a0ed407a2 source/host/app/src/main.rs blob 4488df58e2739e11955a885c3845b95caf318c55 was semantically audited at Android b602107ca62912af5820d1284fb7c2a099712fee: the executable composes this responsibility in the shipping Desktop Host; Android replaces the standalone process/stdin-signal mechanism with the process-owned MahayanaHost -> typed JNI -> AndroidJsonHost composition while retaining the Rust canonical owner. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "HOST-SCHEDULING-POLICIES-ANDROID-001",
@@ -58706,27 +58706,31 @@
             "ListenerConnectWatcher",
             "watch",
             "tick"
-          ]
+          ],
+          "blob_sha": "11bdcdc6c99c761775a109dea45110191a44d42a"
         },
         {
           "path": "source/host/src/extensions/automations/listener_connect_watcher_production.rs",
           "symbols": [
             "ProductionListenerConnectWatcher"
-          ]
+          ],
+          "blob_sha": "3e99ae3c54f637e64ab6bc025053dfd910a914ee"
         },
         {
           "path": "source/host/src/extensions/automations/listener_integrations.rs",
           "symbols": [
             "PlatformConnectionReader",
             "ProductionListenerIntegrations"
-          ]
+          ],
+          "blob_sha": "2602bce81af72f2710ea0e30558712dcb8076c9f"
         },
         {
           "path": "source/host/app/src/main.rs",
           "symbols": [
             "routine post-write listener card wiring",
             "resume_after_listener_connect"
-          ]
+          ],
+          "blob_sha": "b2a43eaaaa3109b7a45f7e1b428144cd3606e980"
         }
       ],
       "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
@@ -58780,7 +58784,7 @@
       ],
       "android_owner": "AndroidJsonHost + DurableListenerConnectWatchStore + AndroidListenerConnectivity over CursorDashboardMcpAuthBackend.",
       "platform_delta": "Desktop uses an autonomous 5-second worker tied to desktop lifecycle. Android drives bounded polling from the continuously consumed Host receive loop and persists watcher state so OS process death does not lose the reconnect obligation.",
-      "implementation_status": "implemented",
+      "implementation_status": "mapped",
       "production_wiring": "Exact code HEAD 64dd67cfa3231dccdfbaf0e2b04489a78a39ba15 wires feature.automation.upsert -> canonical backend connectivity -> durable transcript card -> durable watcher; feature.receive restores/polls current-account watches and queues one deterministic hidden handoff-resume turn after a real false-to-true backend transition. Production uses Dashboard GetSlackUserSettings/GetScmConnectionStatus; local FileChannelStore is test-only fallback.",
       "unit_test": "Exact-head run 38761115983 / rust-runtime-foundation job 116512325830 succeeded. Focused tests cover card filtering, durable false-to-true arming, lookup-failure non-mutation, generation/account fencing, duplicate ACK, RPC path/protobuf contract and process reopen.",
       "contract_test": "Exact-head 64dd67cf run 38761115983 job 116512325830 succeeded and asserts the Desktop shipping Dashboard RPC paths plus hidden-resume flags/turn-journal ownership in Host tests.",
@@ -58789,7 +58793,7 @@
       "device_test": "Not closed with protected account against real GitHub/Slack OAuth reconnect on packaged Android.",
       "artifact": "Run 38761115983 / job 116512325830 is exact-head Rust/Host evidence; no release artifact claimed.",
       "verification_status": "not-verified",
-      "notes": "Implementation is closed at Rust Host/source responsibility level, but verification remains open until strict full-source closure plus final packaged/protected-device acceptance. This does not close the broader AUTOMATION-CLOUD-SYNC-ANDROID-001 cloud relay/fire responsibility or frontend TRANSCRIPT-LISTENER-INTEGRATIONS-ANDROID-001 presentation/connect-flow responsibility."
+      "notes": "Implementation is closed at Rust Host/source responsibility level, but verification remains open until strict full-source closure plus final packaged/protected-device acceptance. This does not close the broader AUTOMATION-CLOUD-SYNC-ANDROID-001 cloud relay/fire responsibility or frontend TRANSCRIPT-LISTENER-INTEGRATIONS-ANDROID-001 presentation/connect-flow responsibility. Desktop authority rebaseline to e875a19b03b11d0de8eae5cbb671076d0b4cf638: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit."
     },
     {
       "responsibility_id": "TOOLS-SPOTLIGHT-UNTRUSTED-CONTENT-ANDROID-001",
