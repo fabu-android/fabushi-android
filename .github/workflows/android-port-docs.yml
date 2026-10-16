@@ -8,6 +8,8 @@ on:
       - 'docs/specs/desktop-main-android-full-parity.md'
       - 'ANDROID_PORT.md'
       - 'scripts/android-port-docs.py'
+      - 'scripts/check_grok_android_parity.py'
+      - 'tests/test_parity_checker.py'
       - '.github/workflows/android-port-docs.yml'
   workflow_dispatch:
 permissions:
