@@ -52,10 +52,10 @@ human takeover / waiting-input 必须显示请求内容、涉及资源、截止�
 
 ## 参考
 
-[WorkManager PeriodicWorkRequest 的实际执行时机](https://developer.android.com/reference/androidx/work/PeriodicWorkRequest.Builder)、[Android 前台服务限制](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)、[Desktop 完整源锁](https://github.com/bhrumom/fabushi-desktop/tree/3bc92400826cc4ca7ac665b467708e22261edc61)。具体调度周期与 API 取值由真实产品需求和发布所锁定版本验证，不凭本文新增后台无限运行保证。
+[WorkManager PeriodicWorkRequest 的实际执行时机](https://developer.android.com/reference/androidx/work/PeriodicWorkRequest.Builder)、[Android 前台服务限制](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)、[Desktop 当前完整源锁](https://github.com/bhrumom/fabushi-desktop/tree/12a4e29819592e3a7e32f7435cb0cf2e3cc53848)。具体调度周期与 API 取值由真实产品需求和发布所锁定版本验证，不凭本文新增后台无限运行保证。
 
 ## 状态、追溯与使用规则
 
 本文件原写于 2026-10-09，现作为仓库 Android 实施规范。设计流程与字段不保证已经由 Android 生产实现，也不是产品测试通过报告；须以源合同、真实入口、状态机和 CI 正反向结果逐项验收。只在 GitHub Actions 构建/测试。
 
-固定 Desktop main：`3bc92400826cc4ca7ac665b467708e22261edc61`。8,172 项文件清单尚需人工职责映射。
+当前 Desktop main：`12a4e29819592e3a7e32f7435cb0cf2e3cc53848` / tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`。当前完整清单仍需人工职责映射。
