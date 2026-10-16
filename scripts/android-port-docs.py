@@ -38,6 +38,37 @@ def save(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
+def current_android_provenance() -> dict:
+    """Return the exact Android checkout/run identity used to generate evidence."""
+    head = os.environ.get('ANDROID_PR_HEAD_SHA') or os.environ.get('GITHUB_SHA')
+    require(SHA.fullmatch(head or '') is not None, 'Invalid Android PR head SHA')
+    checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
+    require(checkout == head, f'Android checkout/head mismatch: checkout={checkout} head={head}')
+    run_id = os.environ.get('GITHUB_RUN_ID')
+    run_attempt = os.environ.get('GITHUB_RUN_ATTEMPT')
+    pr_number = os.environ.get('ANDROID_PR_NUMBER') or '3'
+    return {
+        'android_repository': os.environ.get('GITHUB_REPOSITORY', 'fabu-android/fabushi-android'),
+        'android_pr': int(pr_number),
+        'android_pr_head_sha': head,
+        'android_pr_head_ref': os.environ.get('ANDROID_PR_HEAD_REF') or os.environ.get('GITHUB_REF_NAME'),
+        'android_pr_base_sha': os.environ.get('ANDROID_PR_BASE_SHA') or None,
+        'android_pr_base_ref': os.environ.get('ANDROID_PR_BASE_REF') or None,
+        'android_checkout_sha': checkout,
+        'workflow_event': os.environ.get('GITHUB_EVENT_NAME'),
+        'workflow_run_id': int(run_id) if run_id else None,
+        'run_attempt': int(run_attempt) if run_attempt else None,
+        'workflow_sha': os.environ.get('GITHUB_WORKFLOW_SHA') or None,
+        'workflow_ref': os.environ.get('GITHUB_WORKFLOW_REF') or None,
+        'run_url': (
+            f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
+            f"{os.environ.get('GITHUB_REPOSITORY', 'fabu-android/fabushi-android')}/actions/runs/{run_id}"
+            if run_id else None
+        ),
+        'generated_at_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+    }
+
+
 def get(endpoint: str) -> dict:
     require(endpoint.startswith('/repos/'), 'Only public repository GET endpoints are supported')
     headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'Fabushi-Android-Docs', 'X-GitHub-Api-Version': '2022-11-28'}
@@ -107,12 +138,12 @@ def _default_source_row(repo: str, source_commit: str, item: dict) -> dict:
 
 
 
-def load_predecessor_responsibility_mapping(responsibility_path: Path) -> dict:
+def load_predecessor_responsibility_mapping(responsibility_path: Path) -> tuple[dict, str]:
     try:
         if responsibility_path.is_file() and responsibility_path.stat().st_size > 0:
             candidate = json.loads(responsibility_path.read_text(encoding='utf-8'))
             if isinstance(candidate, dict) and candidate.get('responsibilities'):
-                return candidate
+                return candidate, 'current-responsibility-ledger'
     except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
         # Corrupt/empty semantic state is never accepted as valid input; recover only from the pinned predecessor artifact.
         pass
@@ -136,10 +167,11 @@ def load_predecessor_responsibility_mapping(responsibility_path: Path) -> dict:
     except Exception as error:
         raise RuntimeError('predecessor responsibility artifact is invalid') from error
     require(isinstance(candidate, dict) and candidate.get('responsibilities'), 'predecessor responsibility mapping is empty')
-    return candidate
+    return candidate, 'pinned-predecessor-artifact'
 
 def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[dict], new_by_path: dict[str, dict], current: str, tree_sha: str) -> dict:
-    predecessor = load_predecessor_responsibility_mapping(responsibility_path)
+    predecessor, mapping_origin = load_predecessor_responsibility_mapping(responsibility_path)
+    android = current_android_provenance()
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
     require(responsibilities, 'predecessor responsibility mapping has no definitions')
     rid_by_path: dict[str, set[str]] = {}
@@ -150,22 +182,6 @@ def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[di
             path = source.get('path')
             if path in new_by_path:
                 rid_by_path.setdefault(path, set()).add(rid)
-    choices = {
-        '.github': 'CI-DESKTOP-SOURCE-AUTHORITY-REPLACEMENT-001',
-        'desktop': 'UI-PRODUCTION-COMPOSITION-ANDROID-001',
-        'docs': 'GOVERNANCE-SPEC-FIRST-ANDROID-001',
-        'frontend': 'UI-PRODUCTION-COMPOSITION-ANDROID-001',
-        'native': 'RUST-ANDROID-RUNTIME-GATE-001',
-        'projects': 'AUTHORITY-CANONICAL-MIGRATION-SOURCE-001',
-        'source': 'RUST-ANDROID-RUNTIME-GATE-001',
-        'chatgpt-vps-control': 'REMOTE-COMPUTER-001',
-        'contracts': 'VERIFICATION-CROSS-PLATFORM-JOURNEY-CONTRACT-001',
-        'AGENTS.md': 'GOVERNANCE-SPEC-FIRST-ANDROID-001',
-        'README.md': 'GOVERNANCE-REPOSITORY-BOUNDARY-001',
-        'MIGRATION_SOURCE.md': 'AUTHORITY-CANONICAL-MIGRATION-SOURCE-001',
-        'RUST_RUNTIME_SOURCE.md': 'AUTHORITY-RUST-RUNTIME-SOURCE-001',
-        'DESKTOP_SOURCE_CLOSURE.md': 'AUTHORITY-SOURCE-CLOSURE-REPLACEMENT-001',
-    }
     ids = {item.get('responsibility_id') for item in responsibilities}
     targets_by_rid = {
         item['responsibility_id']: sorted({
@@ -175,9 +191,31 @@ def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[di
         })
         for item in responsibilities
     }
+    unmapped_paths = []
     for row in ledger_rows:
         path = row['source_path']
-        links = rid_by_path.get(path) or {choices.get(path.split('/')[0], 'GOVERNANCE-REPOSITORY-BOUNDARY-001')}
+        links = rid_by_path.get(path, set())
+        if not links:
+            unmapped_paths.append(path)
+            row['responsibilities'] = []
+            row['android_targets'] = []
+            row['android_target_provenance'] = 'unmapped; semantic mapping required'
+            row['disposition'] = None
+            row['implementation_status'] = 'unreviewed'
+            row['evidence'] = [{
+                'kind': 'source-closure-gap',
+                'mapping_origin': mapping_origin,
+                'status': 'missing-semantic-mapping',
+                'source_path': path,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_head': android['android_pr_head_sha'],
+                'workflow_event': android['workflow_event'],
+                'workflow_run_id': android['workflow_run_id'],
+                'run_attempt': android['run_attempt'],
+                'verification_status': 'not-verified',
+            }]
+            continue
         require(all(rid in ids for rid in links), 'missing closure responsibility definition')
         row['responsibilities'] = sorted(links)
         row['android_targets'] = sorted({
@@ -185,11 +223,33 @@ def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[di
             for rid in links
             for target in targets_by_rid.get(rid, [])
         })
-        row['android_target_provenance'] = 'responsibility-ledger-projection; provenance-only; not semantic verification'
-        if row.get('disposition') is None:
-            row['disposition'] = 'not-applicable-with-replacement' if path.startswith(('docs/', '.github/')) or path in {'AGENTS.md','README.md','MIGRATION_SOURCE.md','RUST_RUNTIME_SOURCE.md','DESKTOP_SOURCE_CLOSURE.md'} else 'android-adapted'
+        row['android_target_provenance'] = 'responsibility-ledger-explicit-anchor; provenance-only; not semantic verification'
+        require(row.get('disposition') in {'direct-port', 'android-adapted', 'not-applicable-with-replacement'},
+                'invalid or missing source disposition for explicitly mapped row: ' + path)
         row['implementation_status'] = 'unreviewed'
-        row['evidence'] = [{'kind':'predecessor-mapping-source','artifact_id':int(os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT','12031753556')),'status':'provenance-only','source_path':path,'desktop_commit':current,'desktop_root_tree':tree_sha,'verification_status':'not-verified'}]
+        row['evidence'] = [{
+            'kind': 'responsibility-mapping-provenance',
+            'mapping_origin': mapping_origin,
+            'status': 'provenance-only',
+            'source_path': path,
+            'desktop_commit': current,
+            'desktop_root_tree': tree_sha,
+            'android_head': android['android_pr_head_sha'],
+            'workflow_event': android['workflow_event'],
+            'workflow_run_id': android['workflow_run_id'],
+            'run_attempt': android['run_attempt'],
+            'verification_status': 'not-verified',
+        }]
+    save(OUT / 'unmapped-source-rows.json', {
+        'status': 'failed' if unmapped_paths else 'passed',
+        'count': len(unmapped_paths),
+        'paths': unmapped_paths,
+        'mapping_policy': 'explicit responsibility desktop_sources only; directory fallback and predecessor heuristic are forbidden as semantic mapping',
+        'desktop_commit': current,
+        'desktop_root_tree': tree_sha,
+        'android_provenance': android,
+    })
+    require(not unmapped_paths, f'{len(unmapped_paths)} source rows lack explicit responsibility mapping')
     for item in responsibilities:
         rid = item['responsibility_id']
         existing = {s.get('path') for s in item.get('desktop_sources', [])}
@@ -200,10 +260,11 @@ def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[di
             if source.get('path') in new_by_path:
                 source['blob_sha'] = new_by_path[source['path']]['sha']
         item['source_commit'] = current
+        item['android_head_at_update'] = android['android_pr_head_sha']
         item['implementation_status'] = 'unreviewed'
         item['verification_status'] = 'not-verified'
         item['notes'] = (item.get('notes') or '') + ' Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required.'
-    return {'schema_version':2,'authority':{'desktop_repository':'bhrumom/fabushi-desktop','desktop_commit':current,'desktop_root_tree':tree_sha,'android_repository':'fabu-android/fabushi-android','android_pr':3,'status':'incomplete','predecessor_mapping_artifact':int(os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT','12031753556')),'note':'Current-main responsibility mapping regenerated from predecessor mapping; verification remains unverified.'},'responsibilities':responsibilities,'traceability':predecessor.get('traceability',{}),'metadata':predecessor.get('metadata',{})}
+    return {'schema_version':2,'authority':{'desktop_repository':'bhrumom/fabushi-desktop','desktop_commit':current,'desktop_root_tree':tree_sha,'android_repository':'fabu-android/fabushi-android','android_pr':3,'status':'incomplete','predecessor_mapping_artifact':int(os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT','12031753556')),'responsibility_mapping_origin':mapping_origin,'android_provenance':android,'note':'Current-main responsibility mapping is provenance only; implementation and verification are reset and require fresh semantic/exact-head evidence.'},'responsibilities':responsibilities,'traceability':predecessor.get('traceability',{}),'metadata':predecessor.get('metadata',{})}
 
 def rebaseline() -> None:
     authority_dir = DOC / 'authority'
@@ -265,17 +326,28 @@ def rebaseline() -> None:
     for item in files:
         top = item['path'].split('/')[0]
         top_counts[top] = top_counts.get(top, 0) + 1
+    android = current_android_provenance()
     manifest = {
-        'schema_version': 1,
+        'schema_version': 2,
         'desktop_commit': current,
         'desktop_root_tree': tree_sha,
         'desktop_main_before': current,
         'desktop_main_after': current,
         'authority_current': True,
-        'android_tested_checkout_sha': None,
-        'workflow_run_id': os.environ.get('GITHUB_RUN_ID'),
-        'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
-        'android_pr_head_sha': os.environ.get('ANDROID_PR_HEAD_SHA') or os.environ.get('GITHUB_SHA'),
+        'android_tested_checkout_sha': android['android_checkout_sha'],
+        'android_repository': android['android_repository'],
+        'android_pr': android['android_pr'],
+        'android_pr_head_sha': android['android_pr_head_sha'],
+        'android_pr_head_ref': android['android_pr_head_ref'],
+        'android_pr_base_sha': android['android_pr_base_sha'],
+        'android_pr_base_ref': android['android_pr_base_ref'],
+        'workflow_event': android['workflow_event'],
+        'workflow_run_id': android['workflow_run_id'],
+        'run_attempt': android['run_attempt'],
+        'workflow_sha': android['workflow_sha'],
+        'workflow_ref': android['workflow_ref'],
+        'run_url': android['run_url'],
+        'generated_at_utc': android['generated_at_utc'],
         'tree_entries': len(entries),
         'tracked_non_tree_entries': len(files),
         'root_counts': top_counts,
@@ -363,6 +435,7 @@ def rebaseline() -> None:
         'deleted_rows': len(deleted_paths),
         'touched_responsibilities': touched_responsibilities,
         'deleted_responsibility_anchors': deleted_anchor_count,
+        'android_provenance': current_android_provenance(),
     }
     save(OUT / 'rebaseline-summary.json', summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -406,71 +479,5 @@ def inventory() -> None:
     for item in files:
         top = item['path'].split('/')[0]
         top_counts[top] = top_counts.get(top, 0) + 1
-    manifest = {'schema_version': 1, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': checkout, 'workflow_run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'), 'android_pr_head_sha': os.environ.get('ANDROID_PR_HEAD_SHA') or os.environ.get('GITHUB_SHA'), 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
-    save(OUT / 'source-manifest.json', manifest)
-    print(json.dumps(manifest, ensure_ascii=False, indent=2))
-    require(before == sha == after, 'Desktop main moved: inventory saved, rebaseline required')
-
-
-def validate() -> None:
-    errors = []
-    docs = sorted(path for path in DOC.rglob('*.md') if 'generated' not in path.relative_to(DOC).parts)
-    for path in docs:
-        text = path.read_text(encoding='utf-8')
-        if not text.startswith('# ') or len(text.strip()) < 100:
-            errors.append('Empty or untitled document: ' + str(path.relative_to(ROOT)))
-        for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
-            if re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*:', target) or target.startswith('#'):
-                continue
-            target = unquote(target.split('#')[0])
-            resolved = (path.parent / target).resolve()
-            if not resolved.is_relative_to(ROOT) or not resolved.exists():
-                errors.append(str(path.relative_to(ROOT)) + ' -> missing local target: ' + target)
-    for path in DOC.rglob('*.json'):
-        if 'generated' not in path.relative_to(DOC).parts:
-            try:
-                json.loads(path.read_text(encoding='utf-8'))
-            except (ValueError, OSError) as error:
-                errors.append(str(path.relative_to(ROOT)) + ': ' + str(error))
-    expected = ['01-account', '02-messaging', '03-agent', '04-tools', '05-mcp', '06-miniapp', '07-media', '08-remote', '09-commerce', '10-navigation', '11-automation', '12-settings']
-    for name in expected:
-        if not (DOC / 'features' / (name + '.md')).is_file():
-            errors.append('Required feature handbook missing: ' + name)
-    save(OUT / 'docs-validation.json', {'status': 'failed' if errors else 'passed', 'markdown_files': len(docs), 'errors': errors, 'scope': 'local links, JSON syntax and required handbook presence; NOT product parity'})
-    if errors:
-        for error in errors:
-            print('ERROR:', error)
-        raise ValueError('Documentation completeness gate failed')
-    print('Documentation structure passed:', len(docs), 'Markdown files')
-
-
-def bundle() -> None:
-    paths = [path for path in DOC.rglob('*') if path.is_file()]
-    paths += [ROOT / 'ANDROID_PORT.md', ROOT / 'docs/specs/desktop-main-android-full-parity.md']
-    paths = sorted(set(path for path in paths if path.is_file()))
-    with zipfile.ZipFile(ROOT / 'android-port-documentation.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
-        for path in paths:
-            archive.write(path, path.relative_to(ROOT))
-    digest = hashlib.sha256((ROOT / 'android-port-documentation.zip').read_bytes()).hexdigest()
-    (ROOT / 'android-port-documentation.zip.sha256').write_text(digest + '  android-port-documentation.zip\n', encoding='ascii')
-    print('Documentation bundle:', len(paths), 'files; SHA-256:', digest)
-
-
-def main() -> int:
-    if os.environ.get('GITHUB_ACTIONS') != 'true':
-        print('Run this validation only in GitHub Actions.', file=sys.stderr)
-        return 2
-    parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=('rebaseline', 'inventory', 'validate', 'bundle'))
-    args = parser.parse_args()
-    OUT.mkdir(parents=True, exist_ok=True)
-    try:
-        {'rebaseline': rebaseline, 'inventory': inventory, 'validate': validate, 'bundle': bundle}[args.command]()
-        return 0
-    except (ValueError, RuntimeError, OSError) as error:
-        print(type(error).__name__ + ': ' + str(error), file=sys.stderr)
-        return 1
-
-
-if __name__ == '__main__':
-    raise SystemExit(main())
+    android = current_android_provenance()
+    manifest = {'schema_version': 2, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': checkout, 'android_repository': android['android_repository'], 'android_pr': android['android_pr'], 'android_pr_head_sha': android['android_pr_head_sha'], 'android_pr_head_ref': android['android_pr_head_ref'], 'android_pr_base_sha': android['android_pr_base_sha'], 'android_pr_base_ref': android['android_pr_base_ref'], 'workflow_event': android['workflow_event'], 'workflow_run_id': android['workflow_run_id'], 'run_attempt': android['run_attempt'], 'workflow_sha': android['workflow_sha'], 'workflow_ref': android['workflow_ref'], 'run_url': android['run_url'], 'generated_at_utc': android['generated_at_utc'], 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}

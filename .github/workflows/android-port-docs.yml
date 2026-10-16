@@ -1,14 +1,8 @@
 name: Android migration documentation
 on:
-  pull_request:
-    paths:
-      - 'docs/android-port/**'
-      - 'docs/specs/desktop-main-android-full-parity.md'
-      - 'ANDROID_PORT.md'
-      - 'scripts/android-port-docs.py'
-      - '.github/workflows/android-port-docs.yml'
   push:
-    branches: ['spec/grok-bot-018-android-parity-20260922']
+    branches:
+      - 'spec/grok-bot-018-android-parity-20260922'
     paths:
       - 'docs/android-port/**'
       - 'docs/specs/desktop-main-android-full-parity.md'
@@ -19,66 +13,76 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: android-port-docs-${{ github.head_ref || github.ref_name }}
+  group: android-port-docs-${{ github.ref_name }}
   cancel-in-progress: true
 jobs:
   source-inventory:
     name: Pinned Desktop complete source inventory
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.ref_name }}
           persist-credentials: false
+      - name: Assert exact Android checkout provenance
+        env:
+          ANDROID_PR_HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ANDROID_PR_HEAD_SHA"
       - name: Rebaseline persistent source authority in Actions worktree
         env:
           GH_TOKEN: ${{ github.token }}
-          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_SHA: ${{ github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_PR_BASE_SHA: ''
+          ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py rebaseline
       - name: Enumerate source and verify authority
         env:
           GH_TOKEN: ${{ github.token }}
-          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_SHA: ${{ github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_PR_BASE_SHA: ''
+          ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py inventory
-      - name: Commit regenerated exact-main authority manifest
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+      - name: Verify generated exact authority bookkeeping
+        env:
+          EXPECTED_ANDROID_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8258
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          m=json.loads(Path('docs/android-port/authority/source-inventory-manifest.json').read_text(encoding='utf-8'))
+          assert m['desktop_commit']=='12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
+          assert m['desktop_root_tree']=='72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
+          assert m['tracked_non_tree_entries']==8258
+          assert m['tree_entries']==9412
+          assert m['android_pr_head_sha']==os.environ['EXPECTED_ANDROID_HEAD']
+          assert m['android_tested_checkout_sha']==os.environ['EXPECTED_ANDROID_HEAD']
+          r=json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
+          assert len(r.get('responsibilities',[]))==306
+          PY
+      - name: Commit regenerated exact-main authority to PR branch
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'spec/grok-bot-018-android-parity-20260922' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "$(git log -1 --format=%s)" == "chore(android): persist exact Desktop main authority evidence" ]]; then
-            echo "Generated-authority commit already persisted; skipping recursive persistence."
-            exit 0
-          fi
-          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8258
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
-          assert len(data.get('responsibilities', [])) == 306
-          assert data.get('authority', {}).get('desktop_commit') == '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
-          assert data.get('authority', {}).get('desktop_root_tree') == '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
-          PY
-          test -s docs/android-port/authority/responsibility-ledger.json
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
-          assert len(data.get('responsibilities', [])) == 306
-          assert data.get('authority', {}).get('desktop_commit') == '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
-          assert data.get('authority', {}).get('desktop_root_tree') == '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
-          PY
           git add docs/android-port/authority/baseline.json docs/android-port/authority/source-inventory-manifest.json docs/android-port/authority/responsibility-ledger.json docs/android-port/authority/source-inventory-ledger.jsonl
           if git diff --cached --quiet; then
             echo "No regenerated authority changes to commit."
             exit 0
           fi
           git commit -m "chore(android): persist exact Desktop main authority evidence"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${BRANCH}"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
       - name: Package documentation and source evidence
         if: always()
         run: python3 scripts/android-port-docs.py bundle
@@ -101,10 +105,12 @@ jobs:
     name: Documentation completeness and links
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.ref_name }}
           persist-credentials: false
       - name: Validate documentation completeness
         run: python3 scripts/android-port-docs.py validate
