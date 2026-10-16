@@ -1948,6 +1948,13 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
         }
     }
 
+    suspend fun uninstallMiniApp(pluginId: String): JSONObject = withContext(Dispatchers.IO) {
+        coordinator.uninstallMiniApp(
+            appId = pluginId,
+            operationId = "miniapp:uninstall:" + pluginId + ":" + UUID.randomUUID(),
+        )
+    }
+
     suspend fun loadLocalMiniAppHtml(pluginId: String): String? = withContext(Dispatchers.IO) {
         runCatching {
             val resources = coordinator.getInstalledMiniAppResources(
