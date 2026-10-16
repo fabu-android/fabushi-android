@@ -9,6 +9,65 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
+CURRENT_DESKTOP_COMMIT = "12a4e29819592e3a7e32f7435cb0cf2e3cc53848"
+CURRENT_DESKTOP_TREE = "72fc5f777012f6e7bf5f5f471b6f121fd3612bb2"
+
+
+def write_local_snapshot(root, *, duplicate_path=False, stale_source_commit=False, reverse_paths=False):
+    source_commit = CURRENT_DESKTOP_COMMIT
+    source_tree = CURRENT_DESKTOP_TREE
+    rows = []
+    for index in range(8258):
+        rows.append({
+            "source_path": f"source/generated-{index:04d}.rs",
+            "source_commit": source_commit,
+            "source_blob_sha": f"{index + 1:040x}",
+            "source_type": "blob",
+            "source_mode": "100644",
+            "responsibilities": [],
+            "android_targets": [],
+            "disposition": None,
+            "implementation_status": "unreviewed",
+            "evidence": [],
+        })
+    if duplicate_path:
+        rows[1]["source_path"] = rows[0]["source_path"]
+    if stale_source_commit:
+        rows[-1]["source_commit"] = "e" * 40
+    if reverse_paths:
+        rows.reverse()
+    ledger_text = "".join(
+        json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+        for row in rows
+    )
+    (root / "source-inventory-ledger.jsonl").write_text(ledger_text, encoding="utf-8")
+    manifest = {
+        "authority_current": True,
+        "desktop_commit": source_commit,
+        "desktop_root_tree": source_tree,
+        "tree_entries": 9412,
+        "tracked_non_tree_entries": 8258,
+        "authority_ledger_rows": 8258,
+        "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
+        "workflow_run_id": 456,
+        "android_pr_head_sha": "h" * 40,
+    }
+    (root / "source-inventory-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    candidate = {
+        "authority": {"desktop_commit": source_commit, "desktop_root_tree": source_tree},
+        "responsibilities": padded_responsibilities({
+            "responsibility_id": "RESP-001",
+            "desktop_sources": [{
+                "path": rows[0]["source_path"],
+                "blob_sha": rows[0]["source_blob_sha"],
+                "source_mode": "100644",
+                "source_type": "blob",
+            }],
+        }),
+    }
+    responsibility_path = root / "responsibility-ledger.json"
+    responsibility_path.write_text(json.dumps(candidate), encoding="utf-8")
+    return responsibility_path, rows, ledger_text, manifest
 
 
 def load_generator():
@@ -225,8 +284,8 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             responsibility_path = root / "responsibility-ledger.json"
-            source_commit = "d" * 40
-            source_tree = "t" * 40
+            source_commit = CURRENT_DESKTOP_COMMIT
+            source_tree = CURRENT_DESKTOP_TREE
             rows = []
             for index in range(8258):
                 rows.append({
@@ -293,6 +352,13 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             self.assertIsNone(provenance["artifact_digest"])
             self.assertEqual("unreviewed", source_rows["source/generated-0000.rs"]["implementation_status"])
             self.assertEqual(306, len(recovered["responsibilities"]))
+            self.assertEqual(CURRENT_DESKTOP_COMMIT, recovered["authority"]["desktop_commit"])
+            self.assertEqual(CURRENT_DESKTOP_TREE, recovered["authority"]["desktop_root_tree"])
+            self.assertEqual(9412, manifest["tree_entries"])
+            self.assertEqual(8258, manifest["tracked_non_tree_entries"])
+            self.assertEqual(manifest["ledger_sha256"], hashlib.sha256(ledger_text.encode("utf-8")).hexdigest())
+            self.assertEqual(sorted(source_rows), list(source_rows))
+            self.assertTrue(all(row["source_commit"] == CURRENT_DESKTOP_COMMIT for row in source_rows.values()))
 
     def test_local_snapshot_fallback_rejects_a_stale_ledger_digest(self):
         module = load_generator()
@@ -320,6 +386,58 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "ledger digest"):
                     module.load_predecessor_responsibility_mapping(responsibility_path)
 
+
+    def test_local_snapshot_fallback_rejects_duplicate_paths(self):
+        module = load_generator()
+        with tempfile.TemporaryDirectory() as temp:
+            responsibility_path, _, _, _ = write_local_snapshot(Path(temp), duplicate_path=True)
+            with patch.object(
+                module,
+                "_load_pinned_responsibility_mapping",
+                side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12053467058 (HTTP 404)"),
+            ):
+                with self.assertRaisesRegex(ValueError, "duplicate path"):
+                    module.load_predecessor_responsibility_mapping(responsibility_path)
+
+    def test_local_snapshot_fallback_rejects_a_stale_source_commit(self):
+        module = load_generator()
+        with tempfile.TemporaryDirectory() as temp:
+            responsibility_path, _, _, _ = write_local_snapshot(Path(temp), stale_source_commit=True)
+            with patch.object(
+                module,
+                "_load_pinned_responsibility_mapping",
+                side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12053467058 (HTTP 404)"),
+            ):
+                with self.assertRaisesRegex(ValueError, "stale Desktop source commit"):
+                    module.load_predecessor_responsibility_mapping(responsibility_path)
+
+    def test_local_snapshot_fallback_rejects_noncanonical_persisted_order(self):
+        module = load_generator()
+        with tempfile.TemporaryDirectory() as temp:
+            responsibility_path, _, _, _ = write_local_snapshot(Path(temp), reverse_paths=True)
+            with patch.object(
+                module,
+                "_load_pinned_responsibility_mapping",
+                side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12053467058 (HTTP 404)"),
+            ):
+                with self.assertRaisesRegex(ValueError, "canonical sorted path order"):
+                    module.load_predecessor_responsibility_mapping(responsibility_path)
+
+    def test_inventory_serializer_is_canonical_and_digestable(self):
+        module = load_generator()
+        rows = [
+            {"source_path": "source/a.rs", "source_commit": CURRENT_DESKTOP_COMMIT},
+            {"source_path": "source/b.rs", "source_commit": CURRENT_DESKTOP_COMMIT},
+        ]
+        serialized = module.serialize_source_inventory_ledger(rows)
+        self.assertEqual(
+            serialized,
+            "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in rows),
+        )
+        digest = hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+        self.assertEqual(digest, hashlib.sha256(serialized.encode("utf-8")).hexdigest())
+        with self.assertRaisesRegex(ValueError, "canonical sorted path order"):
+            module.serialize_source_inventory_ledger(list(reversed(rows)))
 
 if __name__ == "__main__":
     unittest.main()

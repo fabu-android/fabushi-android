@@ -44,6 +44,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
+EXPECTED_TREE_ENTRY_COUNT = 9412
+EXPECTED_TRACKED_NON_TREE_COUNT = 8258
 DEFAULT_RESPONSIBILITY_ARTIFACT = '12053467058'
 DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:26fe89b6a05f76ce96ab5ddab5a6107251586ad8143f42fff0d4794a4da15eb5'
 
@@ -162,6 +164,15 @@ def _default_source_row(repo: str, source_commit: str, item: dict) -> dict:
     }
 
 
+
+def serialize_source_inventory_ledger(rows: list[dict]) -> str:
+    """Serialize the complete inventory in one deterministic, manifest-digestable order."""
+    paths = [row.get('source_path') for row in rows]
+    require(all(isinstance(path, str) and path for path in paths),
+            'source inventory row without source_path')
+    require(len(paths) == len(set(paths)), 'duplicate path in source inventory serialization')
+    require(paths == sorted(paths), 'source inventory rows must use canonical sorted path order')
+    return ''.join(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n' for row in rows)
 
 
 def _source_mapping_quality(responsibility_id: str, source: dict) -> str:
@@ -291,6 +302,69 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
     }
 
 
+def _parse_persisted_source_inventory(
+    ledger_text: str,
+    manifest: dict,
+    expected_paths: dict[str, dict] | None = None,
+) -> dict[str, dict]:
+    """Validate the persisted JSONL bytes, order, full denominator and source provenance."""
+    actual_digest = hashlib.sha256(ledger_text.encode('utf-8')).hexdigest()
+    require(actual_digest == manifest.get('ledger_sha256'),
+            'local source inventory ledger digest does not match its manifest')
+    desktop_commit = manifest.get('desktop_commit')
+    require(SHA.fullmatch(str(desktop_commit or '')) is not None,
+            'local source inventory manifest has an invalid Desktop commit')
+
+    source_rows: dict[str, dict] = {}
+    ordered_paths: list[str] = []
+    for line_number, line in enumerate(ledger_text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(f'local source inventory has invalid JSONL at line {line_number}') from error
+        require(isinstance(row, dict),
+                f'local source inventory row {line_number} is not an object')
+        path = row.get('source_path')
+        require(isinstance(path, str) and bool(path),
+                'local source inventory contains a row without source_path')
+        require(path not in source_rows,
+                'local source inventory contains duplicate path: ' + path)
+        source_path = PurePosixPath(path)
+        require(not source_path.is_absolute() and '..' not in source_path.parts,
+                'local source inventory contains an unsafe path: ' + path)
+        require(row.get('source_commit') == desktop_commit,
+                'local source inventory row has stale Desktop source commit: ' + path)
+        require(row.get('source_type') in ALLOWED_SOURCE_TYPES,
+                'local source inventory row has invalid source type: ' + path)
+        require(row.get('source_mode') in ALLOWED_SOURCE_MODES,
+                'local source inventory row has invalid source mode: ' + path)
+        require(SHA.fullmatch(str(row.get('source_blob_sha') or '')) is not None,
+                'local source inventory row has invalid source blob SHA: ' + path)
+        ordered_paths.append(path)
+        source_rows[path] = row
+
+    require(ordered_paths == sorted(ordered_paths),
+            'local source inventory rows are not in canonical sorted path order')
+    require(manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT,
+            'local source authority does not preserve the 8258-entry tracked non-tree inventory')
+    require(len(source_rows) == EXPECTED_TRACKED_NON_TREE_COUNT,
+            f'local source inventory must contain 8258 unique rows, got {len(source_rows)}')
+    if expected_paths is not None:
+        require(set(source_rows) == set(expected_paths),
+                'persisted source inventory paths do not match the current Desktop inventory')
+        for path, item in expected_paths.items():
+            row = source_rows[path]
+            require(row.get('source_blob_sha') == item.get('sha'),
+                    'persisted source inventory blob does not match current Desktop inventory: ' + path)
+            require(row.get('source_type') == item.get('type'),
+                    'persisted source inventory type does not match current Desktop inventory: ' + path)
+            require(row.get('source_mode') == item.get('mode'),
+                    'persisted source inventory mode does not match current Desktop inventory: ' + path)
+    return source_rows
+
+
 def _load_local_persisted_mapping(
     responsibility_path: Path,
     current_candidate: dict,
@@ -319,30 +393,7 @@ def _load_local_persisted_mapping(
             'local source authority does not preserve the 8258-entry tracked non-tree inventory')
 
     ledger_text = ledger_path.read_text(encoding='utf-8')
-    actual_digest = hashlib.sha256(ledger_text.encode('utf-8')).hexdigest()
-    require(actual_digest == manifest.get('ledger_sha256'),
-            'local source inventory ledger digest does not match its manifest')
-    source_rows: dict[str, dict] = {}
-    for line in ledger_text.splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
-        path = row.get('source_path')
-        require(isinstance(path, str) and bool(path),
-                'local source inventory contains a row without source_path')
-        require(path not in source_rows,
-                'local source inventory contains duplicate path: ' + path)
-        require(row.get('source_commit') == manifest.get('desktop_commit'),
-                'local source inventory row has stale Desktop source commit: ' + path)
-        require(row.get('source_type') in ALLOWED_SOURCE_TYPES,
-                'local source inventory row has invalid source type: ' + path)
-        require(row.get('source_mode') in ALLOWED_SOURCE_MODES,
-                'local source inventory row has invalid source mode: ' + path)
-        require(SHA.fullmatch(str(row.get('source_blob_sha') or '')) is not None,
-                'local source inventory row has invalid source blob SHA: ' + path)
-        source_rows[path] = row
-    require(len(source_rows) == 8258,
-            f'local source inventory must contain 8258 unique rows, got {len(source_rows)}')
+    source_rows = _parse_persisted_source_inventory(ledger_text, manifest)
     return current_candidate, source_rows, {
         'artifact_id': None,
         'artifact_digest': None,
@@ -700,7 +751,7 @@ def rebaseline() -> None:
 
     deleted_paths = sorted(set(old_by_path) - set(new_by_path))
     changed_paths.update(deleted_paths)
-    ledger_text = ''.join(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n' for row in new_rows)
+    ledger_text = serialize_source_inventory_ledger(new_rows)
     ledger_path.write_text(ledger_text, encoding='utf-8')
 
     top_counts = {}
@@ -731,6 +782,7 @@ def rebaseline() -> None:
         'generated_at_utc': android['generated_at_utc'],
         'tree_entries': len(entries),
         'tracked_non_tree_entries': len(files),
+        'authority_ledger_rows': len(new_rows),
         'root_counts': top_counts,
         'gitlinks': [item for item in files if item['type'] == 'commit'],
         'symlinks': [item for item in files if item['mode'] == '120000'],
@@ -808,7 +860,7 @@ def rebaseline() -> None:
             linked = reverse_links.get(row['source_path'])
             if linked:
                 row['responsibilities'] = sorted(set(row.get('responsibilities') or []) | linked)
-        ledger_text = ''.join(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n' for row in new_rows)
+        ledger_text = serialize_source_inventory_ledger(new_rows)
         ledger_path.write_text(ledger_text, encoding='utf-8')
         manifest['ledger_sha256'] = hashlib.sha256(ledger_text.encode('utf-8')).hexdigest()
         mapping_authority = responsibility_doc.get('authority', {})
@@ -822,8 +874,8 @@ def rebaseline() -> None:
         manifest['missing_target_rows'] = mapping_authority.get('missing_target_rows')
         manifest['responsibility_mapping_artifact_id'] = mapping_authority.get('responsibility_mapping_artifact_id')
         manifest['responsibility_mapping_artifact_digest'] = mapping_authority.get('responsibility_mapping_artifact_digest')
-        save(manifest_path, manifest)
         save(responsibility_path, responsibility_doc)
+        save(manifest_path, manifest)
 
     summary = {
         'desktop_commit': current,
@@ -880,6 +932,22 @@ def inventory() -> None:
     android = current_android_provenance()
     authority_ledger = DOC / 'authority/source-inventory-ledger.jsonl'
     authority_ledger_text = authority_ledger.read_text(encoding='utf-8') if authority_ledger.is_file() else ''
+    authority_manifest_path = DOC / 'authority/source-inventory-manifest.json'
+    require(authority_manifest_path.is_file(), 'Persistent source inventory manifest is missing')
+    authority_manifest = json.loads(authority_manifest_path.read_text(encoding='utf-8'))
+    require(authority_manifest.get('authority_current') is True,
+            'Persistent source inventory manifest is not current')
+    require(authority_manifest.get('desktop_commit') == sha,
+            'Persistent source inventory manifest Desktop commit mismatch')
+    require(authority_manifest.get('desktop_root_tree') == tree_sha,
+            'Persistent source inventory manifest Desktop tree mismatch')
+    require(authority_manifest.get('tree_entries') == EXPECTED_TREE_ENTRY_COUNT == len(entries),
+            'Persistent source inventory manifest must preserve all 9412 recursive tree entries')
+    require(authority_manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT == len(files),
+            'Persistent source inventory manifest must preserve all 8258 tracked non-tree entries')
+    require(authority_manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
+            'Persistent source inventory manifest row count mismatch')
+    _parse_persisted_source_inventory(authority_ledger_text, authority_manifest, expected_paths=by_path)
     manifest = {'schema_version': 2, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': android['android_checkout_sha'], 'android_repository': android['android_repository'], 'android_pr': android['android_pr'], 'android_pr_head_sha': android['android_pr_head_sha'], 'android_pr_head_ref': android['android_pr_head_ref'], 'android_pr_base_sha': android['android_pr_base_sha'], 'android_pr_base_ref': android['android_pr_base_ref'], 'workflow_event': android['workflow_event'], 'workflow_run_id': android['workflow_run_id'], 'run_attempt': android['run_attempt'], 'workflow_sha': android['workflow_sha'], 'workflow_ref': android['workflow_ref'], 'run_url': android['run_url'], 'generated_at_utc': android['generated_at_utc'], 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(authority_ledger_text.encode('utf-8')).hexdigest() if authority_ledger_text else None, 'authority_ledger_rows': len([line for line in authority_ledger_text.splitlines() if line.strip()]), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
     save(OUT / 'source-manifest.json', manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
