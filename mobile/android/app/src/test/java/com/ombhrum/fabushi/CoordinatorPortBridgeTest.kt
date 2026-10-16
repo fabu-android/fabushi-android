@@ -8,6 +8,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.fail
 import org.junit.Test
+import org.json.JSONObject
 
 class CoordinatorPortBridgeTest {
     private fun fakePort(): AndroidCoordinatorPort =
@@ -59,4 +60,32 @@ class CoordinatorPortBridgeTest {
         }
         assertNull(bridge.currentOwner())
     }
+    @Test
+    fun typedMiniAppMethodsDelegateThroughBridge() {
+        val calls = mutableListOf<String>()
+        val port = Proxy.newProxyInstance(
+            AndroidCoordinatorPort::class.java.classLoader,
+            arrayOf(AndroidCoordinatorPort::class.java),
+        ) { _, method, _ ->
+            calls += method.name
+            if (method.returnType == JSONObject::class.java) JSONObject().put("method", method.name) else null
+        } as AndroidCoordinatorPort
+        val bridge = CoordinatorPortBridge(port)
+
+        assertEquals("listApprovedMiniApps", bridge.listApprovedMiniApps().getString("method"))
+        assertEquals("listInstalledMiniApps", bridge.listInstalledMiniApps().getString("method"))
+        assertEquals("installApprovedMiniApp", bridge.installApprovedMiniApp("app", "op").getString("method"))
+        assertEquals("getInstalledMiniAppResources", bridge.getInstalledMiniAppResources("app", "op").getString("method"))
+        assertEquals("readMiniAppResource", bridge.readMiniAppResource("load", "index.html").getString("method"))
+        assertEquals("disposeMiniAppLoad", bridge.disposeMiniAppLoad("load").getString("method"))
+        assertEquals("uninstallMiniApp", bridge.uninstallMiniApp("app", "op").getString("method"))
+        assertEquals(
+            listOf(
+                "listApprovedMiniApps", "listInstalledMiniApps", "installApprovedMiniApp",
+                "getInstalledMiniAppResources", "readMiniAppResource", "disposeMiniAppLoad", "uninstallMiniApp",
+            ),
+            calls,
+        )
+    }
+
 }
