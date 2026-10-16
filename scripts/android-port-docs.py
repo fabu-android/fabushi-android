@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Actions-only read-only source enumeration and documentation checks.
+"""Actions-only source authority enumeration and documentation checks.
 
-No Android build, no application execution, no repository writes, no secrets.
-Generated rows are deliberately unreviewed. They are NOT parity evidence.
+The workflow may persist generated authority evidence back to the active migration branch.
+No Android build, no application execution, and no secret material are handled here.
+Generated rows remain unreviewed and are never parity evidence.
 """
 from __future__ import annotations
 import argparse

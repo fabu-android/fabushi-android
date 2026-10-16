@@ -1,1 +1,0 @@
-pub const CONTEXT_CONTRACT_VERSION: u32 = 1;

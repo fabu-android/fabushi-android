@@ -40,7 +40,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/android-port-docs.py inventory
       - name: Commit regenerated exact-main authority manifest
-        if: ${{ false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -57,7 +57,6 @@ jobs:
           assert data.get('authority', {}).get('desktop_commit') == '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
           assert data.get('authority', {}).get('desktop_root_tree') == '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
           PY
-          # Never add responsibility-ledger.json here: semantic mappings are owned by the serialized branch workflow.
           test -s docs/android-port/authority/responsibility-ledger.json
           python3 - <<'PY'
           import json
