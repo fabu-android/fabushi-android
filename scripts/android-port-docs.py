@@ -240,8 +240,16 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
     try:
         with urlopen(req, timeout=60) as response:
             payload = response.read()
+    except HTTPError as error:
+        raise RuntimeError(
+            'failed to recover predecessor responsibility artifact '
+            + artifact_id + ' (HTTP ' + str(error.code) + ')'
+        ) from None
     except Exception as error:
-        raise RuntimeError('failed to recover predecessor responsibility artifact ' + artifact_id) from error
+        raise RuntimeError(
+            'failed to recover predecessor responsibility artifact '
+            + artifact_id + ' (' + type(error).__name__ + ')'
+        ) from None
     actual_digest = 'sha256:' + hashlib.sha256(payload).hexdigest()
     require(actual_digest == expected_digest,
             f'predecessor responsibility artifact digest mismatch: expected={expected_digest} actual={actual_digest}')
@@ -283,6 +291,69 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
     }
 
 
+def _load_local_persisted_mapping(
+    responsibility_path: Path,
+    current_candidate: dict,
+) -> tuple[dict, dict[str, dict], dict]:
+    """Recover coverage from the committed snapshot only after verifying its authority and digest.
+
+    This is mapping continuity, not verification evidence. Strict parity checks still decide
+    whether any source row or responsibility is complete.
+    """
+    authority_dir = responsibility_path.parent
+    manifest_path = authority_dir / 'source-inventory-manifest.json'
+    ledger_path = authority_dir / 'source-inventory-ledger.jsonl'
+    require(manifest_path.is_file() and ledger_path.is_file(),
+            'validated local source authority snapshot is unavailable')
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    authority = current_candidate.get('authority') or {}
+    require(manifest.get('authority_current') is True,
+            'local source authority snapshot is not current')
+    require(manifest.get('desktop_commit') == authority.get('desktop_commit'),
+            'local source authority Desktop commit does not match responsibility ledger')
+    require(manifest.get('desktop_root_tree') == authority.get('desktop_root_tree'),
+            'local source authority Desktop tree does not match responsibility ledger')
+    require(manifest.get('tree_entries') == 9412,
+            'local source authority does not preserve the 9412-entry recursive tree')
+    require(manifest.get('tracked_non_tree_entries') == 8258,
+            'local source authority does not preserve the 8258-entry tracked non-tree inventory')
+
+    ledger_text = ledger_path.read_text(encoding='utf-8')
+    actual_digest = hashlib.sha256(ledger_text.encode('utf-8')).hexdigest()
+    require(actual_digest == manifest.get('ledger_sha256'),
+            'local source inventory ledger digest does not match its manifest')
+    source_rows: dict[str, dict] = {}
+    for line in ledger_text.splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        path = row.get('source_path')
+        require(isinstance(path, str) and bool(path),
+                'local source inventory contains a row without source_path')
+        require(path not in source_rows,
+                'local source inventory contains duplicate path: ' + path)
+        require(row.get('source_commit') == manifest.get('desktop_commit'),
+                'local source inventory row has stale Desktop source commit: ' + path)
+        require(row.get('source_type') in ALLOWED_SOURCE_TYPES,
+                'local source inventory row has invalid source type: ' + path)
+        require(row.get('source_mode') in ALLOWED_SOURCE_MODES,
+                'local source inventory row has invalid source mode: ' + path)
+        require(SHA.fullmatch(str(row.get('source_blob_sha') or '')) is not None,
+                'local source inventory row has invalid source blob SHA: ' + path)
+        source_rows[path] = row
+    require(len(source_rows) == 8258,
+            f'local source inventory must contain 8258 unique rows, got {len(source_rows)}')
+    return current_candidate, source_rows, {
+        'artifact_id': None,
+        'artifact_digest': None,
+        'source_manifest_run_id': manifest.get('workflow_run_id'),
+        'source_manifest_android_head': manifest.get('android_pr_head_sha'),
+        'source_manifest_desktop_commit': manifest.get('desktop_commit'),
+        'source_manifest_desktop_root_tree': manifest.get('desktop_root_tree'),
+        'mapping_source': 'validated-local-persisted-snapshot',
+    }
+
+
 def load_predecessor_responsibility_mapping(
     responsibility_path: Path,
 ) -> tuple[dict, dict[str, dict], str, dict]:
@@ -298,7 +369,21 @@ def load_predecessor_responsibility_mapping(
     if current_candidate is not None:
         require(len(current_candidate['responsibilities']) == EXPECTED_RESPONSIBILITY_COUNT,
                 f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(current_candidate["responsibilities"])}')
-        predecessor, source_rows, provenance = _load_pinned_responsibility_mapping()
+        try:
+            predecessor, source_rows, provenance = _load_pinned_responsibility_mapping()
+        except RuntimeError as error:
+            if not str(error).startswith('failed to recover predecessor responsibility artifact '):
+                raise
+            predecessor, source_rows, provenance = _load_local_persisted_mapping(
+                responsibility_path, current_candidate
+            )
+            print(
+                'WARNING: pinned predecessor artifact is unavailable; using the digest-verified '
+                'local source snapshot for mapping continuity only',
+                file=sys.stderr,
+            )
+            merged = _merge_responsibility_sources(current_candidate, predecessor)
+            return merged, source_rows, 'current-responsibility-ledger+validated-local-coverage', provenance
         merged = _merge_responsibility_sources(current_candidate, predecessor)
         return merged, source_rows, 'current-responsibility-ledger+pin-predecessor-coverage', provenance
 
