@@ -242,7 +242,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                     "evidence": [],
                 })
             ledger_text = "".join(
-                json.dumps(row, ensure_ascii=False, sort_keys=True) + "\\n"
+                json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
                 for row in rows
             )
             (root / "source-inventory-ledger.jsonl").write_text(ledger_text, encoding="utf-8")
