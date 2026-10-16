@@ -58,7 +58,16 @@ jobs:
           assert data.get('authority', {}).get('desktop_root_tree') == '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
           PY
           # Never add responsibility-ledger.json here: semantic mappings are owned by the serialized branch workflow.
-          git add docs/android-port/authority/baseline.json docs/android-port/authority/source-inventory-manifest.json
+          test -s docs/android-port/authority/responsibility-ledger.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
+          assert len(data.get('responsibilities', [])) == 306
+          assert data.get('authority', {}).get('desktop_commit') == '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
+          assert data.get('authority', {}).get('desktop_root_tree') == '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
+          PY
+          git add docs/android-port/authority/baseline.json docs/android-port/authority/source-inventory-manifest.json docs/android-port/authority/responsibility-ledger.json docs/android-port/authority/source-inventory-ledger.jsonl
           if git diff --cached --quiet; then
             echo "No regenerated authority changes to commit."
             exit 0
