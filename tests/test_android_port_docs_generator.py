@@ -659,15 +659,36 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             {"path": path, "mapping_quality": "semantic", "source_mode": "100644", "source_type": "blob"}
             for path in paths
         ]
+        android_head = "a" * 40
+        production_evidence = [{
+            "kind": "production-wiring", "source_path": path,
+            "source_commit": CURRENT_DESKTOP_COMMIT, "desktop_commit": CURRENT_DESKTOP_COMMIT,
+            "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head, "evidence_ref": "source/host/src/lib.rs#production-owner",
+            "result": "passed",
+        } for path in paths]
+        test_evidence = [{
+            "kind": "contract-test", "source_path": path,
+            "source_commit": CURRENT_DESKTOP_COMMIT, "desktop_commit": CURRENT_DESKTOP_COMMIT,
+            "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head, "evidence_ref": "tests/HostContractTest.kt#test",
+            "result": "passed",
+        } for path in paths]
         owner = {
             "responsibility_id": "PKG-RESP-001",
             "source_owner": "Desktop package source owner",
             "android_owner": "Android Mahayana package runtime owner",
             "android_target": [target],
             "desktop_sources": semantic_sources,
+            "production_evidence": production_evidence,
+            "test_evidence": test_evidence,
         }
         complete_rows = [{
             "source_path": path,
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
             "responsibilities": ["PKG-RESP-001"],
             "mapping_status": "semantic",
             "android_targets": [target],
