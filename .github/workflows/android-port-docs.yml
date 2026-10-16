@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Assert exact Android checkout provenance
         env:
@@ -135,7 +135,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Validate documentation completeness
         run: python3 scripts/android-port-docs.py validate
