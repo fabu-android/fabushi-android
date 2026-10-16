@@ -1,5 +1,9 @@
 # 10 — 原生导航、聊天呈现、交互与可访问性
 
+## Current authority
+
+bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+
 ## 用户体验目标
 
 Android 是完整原生产品，不是把桌面 sidebar 缩成一张手机截图。用户必须能完成 Desktop 实际可达的账户、会话、联系人、Agent/Bot、插件、Mini App、设备、工作流和设置操作；信息架构可适配触屏，但不得悄悄丢失低频入口。
