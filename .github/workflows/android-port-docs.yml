@@ -10,6 +10,7 @@ on:
       - 'scripts/android-port-docs.py'
       - 'scripts/check_grok_android_parity.py'
       - 'tests/test_parity_checker.py'
+      - 'tests/test_android_port_docs_generator.py'
       - '.github/workflows/android-port-docs.yml'
   workflow_dispatch:
 permissions:
@@ -33,6 +34,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$ANDROID_PR_HEAD_SHA"
+      - name: Run Android source-authority generator regression
+        run: python3 -m unittest tests.test_android_port_docs_generator
       - name: Rebaseline persistent source authority in Actions worktree
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,6 +44,8 @@ jobs:
           ANDROID_PR_NUMBER: '3'
           ANDROID_PR_BASE_SHA: ''
           ANDROID_PR_BASE_REF: 'main'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12053467058'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:26fe89b6a05f76ce96ab5ddab5a6107251586ad8143f42fff0d4794a4da15eb5'
         run: python3 scripts/android-port-docs.py rebaseline
       - name: Enumerate source and verify authority
         env:
