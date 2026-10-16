@@ -5,9 +5,9 @@
     "desktop_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": "a2fb6651d7106683b83fa4bbf8f166102da27850",
+    "android_head_at_update": "d644e8a205d3e8b83530e7a49ed69e94120f4868",
     "status": "incomplete",
-    "note": "Desktop canonical rebaselined to c33a9495fc1e640557d65f3e2daedc1449be7fcb / root tree 906b3f414b5ff343a5f0e627fa31b98778dfbf54 from GitHub Actions run 38731258547 artifact 11971095464. 13 changed/new source rows were reset for semantic re-audit; REMOTE-COMPUTER-001 was conservatively invalidated. Android migration remains incomplete pending source/responsibility closure and same-exact-head package/device/release evidence.",
+    "note": "Desktop canonical rebaselined to c33a9495fc1e640557d65f3e2daedc1449be7fcb / root tree 906b3f414b5ff343a5f0e627fa31b98778dfbf54 from GitHub Actions run 38731258547 artifact 11971095464. 13 changed/new source rows were reset for semantic re-audit; REMOTE-COMPUTER-001 was conservatively invalidated. Android migration remains incomplete pending source/responsibility closure and same-exact-head package/device/release evidence. Metadata correction: responsibility source_commit fields are normalized to the current Desktop authority because their referenced desktop source blobs are checked against the current full inventory; this does not promote implementation or verification status.",
     "desktop_root_tree": "906b3f414b5ff343a5f0e627fa31b98778dfbf54"
   },
   "responsibilities": [
@@ -74,7 +74,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Maintain source-neutral typed child destinations and actor-scoped lifecycle state for topics, SavedSublist histories, and nested/community conversations; validate pagination windows, monotonic read state, pin/active/unread/no-paid policy, exact-child destruction, membership authorization, and SyncBatch projection.",
       "source_owner": "native/mahayana-messaging canonical Conversation/MessagingEngine/MessagingService",
       "direct_callers": [
@@ -265,7 +265,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own durable Fabushi account session lifecycle, same-origin browser login, session normalization, identity settlement, coordinated refresh, logout/revocation, and valid bearer delivery to production Host inference without exposing credentials to presentation.",
       "source_owner": "Desktop FabushiAuthService + secret-store boundary",
       "direct_callers": [
@@ -361,7 +361,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Validate and project bounded account access-blocked entered/recovered telemetry with stable cause/reason taxonomy, severity and blocked-duration semantics without allowing presentation to own access truth.",
       "source_owner": "Desktop access-blocked telemetry projection",
       "direct_callers": [
@@ -464,7 +464,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own durable messaging blobs and canonical message/conversation mutations including send/edit/delete/reaction/forward, draft/read/unread, pin/archive/notifications, folders, conversation info/participants and typing.",
       "source_owner": "native/mahayana-messaging MessagingService",
       "direct_callers": [
@@ -695,7 +695,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own Agent run lifecycle, provider/inference, streaming, cancellation, recovery and canonical transcript projection.",
       "source_owner": "Desktop Rust Host",
       "direct_callers": [
@@ -783,7 +783,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "After a user message is durably accepted, retain an Agent-visible acknowledgement obligation across process death until a proven visible assistant delivery settles the matching run; coalesce repeated sends, fence stale run completions, preserve interrupts, and bound boot/idle redrive without duplicating the user's message.",
       "source_owner": "Desktop transcript AckObligations + SandAckObligationStore",
       "direct_callers": [
@@ -857,7 +857,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project provider/Agent run failures into a bounded user-visible recovery surface with safe detail, rate-limit/reset guidance and explicit recovery actions without automatically retrying an unknown-side-effect turn.",
       "source_owner": "Desktop transcript agent_run_error formatter/recovery projection",
       "direct_callers": [
@@ -974,7 +974,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own generated/background subagent launch, stable lineage, control, recovery, completion revival and computer-use usage/audit without a second UI truth.",
       "source_owner": "Desktop Rust Host/Runner",
       "direct_callers": [
@@ -1133,7 +1133,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own capability policy, explicit approval boundary, grant consumption and audit before tool execution.",
       "source_owner": "Mahayana CapabilityBroker",
       "direct_callers": [
@@ -1248,7 +1248,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Umbrella traceability row for the plugin domain. Detailed immutable installation, grant persistence, and executable runtime lifecycle are tracked by PLUGIN-IMMUTABLE-INSTALL-001, PLUGIN-GRANT-STORE-001, and PLUGIN-RUNTIME-EXECUTION-001; this row must not be used to claim whole-domain closure.",
       "source_owner": "Mahayana plugin runtime/host",
       "direct_callers": [
@@ -1373,7 +1373,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Bind every Mini App load to instance/load identity, nonce, explicit grants and cancellable pending native calls with dispose fencing.",
       "source_owner": "MCP App SDK bridge",
       "direct_callers": [
@@ -1458,7 +1458,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own attachment limits/opening/metadata and media transfer semantics; pair with true offline ASR and unique microphone ownership.",
       "source_owner": "Desktop media contracts",
       "direct_callers": [
@@ -1939,7 +1939,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own remote device identity, pairing/revoke, command lifecycle, reconnect, human takeover and side-effect reconciliation.",
       "source_owner": "Mahayana platform/remote runtime",
       "direct_callers": [
@@ -2032,7 +2032,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own quote/purchase/pending/verification/entitlement/restore/revoke semantics with crash-safe reconciliation.",
       "source_owner": "Mahayana platform commerce",
       "direct_callers": [
@@ -2103,7 +2103,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve navigation-triggered runtime identity and route native Android screens/deep links/back/recreation without moving canonical runtime state into UI.",
       "source_owner": "Desktop coordinator + renderer navigation",
       "direct_callers": [
@@ -2344,7 +2344,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own workflow triggers, steps, retries, cancellation, approvals, memory/multi-Agent and process recovery.",
       "source_owner": "Desktop workflow runtime",
       "direct_callers": [
@@ -2532,7 +2532,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own settings scope, migrations and durable preferences without leaking canonical account/runtime truth into presentation.",
       "source_owner": "Desktop settings store",
       "direct_callers": [
@@ -2594,7 +2594,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist the account-sensitive default Agent model outside Presentation, restore it after process death, clear/fence it across account changes, validate every saved/used model against the current authenticated model catalog, and apply it when a send has no explicit model selection.",
       "source_owner": "Desktop SettingsService account-sensitive Agent default model setting",
       "direct_callers": [
@@ -2672,7 +2672,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own notification permission/channel/content/deep-link action semantics and account fencing.",
       "source_owner": "Desktop OS notification abstraction",
       "direct_callers": [
@@ -2745,7 +2745,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Apply privacy/redaction policy to user-visible and diagnostic surfaces and prevent secret/session leakage.",
       "source_owner": "Desktop privacy/redaction composition",
       "direct_callers": [
@@ -2811,7 +2811,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own one durable browser/OAuth login attempt across pending polls, cancellation, timeout, process death and cold start without consuming a pending attempt or accepting a stale/foreign callback.",
       "source_owner": "Desktop FabushiAuthService login-attempt owner",
       "direct_callers": [
@@ -2881,7 +2881,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own one stable protected machine/device identity across cold starts without rotating after process death or exposing partial identity to backend clients.",
       "source_owner": "Desktop cursor-machine-id encrypted secret-store owner",
       "direct_callers": [
@@ -2974,7 +2974,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project bounded account/session telemetry and deliver structured account settlement/sign-in records without making observability transport part of authentication truth.",
       "source_owner": "Desktop account telemetry reporters + session settlement shipper",
       "direct_callers": [
@@ -3057,7 +3057,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Validate canonical external release metadata, select an Android artifact, fetch immutable HTTPS/GitHub/npm bytes, verify size/SHA-256, stage safely, block silent downgrade and atomically persist the active installed pointer.",
       "source_owner": "Mahayana PluginInstaller + marketplace release contract",
       "direct_callers": [
@@ -3126,7 +3126,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist explicit least-privilege plugin grants, reject permissions not declared by the installed release, revoke durably, and prune grants when a new release stops requesting them.",
       "source_owner": "Mahayana PermissionManager",
       "direct_callers": [
@@ -3202,7 +3202,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own portable runtime start/stop, service/tool registration, runtime.call cancellation/timeout, effect disposal, reconnect and process-recovery semantics with Capability Broker enforcement at execution.",
       "source_owner": "Mahayana runtime lifecycle/service graph plus runtime-specific adapters",
       "direct_callers": [
@@ -3318,7 +3318,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist stable Agent request/operation/account/generation identity before provider dispatch, enforce one terminal settlement, and turn process-death in-flight work into outcome-unknown that requires reconciliation rather than automatic replay.",
       "source_owner": "Desktop ProductionTurnAgentOwner + Mahayana RuntimeStore",
       "direct_callers": [
@@ -3390,7 +3390,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist remote command request identity before side-effectful semantic action execution; converge terminal duplicate requests, fence session/device/tool identity, and require reconciliation after disconnect/process death when execution outcome is unknown.",
       "source_owner": "Mahayana remote-computer worker API",
       "direct_callers": [
@@ -3479,7 +3479,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist purchase mutation identity by exact account/plugin/SKU before purchase dispatch and reuse it across retries/process death until canonical entitlement confirmation proves terminal success.",
       "source_owner": "Mahayana platform commerce",
       "direct_callers": [
@@ -3569,7 +3569,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist account-scoped automation specs and durable run identity/state so duplicate triggers, approvals, cancellation, steps and process death cannot blindly replay side effects.",
       "source_owner": "Desktop workflow/automation model + runtime composition",
       "direct_callers": [
@@ -3647,7 +3647,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own schedule normalization, cron/@every/time-zone parsing and next-run derivation in Host; presentation cannot submit canonical execution-time truth.",
       "source_owner": "Desktop automation schedule runtime",
       "visible_effect": "Automation next-run projections stay deterministic across restart/time-zone changes.",
@@ -3699,7 +3699,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own the raw client-side-tool-v2 wire ingress: validate exact protocol version/account slot/protobuf-base64 envelope and message identity, enforce per-agent epoch/sequence/call-result lifecycle fencing, reject malformed/stale/duplicate updates, and replay only accepted canonical updates.",
       "source_owner": "Desktop Node Agent Coordinator client-side-tool-v2 relay",
       "direct_callers": [
@@ -3809,7 +3809,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Recheck fresh admin policy, resolve authentication status, register/replace account-scoped server watches, poll token validity on Desktop timing, fence stale/duplicate callbacks, survive process death, reload Host MCP state and resume the requesting Agent only after canonical authentication completion.",
       "source_owner": "Desktop MCP manager/auth watch lifecycle",
       "direct_callers": [
@@ -3897,7 +3897,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project the authenticated account's enabled MCP server catalog as bounded typed metadata without exposing credentials or creating a second connector-session owner.",
       "source_owner": "DesktopMcpManager account-scoped MCP registry/catalog",
       "direct_callers": [
@@ -4051,7 +4051,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Carry marketplace variable schema into install/update UI and Host runtime; enforce required/default semantics, preserve team-configured behavior, keep account-scoped canonical config durable, and keep secret values in Android protected storage while only injecting them into the process-owned runtime in memory.",
       "source_owner": "Desktop MCP marketplace/catalog flow + account writer",
       "direct_callers": [
@@ -4131,7 +4131,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Use the Desktop exact version grammar and prerelease ordering for update selection so malformed or semantically different version strings cannot be treated as a valid Android release.",
       "source_owner": "Desktop updater version comparator",
       "direct_callers": [
@@ -4191,7 +4191,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Bind CI to the exact source HEAD; build and test the shipping product architecture; enforce platform boundaries; run focused packaged interaction regressions; and retain failure evidence tied to the tested SHA.",
       "source_owner": "Desktop GitHub Actions chat parity workflow",
       "direct_callers": [
@@ -4278,7 +4278,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Bootstrap a migration branch from a frozen external Grok reference, bind the imported source to a known authority revision, validate the architecture inventory, and prevent silent reference drift.",
       "source_owner": "Historical Desktop Grok reference import workflow",
       "direct_callers": [
@@ -4343,7 +4343,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Run Rust parity contracts for the Desktop Host/Runner, then advance only tested migration-manifest rows and revalidate architecture before recording evidence.",
       "source_owner": "Historical Desktop Grok Rust parity finalizer",
       "direct_callers": [
@@ -4408,7 +4408,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Bind a historical PR20 migration revision to its exact HEAD, recheck Grok architecture inventory, and prove the Desktop renderer still typechecks/builds after architecture migration changes.",
       "source_owner": "Historical Desktop PR20 verification workflow",
       "direct_callers": [
@@ -4558,7 +4558,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Build the user-distributed product from an exact source revision, bind native/runtime resources, enforce release-only security boundaries, sign and validate the distributable, exercise the actual packaged product with production composition, record updater/distribution metadata and artifact provenance, and publish only after release acceptance.",
       "source_owner": "Desktop macOS release/package workflow",
       "direct_callers": [
@@ -4647,7 +4647,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Continuously prove the shipping Mahayana Host/Coordinator/Runner and canonical messaging/tool/attachment/human-takeover ownership contracts against the exact source revision, including production composition and resource-pressure behavior, while separately validating platform-specific presentation/deployment boundaries.",
       "source_owner": "Desktop Rust runtime CI",
       "direct_callers": [
@@ -4734,7 +4734,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Classify disk pressure with hysteresis, persist one reminder episode across restart, claim/release/commit reminders idempotently, and fence reminder lifecycle to the canonical account/turn owner.",
       "source_owner": "Rust Host disk-pressure guard/watch and reminder ledger",
       "visible_effect": "Agents receive bounded low-disk reminders without reminder storms; completed turns commit reminders while cancelled/failed/unknown outcomes remain explicitly recoverable.",
@@ -4778,7 +4778,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Keep server-accepted first-party account-auth URL privilege inside the canonical account owner while ensuring untrusted external web URLs cannot inherit foreign web-login credential parameters; prove the privilege boundary and exact-head evidence independently.",
       "source_owner": "Desktop external URL policy + Fabushi account owner",
       "direct_callers": [
@@ -4910,7 +4910,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Continuously bind migration work to an exact upstream/source authority, recursively inventory the source boundary, retain artifact provenance, and keep completion fail-closed while semantic/source debt remains.",
       "source_owner": "Desktop GitHub Actions source-authority workflow",
       "direct_callers": [
@@ -4990,7 +4990,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Keep command-palette participant identity canonical when roster/search rows are replaced: stable identities appear once, the newest replacement controls projection, and exact-head CI independently verifies the source/contract.",
       "source_owner": "Desktop command-palette model plus canonical Search GitHub Actions contract",
       "direct_callers": [
@@ -5073,7 +5073,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Keep AI-assisted product changes spec-first, exact-source grounded, fail-closed, and verified only in authorized CI environments while preserving canonical owner boundaries.",
       "source_owner": "Repository development governance",
       "direct_callers": [
@@ -5149,7 +5149,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Make source/build dependency closure explicit so shipping builds do not rely on an undeclared sibling checkout or stale historical path list.",
       "source_owner": "Desktop source-closure provenance document",
       "direct_callers": [
@@ -5215,7 +5215,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Distinguish historical repository-export provenance from the current canonical Desktop-to-Android source authority, and bind migration evidence to the latter exact commit/tree.",
       "source_owner": "Desktop historical export provenance marker",
       "direct_callers": [
@@ -5290,7 +5290,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Document the standalone product repository boundary, current canonical migration authority, runtime ownership boundaries, provenance, and verification limits without treating stale historical path lists as current source facts.",
       "source_owner": "Desktop repository overview and migration entrypoint",
       "direct_callers": [
@@ -5365,7 +5365,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Track the actual shipping Rust runtime/build dependency closure and provenance without treating obsolete restoration paths as current authority.",
       "source_owner": "Desktop historical Rust restoration provenance",
       "direct_callers": [
@@ -5496,7 +5496,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose the running Fabushi application's bounded semantic App Agent Surface with status/snapshot/find/action/wait/assert operations, stale-generation fencing, sensitive-value redaction, bounded requests/results, authenticated access and deterministic unavailable/error behavior.",
       "source_owner": "Desktop chatgpt-vps-control App Agent Surface client + Desktop private loopback bridge",
       "direct_callers": [
@@ -5585,7 +5585,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Keep the shared auth/runtime/chat/marketplace/Mini App/capability approval/interrupt/session-clear journeys machine readable and bound to real platform owners so cross-platform acceptance cannot silently drop a product journey.",
       "source_owner": "Desktop cross-platform automation contract",
       "direct_callers": [
@@ -5694,7 +5694,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose the canonical Agent roster as a responsive native Org chart/Agent Network with availability gating, deterministic graph edges/layout, activity projection, node selection, details inspector, open-chat/open-room action, summary counts, resize adaptation, zoom and pan.",
       "source_owner": "Desktop recovered Org Chart workspace over the canonical Agent roster",
       "direct_callers": [
@@ -5777,7 +5777,7 @@
           "blob_sha": "54dbbfc743ee238f182d7305ba2af01ba21ce20d"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide an account-scoped credential vault whose secret values are written/rotated/revoked through OS-backed encryption, whose list projection exposes only metadata/configured state and origin binding, and whose UI/API never provides a reveal path for stored plaintext.",
       "source_owner": "Desktop Electron main secrets stores + guarded IPC; renderer owns only transient input fields.",
       "direct_callers": [
@@ -5850,7 +5850,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Agent connector credential persistence and revocation without exposing credential plaintext outside the authorized execution boundary.",
       "source_owner": "Desktop Rust file-based SandConnectorSecretStore",
       "direct_callers": [
@@ -5925,7 +5925,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Keep Fabushi avatar feedback native and low-power: idle presentation must not run a perpetual motion loop, active work may use bounded animation, and legacy web motion runtimes/styles must not remain in production.",
       "source_owner": "Desktop renderer avatar component and packaged motion-parity acceptance",
       "direct_callers": [
@@ -6000,7 +6000,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own account-scoped Agent sidebar pin order, named sections, section membership/collapse state, modifier selection and conflict-safe cross-device merge without moving canonical layout truth into presentation.",
       "source_owner": "Desktop Agent workspace account sidebar layout state",
       "direct_callers": [
@@ -6099,7 +6099,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Capture reviewable visual evidence from the final packaged Android product for representative authenticated shell/search/settings/Assistant journeys, tied to the exact source and distributable artifact rather than debug-only fixtures.",
       "source_owner": "Desktop packaged visual-evidence Playwright journey",
       "direct_callers": [
@@ -6202,7 +6202,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own Human voice/video call capability, media-device preferences and permission/media bridge semantics as one account-fenced call runtime rather than UI-owned WebRTC side effects.",
       "source_owner": "Desktop Human conversation call surface plus Electron callMedia/WebRTC bridge",
       "direct_callers": [
@@ -6284,7 +6284,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve shipping localization, accessibility, RTL/bidirectional text and IME composition semantics across settings and conversation surfaces with native Android resource/input/accessibility ownership.",
       "source_owner": "Desktop shipping settings/conversation renderer surfaces",
       "direct_callers": [
@@ -6349,7 +6349,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Keep Mini App identities out of canonical Human/Agent conversation projections and route Mini App opens only through the isolated Mini App/App Surface owner.",
       "source_owner": "Desktop ElectronMahayanaHostTransport conversation normalization plus miniapp.open routing",
       "direct_callers": [
@@ -6413,7 +6413,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Keep the active conversation identity stable across native responsive layout changes while the composer remains reachable inside supported window/inset/IME bounds and the conversation info surface reflects the same selected conversation.",
       "source_owner": "Desktop messenger workspace responsive layout and conversation selection projection",
       "direct_callers": [
@@ -6489,7 +6489,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own the root Agent multitask task queue as durable state, expose TodoWrite only when the trusted turn capability projection enables multitask, preserve merge/replace and status transitions, and prevent generated subagents from inheriting root bookkeeping authority.",
       "source_owner": "Desktop Rust Runner TurnToolset + SandAgentDb",
       "direct_callers": [
@@ -6579,7 +6579,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose root-only Agent management tools through the shipping provider tool graph, preserve the canonical durable Agent roster for create/update, and deliver SendToAgent asynchronously through the canonical messaging owner with Desktop-equivalent 8,000 UTF-16 message clamping, image validation, direct/group delivery, priority interruption, durable fresh-turn wakeup, stable tool-call idempotency, process-reopen recovery, account fencing and cancellation/outcome-unknown behavior.",
       "source_owner": "Desktop Rust Runner AgentManagementToolBridge over the canonical Agent/messaging owners",
       "direct_callers": [
@@ -6688,7 +6688,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose root-Agent SendMessage as a user-visible mid-turn side effect with strict per-type validation, durable transcript idempotency, awaiting-user widget fencing, account/cancellation fencing and explicit outcome-unknown semantics. Android currently closes text, attachment and widget; cursor-agent and secret-request remain open.",
       "source_owner": "Desktop Rust SendMessageToolBridge over the canonical visible-message sink",
       "direct_callers": [
@@ -6782,7 +6782,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Prove the shipping Android product preserves the broad Messenger user journey represented by Desktop packaged E2E: authenticated startup, native navigation/search, Human and Agent conversations, canonical message mutations, account-scoped cache cleanup, settings, local-first restart, channel/group collaboration, Mini App marketplace/opening and packaged production runtime behavior.",
       "source_owner": "Desktop Playwright packaged Messenger acceptance over shipping Electron + Host composition",
       "direct_callers": [
@@ -6895,7 +6895,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve one Host-owned structured logging/telemetry boundary for runtime, turn, automation, Box, MCP, WebAuthn, recovery and diagnostic events; require real production producers, bounded/redacted fields, terminal settlement and exact-head evidence instead of treating mapper existence as parity.",
       "source_owner": "Desktop HostStructuredLogTelemetry / SandStructuredLogTelemetry production facade",
       "direct_callers": [
@@ -6977,7 +6977,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Durably buffer bounded structured telemetry, fence it to the current account identity, submit bounded batches to the authenticated backend, settle processed/dropped receipts, retain failed batches, expire stale replay, and keep telemetry failure observational rather than canonical business state.",
       "source_owner": "Desktop ProductionStructuredLogTransport / CursorStructuredLogBackend",
       "direct_callers": [
@@ -7059,7 +7059,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Send only explicitly allowlisted product analytics through the authenticated Sand analytics endpoint with feature-gate/opt-out semantics, bounded buffering, account fencing, privacy headers, scalar property typing, daily activity de-duplication and shutdown flush without making analytics failure canonical business state.",
       "source_owner": "Desktop ProductionAnalyticsRuntime + HostProductAnalytics/AutomationRunAnalyticsTelemetry",
       "direct_callers": [
@@ -7123,7 +7123,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own process-start lifecycle telemetry from first app startup through services/coordinator/window phases, emit a 120000 ms stuck edge without terminal settlement, and settle exactly once as ready, failed, or cancelled with bounded phase/duration metadata.",
       "source_owner": "Desktop startup telemetry tracker; Android process owner",
       "direct_callers": [
@@ -7208,7 +7208,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Validate and project bounded rebuild escalation/pending-stall, replica/send-journal reconciliation, resync completion and recovery-action telemetry with Desktop-equivalent warning thresholds while keeping telemetry outside canonical recovery truth.",
       "source_owner": "Desktop telemetry report pipes; product recovery/reconciliation owners produce reports",
       "direct_callers": [
@@ -7311,7 +7311,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Fabushi brand/product copy, Dharma/practice module information architecture, support/download navigation, display formatting and shared experience constants as native Android-owned presentation resources without turning static presentation data into canonical runtime state.",
       "source_owner": "Desktop shared frontend product-experience package",
       "direct_callers": [
@@ -7378,7 +7378,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve shipping Dharma-oriented quick prompts, Global Dharma lightweight checklist behavior and flashcard creation/review semantics when those experiences are exposed on Android, while keeping Agent chat/transcript and spaced-review state with their canonical owners.",
       "source_owner": "Desktop shared chat-experience package",
       "direct_callers": [
@@ -7447,7 +7447,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide development-only renderer inspection, source-preview and fault-control capability without shipping Chromium DOM/Electron reconstruction controls in the Android production product.",
       "source_owner": "Desktop reconstruction/dev renderer only",
       "direct_callers": [
@@ -7537,7 +7537,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Bootstrap the shipping native Android UI against the single typed Android runtime bridge, fail visibly when production runtime composition is unavailable, and keep development health instrumentation out of canonical application state.",
       "source_owner": "Desktop production renderer bootstrap/window bridge declarations",
       "direct_callers": [
@@ -7637,7 +7637,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose native Agent management interactions while keeping canonical Agent roster/name/visibility/unread/pin/duplicate/delete state in the Host-owned durable roster. Presentation owns only transient draft/dialog/menu state, validates user intent, surfaces failures, and invokes typed Coordinator commands without becoming a second Agent truth.",
       "source_owner": "Desktop production Agent row/editor/delete presentation over canonical Agent runtime commands",
       "direct_callers": [
@@ -7736,7 +7736,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Present forward-message recipient search/selection and settlement while delegating the canonical forward side effect to the messaging owner with stable mutation identity and without duplicating message truth in UI.",
       "source_owner": "Desktop ForwardMessageDialog over production messaging forward/search APIs",
       "direct_callers": [
@@ -7846,7 +7846,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Compose the shipping product surface from canonical account, messaging, Agent, MCP/Mini App, settings, notification, automation and Remote owners without creating renderer-owned duplicate canonical state or a legacy web production path.",
       "source_owner": "Desktop ProductionRenderer root composition",
       "direct_callers": [
@@ -7964,7 +7964,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide one native command/search palette that merges canonical Agent/group identity, messages, files/media, links, routines/automations and root/update actions; preserve provider loading/empty/failed/cancelled states, stable result identity, debounced/cancellable observation and safe activation without making the palette a second domain owner.",
       "source_owner": "Desktop production command-palette model and provider adapters",
       "direct_callers": [
@@ -8092,7 +8092,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide the shipping presentation-to-Coordinator client boundary: reject malformed/protocol-incompatible transport state, correlate requests, reject duplicate or stale lifecycle state, surface typed failures, reconnect projections without blindly replaying side effects, and dispose presentation transport without taking ownership of canonical run state.",
       "source_owner": "Desktop production Coordinator client; canonical request/run truth remains Coordinator-owned",
       "direct_callers": [
@@ -8236,7 +8236,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own Agent-group identity and durable 1-6 member relationships in the canonical Agent roster, expose typed create/update membership commands, fence invalid/group/self/stale member identities, and let native presentation keep only transient selection/pending UI state.",
       "source_owner": "Desktop group-members root/provider over Coordinator setGroupMembers and synchronized account-generation roster",
       "direct_callers": [
@@ -8390,7 +8390,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own Computer Rebuild from one durable recreate/forceRecreate request through canonical GrokBotService migration settlement without blind side-effect replay.",
       "source_owner": "Desktop GrokBotService connector + renderer rebuild state composition",
       "direct_callers": [
@@ -8548,7 +8548,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project running subagent, shell and cloud-agent background work for an Agent with strict decoding, stable loading/empty/failed/previous/unavailable semantics, stale-result fencing, reconnect/reset/dispose lifecycle, push-event refresh, 30-second relative-time refresh and one native user-visible async-task surface.",
       "source_owner": "Desktop recovered async-tasks provider/clock/view over Coordinator getAsyncTasks",
       "direct_callers": [
@@ -8659,7 +8659,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own the shipping Agent/group avatar editor state machine: choose or generate an image, validate/normalize it, crop a bounded square to canonical PNG, select/reset character shape/color where applicable, preserve image-versus-character replacement semantics, fence stale async work, and commit only through the canonical roster owner.",
       "source_owner": "Desktop recovered AvatarEditor adapter/controller/model/view over DesktopBridge and RawPortCoordinatorSource",
       "direct_callers": [
@@ -8759,7 +8759,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose an Agent-scoped messaging-platform Channels surface with strict manifest/connection projection, secure credential submission, connect/reconnect/refresh/disconnect lifecycle, setup guidance, and stale Agent/lifecycle request fencing.",
       "source_owner": "Desktop recovered Agent-info Channels controller/view over RawPortCoordinatorSource channel methods",
       "direct_callers": [
@@ -8856,7 +8856,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own Agent profile title and notify-on-updates settings in the canonical roster, expose typed mutations, project authoritative roster changes, and fence stale settings replies across Agent selection, account changes, panel disposal, and duplicate mutation races.",
       "source_owner": "Desktop Agent-info settings model over canonical Coordinator Agent roster projection",
       "direct_callers": [
@@ -9092,7 +9092,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own shared-room collaboration state and typed room invite/join/member/Agent mutations with strict projection validation, host/member authorization, transport reconnect, lifecycle/account generation fencing, pending de-duplication and accessible management UI.",
       "source_owner": "Desktop sharing Coordinator state plus SharedRoomProvider transient presentation controller",
       "direct_callers": [
@@ -9180,7 +9180,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Fence all account-scoped cross-user room, pending-join, typing and self-auth state when Android switches accounts so stale collaboration truth cannot survive into the next account; stop the relay owner before new account policy/reconciliation can resume it.",
       "source_owner": "Desktop CrossUserSharing lifecycle plus Android account/process lifecycle adaptation",
       "visible_effect": "After logout/account switch the next account cannot see or act on the previous account's shared-room state, typing users or join requests.",
@@ -9245,7 +9245,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Durably preserve cross-user room departure/removal obligations and account-scoped room tombstones across process death so unknown/failed relay outcomes can be retried without duplicate room state.",
       "source_owner": "Rust Host cross-user sharing durable departure stores",
       "direct_callers": [
@@ -9316,7 +9316,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Account for the Desktop Computer overlay entrypoint whose shipped view is intentionally empty, while preserving the actual Computer user capability through Android's native Remote Computer product surface.",
       "source_owner": "Desktop Electron renderer entrypoint; shipped overlay view has no state or visible output.",
       "direct_callers": [
@@ -9387,7 +9387,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project canonical Computer rebuild/reconnect state into user-visible update/reset/recover progress steps, migration phase progress, pull percentage and reconnect variants without creating a second rebuild owner.",
       "source_owner": "Desktop rebuild state projection over canonical box migration/rebuild status.",
       "direct_callers": [
@@ -9460,7 +9460,7 @@
     {
       "responsibility_id": "COMPUTER-REBUILD-VISIBILITY-TELEMETRY-ANDROID-001",
       "domain": "remote-computer-telemetry",
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "desktop_sources": [
         {
           "path": "source/electron-main/box/box-visibility-telemetry.ts",
@@ -9583,7 +9583,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide the complete Computer shell around the canonical remote session: status projection/cache, reconnect refresh, multi-monitor preview/fullscreen selection, handoff state, cursor projection, display/input lifecycle and stale/dispose fencing.",
       "source_owner": "Desktop Computer shell controller/status store and presentation; canonical box/session truth remains below renderer.",
       "direct_callers": [
@@ -9646,7 +9646,7 @@
     {
       "responsibility_id": "BOX-EGRESS-TUNNEL-ANDROID-001",
       "domain": "remote-network-egress",
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "desktop_sources": [
         {
           "path": "source/electron-main/box/egress-tunnel-wiring.ts",
@@ -9696,7 +9696,7 @@
     {
       "responsibility_id": "REMOTE-GATEWAY-DESCRIPTOR-FASTPATH-ANDROID-001",
       "domain": "remote-gateway-cache",
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "desktop_sources": [
         {
           "path": "source/electron-main/box/gateway-descriptor-cache.ts",
@@ -9798,7 +9798,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose shared-computer image update only from canonical Forever Box/update truth; when Agents are busy offer durable update-when-idle plus explicit forced update, preserve files/logins for update paths, fence account/process identity, and never replay an ambiguous side effect.",
       "source_owner": "Desktop ProductionRenderer computer update composition over Forever Box status, rebuild stores and confirmation controller",
       "direct_callers": [
@@ -9897,7 +9897,7 @@
           "blob_sha": "021df34c0d47f61a863959429a10cc614e70817a"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Teach an Agent from a bounded private desktop demonstration: single canonical recording episode, ten-minute cap, start/stop/discard semantics, stale completion fencing, authenticated durable learning queue/recovery, and learning workflow delivery.",
       "source_owner": "Desktop Host teach-recording extension plus recovered presentation store/composition",
       "direct_callers": [
@@ -9986,7 +9986,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project passive transcript notice rows and the retired permission-request title leaf exactly as read-only conversation history, preserving row identity/timestamp/group-start semantics without creating a permission execution path.",
       "source_owner": "Desktop recovered conversation transcript entry union and row renderer.",
       "direct_callers": [
@@ -10081,7 +10081,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Decode and render the typed transcript timeline-event union for channel-connected, channel-disconnected, name-changed and automation-changed events, with stable descriptions/timestamps and a bounded Open routine action only for a valid automation id.",
       "source_owner": "Desktop conversation timeline-event registry/resolver over canonical transcript event entries.",
       "direct_callers": [
@@ -10155,7 +10155,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project attachment transcript entries into box, legacy-link, media or file cards; validate user-attachment metadata; preserve batch/reply/client identity; and resolve media only through the canonical attachment bridge.",
       "source_owner": "Desktop transcript-card attachment data adapter over canonical transcript attachment entries.",
       "direct_callers": [
@@ -10242,7 +10242,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Resolve transcript auto-review approvals with explicit approve/deny/always state, bounded/redacted durable allow-rule persistence, stale request fencing, single in-flight action and dispose-generation fencing.",
       "source_owner": "Desktop auto-review transcript-card action controller; capability execution remains below the card.",
       "direct_callers": [
@@ -10308,7 +10308,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project a transcript Cloud Agent card by exact bcId with bounded getCloudAgentInfo(includeFiles=false), live/recovery polling, previous-value continuity, watcher reference lifecycle, scope-generation fencing and explicit open action.",
       "source_owner": "Desktop transcript-card Cloud Agent provider over account/Agent-scoped cloud-agent Coordinator state.",
       "direct_callers": [
@@ -10375,7 +10375,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Drive transcript Connector cards from canonical MCP catalog/server state with normalized identity matching, install/authenticate/reopen/retry lifecycle, account-key selection, team-policy fail-closed behavior and generation-fenced auth refresh.",
       "source_owner": "Desktop transcript-card Connector provider over canonical MCP catalog/server/auth owners.",
       "direct_callers": [
@@ -10462,7 +10462,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide the transcript reaction emoji picker with deterministic shipped emoji catalog/alias merge, search ranking and 96-result cap, recent ordering, fail/reload store lifecycle, 8-column keyboard navigation, selected-reaction a11y state and bounded picker geometry.",
       "source_owner": "Desktop transcript reaction picker presentation/cache; canonical reaction mutation remains messaging/transcript owner.",
       "direct_callers": [
@@ -10526,7 +10526,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project GitHub/Slack listener connection state in transcript cards with strict platform decoding, 5-second read polling while observed, previous-value continuity, explicit external connect URL handoff, reconnect refresh and account/Agent scope-generation fencing.",
       "source_owner": "Desktop transcript-card listener integration provider over canonical listener Coordinator methods.",
       "direct_callers": [
@@ -10601,7 +10601,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose transcript message/card actions only for eligible canonical entries: reply/thread/copy/reaction, preserve parent-reply navigation and thread summaries, exclude interactive/media/text-selection context targets, and restore focus across action menus.",
       "source_owner": "Desktop transcript interaction outer owner; canonical reply/thread/reaction/message mutation stays downstream.",
       "direct_callers": [
@@ -10688,7 +10688,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Compose one scoped transcript-card root from the canonical registry, widget interactions, Cloud Agent provider and leaf providers; project only validated card entries; apply typed frame variants/group-start semantics without moving reply/thread/action ownership into leaf frames.",
       "source_owner": "Desktop transcript-card root composition/registry boundary.",
       "direct_callers": [
@@ -10823,7 +10823,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own Agent transcript reaction projection and mutation as an account/Agent-scoped lifecycle: strict reaction decoding, deterministic grouped counts/tooltips, optimistic react callback, authoritative feed reconciliation, reconnect/reset/dispose generation fencing, and bounded picker handoff without making Compose the reaction truth.",
       "source_owner": "Desktop transcript reaction controller + canonical transcript entries feed.",
       "direct_callers": [
@@ -10939,7 +10939,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve one Host-owned Skills lifecycle across legacy marketplace and canonical Registry migration: installed projection, cache/auth-block sync, stable identity/version/path mapping, ownership-fenced team publish/resync/unpublish, managed-policy filtering and Agent execution boundaries without duplicate installed truth or publisher-trust escalation.",
       "source_owner": "Mahayana Host plugin-skills/cache/publish services; Electron marketplace loader is only a Desktop adapter.",
       "direct_callers": [
@@ -11035,7 +11035,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Handle Agent transcript secret requests as one account/Agent-scoped single-flight action: validate non-empty input, submit exactly {entryId,value,agentId}, project pending/settled/provided, reconcile secretProvided from canonical entries, and fence stale completion on scope change/dispose.",
       "source_owner": "Canonical Agent transcript owns request/provided truth; scoped action adapter owns only pending presentation and one in-flight submission.",
       "direct_callers": [
@@ -11123,7 +11123,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project transcript thread reply counts and navigate/load a root thread with account/Agent scope, coalesced same-root load, ready/empty/failed/unavailable states, generation fencing, summary/entry pagination merging, in-scope scroll vs out-of-scope thread open, focus restoration and dispose/reset lifecycle.",
       "source_owner": "Canonical transcript/thread transport owns thread entries and summaries; presentation controller owns scoped loading/navigation only.",
       "direct_callers": [
@@ -11206,7 +11206,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Detect the exact non-streaming image-free bare HTTP(S) link form in send-message:text/legacy attachment content, fetch/cache bounded link metadata by normalized URL, expose idle/loading/ready/empty/failed state, heal watched failures on reconnect/focus, fence stale requests, and open only normalized HTTP(S) URLs externally.",
       "source_owner": "Transcript presentation URL-card provider over trusted link-metadata/open-external bridge.",
       "direct_callers": [
@@ -11282,7 +11282,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Render Agent transcript email/Slack draft cards with strict entry decoding, editable/sending/sent projection, input validation, long-body collapse/expand and disabled-state semantics while preserving the shipped fact that recovered Send/Discard callbacks are presentation-only no-ops until a canonical action owner exists.",
       "source_owner": "Canonical Agent transcript owns draft payload/draftSendState; leaf owns transient form edits/expanded state only.",
       "direct_callers": [
@@ -11378,7 +11378,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Render Agent choice/custom-answer widgets and resolve or dismiss them through typed Agent-scoped actions with single-flight pending state, rejection/failure rollback, canonical settled reconciliation, keyboard-target rules and stale scope/dispose fencing.",
       "source_owner": "Canonical transcript owns respondedValue/widgetDismissed; scoped action adapter owns only ephemeral pending optimistic projection.",
       "direct_callers": [
@@ -11467,7 +11467,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project supported ClientSideToolV2 call/result lifecycles into read-only file-edit/file-write/shell transcript cards, preserving toolCall identity, monotonic sequence, canonical transcript-row ownership, terminal/error/background/cancelled states, streaming merges and account/Agent generation fencing.",
       "source_owner": "Coordinator relay owns validated fenced wire events; canonical Agent transcript owns row existence; presentation boundary owns only the derived tool-result card projection.",
       "direct_callers": [
@@ -11546,7 +11546,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own optimistic Agent send acknowledgement as one durable canonical state machine, reconcile canonical message/attachment echoes, preserve logical/prior nonce identity, permit explicit retry only after proven failure, and fence stale account/Agent/generation/disposed completions without blind replay after process death.",
       "source_owner": "Desktop conversation workspace acknowledgement registry over canonical transcript/Coordinator send transport.",
       "direct_callers": [
@@ -11623,7 +11623,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Render Agent identity with strict dispatcher precedence photo data URL → shared-room → group → persona mark, deterministic size/color/shape, group-member composition and activity-derived persona state.",
       "source_owner": "Canonical Agent roster/profile supplies identity, avatar and activity fields; presentation derives only visual state.",
       "direct_callers": [
@@ -11690,7 +11690,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project Agent identity and working state in the conversation header, open Agent settings/details, expose shared-room trigger when applicable, and gate Computer control off for groups while preserving trailing controls.",
       "source_owner": "Conversation presentation owns only header/menu visibility; Agent identity/runtime and Computer/shared-room states remain canonical owners.",
       "direct_callers": [
@@ -11757,7 +11757,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own ephemeral conversation draft editing UI with reply context, bounded attachment staging, voice dictation lifecycle, rich-editor insertion/focus, disabled/send gating and accepted-send clearing while delegating all canonical send/upload effects.",
       "source_owner": "Presentation owns draft/focus/drag/voice-session UI only; attachment staging/send acceptance remain typed runtime owners.",
       "direct_callers": [
@@ -11851,7 +11851,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide account+Agent scoped full-conversation outline snapshots with retain/refcount lifecycle, cancellable single-flight refresh, transport reconnect recovery, optional polling for running subagents, generation fencing, append/update reconciliation, and a native panel with subagent tabs, expandable typed rows and close/accessibility behavior.",
       "source_owner": "Canonical transcript/runtime owns conversation items; outline provider owns only retained/read-only projection lifecycle and panel-local selection/expansion.",
       "direct_callers": [
@@ -11920,7 +11920,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Compose reply/thread selection, transcript pagination, find-in-chat and reaction feed lifecycles under one account+Agent scope; clear reply before dispatch, project reply/fork submissions, synchronize paginated entries into reply resolution, and dispose all child controllers exactly once.",
       "source_owner": "Child controllers retain canonical responsibility for transcript/reply/find/reaction state; workspace controller is lifecycle/scoping composition only.",
       "visible_effect": "Reply, fork/thread, load-older, find, reactions and composer reply context behave as one coherent conversation workspace.",
@@ -11964,7 +11964,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Stage picked files into a temporary attachment owner, preserve names/MIME/size, enforce empty/too-large/failure semantics including video 200MB vs other 25MB messaging, and atomically commit staged paths before canonical Agent send.",
       "source_owner": "Attachment staging/commit runtime owns temporary paths; composer owns only selection presentation.",
       "visible_effect": "Agent composer can attach files with deterministic size/failure notices and only committed attachment paths enter send.",
@@ -12008,7 +12008,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist per-account/per-Agent draft plus recovery draft, assign draftId, conditionally clear only the accepted/current draft, fence restore by account+generation+mutation revision, clear corrupt/schema-mismatched state, and prevent late restore from overwriting newer edits.",
       "source_owner": "Canonical draft store owns durable Agent draft/recovery; UI owns only current editing projection.",
       "visible_effect": "Agent draft survives reopen/account restore without resurrecting stale text or clearing edits made after send/restore races.",
@@ -12047,7 +12047,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Render named decorative workspace icons at small/base sizes using the canonical visual icon vocabulary while remaining hidden from accessibility semantics.",
       "source_owner": "Presentation-only; no canonical product state.",
       "visible_effect": "Workspace actions retain recognizable iconography without duplicate accessibility announcements.",
@@ -12092,7 +12092,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Produce account+Agent-scoped composer suggestions from canonical Agent/workflow sources; validate, deduplicate, filter and rank members/workflows, distinguish scheduled @ references from slash workflows, preserve loading/empty/failed/unavailable/cancelled lifecycle, reject stale account/Agent/generation completions, and dispose in-flight work. The released Desktop adapter mounts mention/workflow/emoji families and optional recents.",
       "source_owner": "Suggestion controller owns ephemeral query/source projection only; Agent roster and workflow/automation truth remain canonical runtime owners, while the editor owns only presentation and selection.",
       "visible_effect": "Typing @ or / in the Agent composer reveals scoped suggestions without stale results crossing account/Agent changes or late callbacks mutating the current composer.",
@@ -12137,7 +12137,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Retain the source-defined MCP-reference and pull-request candidate provider contracts without presenting them as a shipped composer capability when the current Desktop production adapter has no producer for either family.",
       "source_owner": "These provider modules own dormant typed projection contracts only; current Desktop shipping composition intentionally leaves their PromptEditor provider slots unset.",
       "visible_effect": "Current shipped composer has no PR or MCP suggestion producer even though dormant provider modules exist in source; Android must not invent an extra user-visible producer and call it parity.",
@@ -12180,7 +12180,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Search semantic transcript payloads, enumerate every occurrence, navigate matches with wrap semantics, clear and generation-fence state on account/Agent scope changes and dispose, focus/select the search field, support keyboard close/next/previous, scroll the selected entry into view, and visually distinguish current/all occurrences without indexing excluded transcript chrome.",
       "source_owner": "Ephemeral find controller owns only search query/match/current projection; canonical transcript remains the transcript owner.",
       "visible_effect": "Find in chat searches the current conversation, reports match position, moves through matches, scrolls to the selected entry and never leaks results across conversation scope changes.",
@@ -12219,7 +12219,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project message attachments into image/video previews, retain file/audio fallbacks, open image/video media as a same-transcript gallery, wrap previous/next navigation, reset transforms on item change, zoom/pan/fit previews, fence async media resolution after item change/dispose, expose loading/failure states, preserve attachment identity/labels, and hand PDFs to the dedicated PDF viewer.",
       "source_owner": "Transcript attachment projection owns only presentation/open state; attachment bytes remain bridge/runtime-owned and PDF rendering remains the dedicated PDF viewer responsibility.",
       "visible_effect": "Users can open transcript images/videos full screen, move among related media, zoom/pan images, close safely, and fall back to file handling without stale media appearing after rapid navigation.",
@@ -12270,7 +12270,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Resolve bounded PDF attachment bytes, create and dispose a dedicated document renderer, render pages lazily with cancellation/stale-result fencing, expose loading/missing/too-large/render-error states, navigate pages, zoom safely, preserve text-selection/accessibility semantics, provide explicit download fallback and restore focus on close.",
       "source_owner": "PDF attachment viewer owns only ephemeral document/page/zoom/render state; attachment bytes remain bridge/runtime-owned and durable transcript remains canonical.",
       "visible_effect": "A PDF attachment opens inside Fabushi with bounded preview behavior, page navigation and zoom; failures or oversized files remain explicit and recoverable instead of silently opening an unrelated surface.",
@@ -12340,7 +12340,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project durable reply targets into compact semantic labels, expose a reply quote as a navigation trigger, distinguish missing/deleted references without inventing retry state, preserve attachment/link-specific labels and composer reply context, persist reply selection in the conversation draft across recreation/reopen, fence reply state by conversation scope, and provide an accessible referenced-message preview where the platform supports hover/focus.",
       "source_owner": "Canonical transcript/replyTo identity remains runtime-owned; presentation owns only labels, navigation intent and ephemeral preview visibility.",
       "visible_effect": "Users see what a message replies to, can jump to the referenced message when it is already in scope, and get an explicit unavailable state when the target is not currently resolvable.",
@@ -12379,7 +12379,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own ephemeral prompt-editor composition and selection while preserving canonical draft ownership; restore persisted rich-text content with plain-text fallback; serialize semantic links/references; project mention/workflow/emoji/PR suggestions; fence queued pre-clear and old-scope edits; avoid submitting during IME composition; support Enter-submit versus Shift+Enter newline, Escape, file paste, and explicit focus/clear/restore controls.",
       "source_owner": "Editor owns only ephemeral document/selection/composition state. Canonical prompt/draft and Agent/account scope remain presentation/runtime-owned and external updates must be fenced against stale editor transactions.",
       "visible_effect": "Prompt entry preserves rich references and links, autocomplete is keyboard accessible, IME input does not accidentally submit, stale edits cannot resurrect a cleared or previous-scope draft, and pasted files stage as attachments.",
@@ -12418,7 +12418,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "After a send is durably journaled, dispatch approval cleanup as a separate lifecycle whose failure never reverses accepted send state; clear after resend only when a new journal entry was actually created; never clear on delete/cancel; fence late clear completion across account reset/dispose and expose cleanup failure independently.",
       "source_owner": "Durable send journal remains the send-state owner; approval cleanup remains the approval-store owner. Presentation must not conflate cleanup failure with send failure or directly clear canonical approval truth.",
       "visible_effect": "Accepted sends remain accepted even if stale approval cleanup fails, retry/delete/cancel preserve correct approval semantics, and account switches cannot apply late cleanup results to the next scope.",
@@ -12464,7 +12464,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project canonical Agent transcript message attachments into an immutable typed Android presentation model without inventing a second byte/transfer owner, preserve path/name/optional size/MIME metadata, fence rows by explicit Agent identity, fail closed on malformed attachment metadata, and render attachment-only canonical messages without synthetic text.",
       "source_owner": "Desktop canonical conversation transcript model; attachment bytes and transfer ownership remain outside presentation.",
       "direct_callers": [
@@ -12537,7 +12537,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Render shipped assistant inline/display math with the canonical KaTeX semantics, including disabled single-dollar inline math, strict first render, tolerant fallback, readable source fallback while runtime loading/unavailable, and stale async result fencing.",
       "source_owner": "Desktop conversation rich-content presentation; transcript text remains canonical outside the renderer.",
       "direct_callers": [
@@ -12605,7 +12605,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Render Mermaid code with strict-security initialization, parse-before-render fail-closed behavior, bounded cache/serialized rendering, theme-sensitive output, invalid-code fallback, full-screen preview, zoom/pan/fit controls, and stale/dispose fencing.",
       "source_owner": "Desktop conversation rich-content presentation; transcript/code text remains canonical outside renderer.",
       "direct_callers": [
@@ -12680,7 +12680,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide bounded older-history pagination over the canonical Agent transcript using an exclusive older-page cursor, chronological page order, duplicate-safe merge semantics, single-flight loading, capability/failure state, account/Agent/generation stale fencing, prepend viewport anchor preservation, reset/dispose fencing, and process-reopen recovery without creating a presentation-owned transcript.",
       "source_owner": "Desktop transcript pagination controller over Coordinator-owned transcript history.",
       "direct_callers": [
@@ -12764,7 +12764,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project Agent row/preview identity, waiting/draft/last-entry precedence, working/blocked/unread status, pinned marker and accessible mobile replacement without inventing a second roster truth.",
       "source_owner": "Desktop sidebar preview content/header/status compositor",
       "direct_callers": [
@@ -12863,7 +12863,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project, create, rename, delete, reorder, collapse and assign named Agent sidebar sections; lock synthetic Unassigned and preserve failure/recovery semantics through the canonical Host owner.",
       "source_owner": "Desktop sidebar section projection/state/header/delete-confirmation",
       "direct_callers": [
@@ -12919,7 +12919,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose native Agent/sidebar search and filter Agent/conversation rows without moving roster or message truth into the search field.",
       "source_owner": "Desktop sidebar search trigger",
       "direct_callers": [
@@ -13002,7 +13002,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preview canonical transcript CSV/TSV and OOXML spreadsheet attachments with bounded byte/row parsing, multi-sheet selection, cell detail, explicit missing/too-large/error states, and lifecycle fencing without making Compose a second attachment owner.",
       "source_owner": "Desktop conversation workspace spreadsheet preview controller and shipped spreadsheet runtime",
       "direct_callers": [
@@ -13082,7 +13082,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve user access to legacy binary BIFF .xls transcript attachments on Android when the Desktop-shipped spreadsheet runtime can parse them in-app.",
       "source_owner": "Desktop conversation workspace spreadsheet viewer and shipped spreadsheet runtime",
       "direct_callers": [
@@ -13160,7 +13160,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Desktop send-submission transport semantics on Android without creating a second transcript/send owner: durable transport-down queueing, same-Agent serialized dispatch, queued-only cancellation, reconnect flush, generation/stale fencing, dispose fencing, explicit proven-failure retry, and unknown-outcome reconciliation.",
       "source_owner": "Desktop renderer submission store; on Android durable acknowledgement truth is moved into Rust Host while the Coordinator owns platform transport admission.",
       "direct_callers": [
@@ -13253,7 +13253,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project Desktop six-field transcript adjacency semantics from immutable neighboring entries so Android renders equivalent group/run/bubble/thread continuity without allowing Compose to become the transcript owner.",
       "source_owner": "Desktop transcript adjacency projector",
       "direct_callers": [
@@ -13324,7 +13324,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Show a dedicated accessible transcript initial-load failure with stable copy and a parent-owned retry action, without making the error view a transcript subscription or lifecycle owner.",
       "source_owner": "Desktop TranscriptLoadError view",
       "direct_callers": [
@@ -13399,7 +13399,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Render canonical transcript message content with Desktop-equivalent native Android semantics for assistant markdown/code/table/math/link/image blocks and persisted user rich-text, including safe malformed-rich-text fallback and copy affordances without moving canonical message ownership into Compose.",
       "source_owner": "Desktop conversation transcript content renderer",
       "direct_callers": [
@@ -13471,7 +13471,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Replace Desktop transcript utility CSS with native Compose spacing, focus, interaction-state, reduced-motion, code/message/readability and accessibility semantics rather than shipping renderer utility classes on Android.",
       "source_owner": "Desktop renderer stylesheet utility layer",
       "direct_callers": [
@@ -13535,7 +13535,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the source fact that no standalone conversation preview dialog ships; route composition belongs to the real production renderer rather than a preview-only duplicate owner.",
       "source_owner": "Desktop recovered workspace preview stub",
       "direct_callers": [],
@@ -13599,7 +13599,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide composer voice input with permission/request/recording-or-listening/processing/error lifecycle, explicit stop that still transcribes, cancel/dispose late-result fencing, a five-minute ceiling, sub-500ms no-op behavior, and final transcription inserted into editable draft without auto-send.",
       "source_owner": "Desktop VoiceSessionController",
       "direct_callers": [
@@ -13668,7 +13668,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the shipping conversation workspace visual hierarchy and interaction-state presentation across transcript rows, message bubbles, queued/failed notices, composer/attachments and surrounding workspace chrome without making presentation the canonical state owner.",
       "source_owner": "Desktop recovered conversation workspace CSS layered over transcript/composer/workspace DOM projections",
       "direct_callers": [
@@ -13745,7 +13745,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Present a native Deep Links information surface for an allowlisted deep-link activation, showing the canonical route and whether activation originated from the custom protocol or HTTPS, with explicit close/done lifecycle.",
       "source_owner": "Desktop deep-link overlay model/view consuming typed parsed deep-link information",
       "direct_callers": [
@@ -13814,7 +13814,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide an application-root failure surface that remains visible after a renderer/presentation failure, exposes accessible title/detail, supports an explicit restart/reload attempt, and lets the user copy bounded diagnostics without crashing the failure surface.",
       "source_owner": "Desktop root error-boundary presentation around renderer composition",
       "direct_callers": [
@@ -13879,7 +13879,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide account feedback submission with a 10,000-character bound, optional conversation id, sending lock that prevents dismissal, stable sent surface, typed failure codes and explicit retry after failure.",
       "source_owner": "Desktop feedback overlay over typed submitFeedback bridge",
       "direct_callers": [
@@ -13967,7 +13967,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose an always-available Hidden Bots chooser that projects only hidden Agents, preserves their active/history semantics, supports open-after-dismiss and explicit Unhide, and provides native modal/accessibility behavior without owning canonical hidden state.",
       "source_owner": "Desktop hidden-chats overlay entry/model/view over canonical Agent roster",
       "direct_callers": [
@@ -14038,7 +14038,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve hidden-state mutation lifecycle semantics: scope/account fencing, optimistic projection, deterministic rollback, transport-unknown hold/reconciliation, duplicate suppression, reconnect retry and generation/dispose fencing.",
       "source_owner": "Desktop hidden-chats mutation controller",
       "direct_callers": [
@@ -14150,7 +14150,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Route newly signed-in accounts with no canonical Agents through the native six-step onboarding flow, preserve account-scoped seen state and roster veto, collect daily tools/job suggestions/persona, create the first canonical Agent through Coordinator/Host, and hand off without making Compose a second Agent owner.",
       "source_owner": "Desktop signed-in onboarding model/view over account auth, Agent roster, suggestion catalog and createAgent",
       "direct_callers": [
@@ -14237,7 +14237,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Desktop first-Agent computer readiness and kickstart handoff semantics on Android: readiness probing/polling, bounded wait, create request kickstart/template identity, stale/dispose fencing and honest unavailable/outcome handling.",
       "source_owner": "Desktop signed-in onboarding computer-readiness controller + onboarding create request",
       "direct_callers": [
@@ -14373,7 +14373,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Desktop local-computer tool permission policy on Android: always/ask/never, admin/team ceiling, one-time exact-action approval, reconnect refresh, failure downgrade, approval cleanup and explicit user-visible outcomes before any outbound computer execution.",
       "source_owner": "Desktop localToolPermission bridge/store + shared local-tool permission machinery",
       "direct_callers": [
@@ -14494,7 +14494,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the Desktop Plugins overlay as an Android-native Marketplace surface: focus/deep-link selection, browse/filter/detail/setup, required variables, account grouping/actions, team-required/default removal rules, installed/private-skill projections, notices and lifecycle fencing without making Compose a second plugin owner.",
       "source_owner": "Desktop plugins/overlay browser/model/view/desktop-surface",
       "direct_callers": [
@@ -14572,7 +14572,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Present and mutate the per-server MCP tool catalog with Desktop lifecycle semantics: load/retry, optimistic single-tool toggle, one pending mutation at a time, remote settlement/failure visibility, stale request/generation fencing and dispose.",
       "source_owner": "Desktop PluginServerToolsController over MCP server tool list/toggle bridge",
       "direct_callers": [
@@ -14663,7 +14663,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Recover installed private-Git plugin/skill source access by projecting auth-blocked sync state, reusing or creating one account-scoped purpose=plugin-auth Agent, selecting it, sending the constrained GitHub credential setup/read-only verification prompt, and fencing stale account/generation callbacks.",
       "source_owner": "Desktop PluginAuthController + production adapter",
       "direct_callers": [
@@ -14786,7 +14786,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Desktop Auto Review instruction editing semantics: stable allow/ask list identity, Cursor auth subject parsing, duplicate rejection, in-list edits, cross-list moves, stale-row reconciliation and 20-rule per-behavior cap.",
       "source_owner": "Desktop settings overlay instruction model",
       "direct_callers": [
@@ -14866,7 +14866,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose and durably persist the Desktop router-provider preference catalog (Cursor, Claude Code, Codex, OpenRouter) with schemaVersion=1 parsing, fail-closed default to Cursor, and route actual Agent inference through the selected canonical provider without UI-owned routing truth.",
       "source_owner": "Desktop settings router model + inference router",
       "direct_callers": [
@@ -14956,7 +14956,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own the signed-in root connection resilience projection across account identity, Coordinator transport, roster readiness, reconnect/unreachable phases, queued retry, account-generation fencing and reuse of native roster status surfaces.",
       "source_owner": "Desktop root CoordinatorConnectionController/Host",
       "direct_callers": [
@@ -15032,7 +15032,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Derive account-bound roster readiness from transport, load completion, selected canonical Agent, restored-roster state, privacy block and normalized failure metadata.",
       "source_owner": "Desktop roster access-readiness selector",
       "direct_callers": [
@@ -15101,7 +15101,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist the last selected Agent per account with versioned fail-closed restore, pending selection settlement, complete-roster reconciliation, account/generation fencing and process-death recovery.",
       "source_owner": "Desktop RosterSelectionStore",
       "direct_callers": [
@@ -15169,7 +15169,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Detect Desktop roster privacy-block failures and present a blocking, focus-safe native dialog that can sign out or open the canonical privacy settings URL without allowing normal Agent use while storage/privacy policy is incompatible.",
       "source_owner": "Desktop roster privacy-block modal",
       "direct_callers": [
@@ -15258,7 +15258,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Normalize legacy/current terminal result shapes into one read-only terminal output projection with stable session/command/cwd/output/status/exit-code semantics.",
       "source_owner": "Desktop terminal output model",
       "direct_callers": [
@@ -15332,7 +15332,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Adapt Desktop global keyboard shortcut ownership to Android hardware-keyboard/back handling while preserving ordered action resolution, editable-field policy, alternate prompt shortcut, indexed Agent activation, listener lifecycle and unstacked Escape ownership.",
       "source_owner": "Desktop window-chrome global keyboard shortcut controller",
       "direct_callers": [
@@ -15485,7 +15485,8 @@
       "artifact": "pending exact-head signed Android package evidence",
       "verification_status": "not-verified",
       "notes": "Implemented, not verified. Auto-update-when-idle is an Android-adapted safe auto-stage: signed APK bytes may be downloaded and verified under Desktop-equivalent safety gates, but Android system installation still requires explicit foreground user continuation. Non-stable signed delivery, final release signing, packaged/device upgrade and protected-account acceptance remain open.",
-      "android_head_at_update": "3001ee372f839912443e7bef686186d453f67787"
+      "android_head_at_update": "3001ee372f839912443e7bef686186d453f67787",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "SETTINGS-MANDATORY-UPDATE-ANDROID-001",
@@ -15517,7 +15518,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Block normal product use when updater policy says the installed client is below the authoritative minimum or the backend explicitly requires an update, while keeping policy ownership outside Presentation.",
       "source_owner": "Desktop SandUpdateService updater policy",
       "direct_callers": [
@@ -15604,7 +15605,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own update-track validation and release-policy selection for stable/nightly/dogfood, including disabled nightly coercion, internal dogfood unlock, managed policy and effective-track precedence.",
       "source_owner": "Desktop shared update/update-track policy",
       "direct_callers": [
@@ -15696,7 +15697,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Present one root app alert with deterministic queueing, async action settlement, explicit retry after failure, stale-completion fencing and accessible pending/destructive semantics without moving canonical domain truth into presentation.",
       "source_owner": "Desktop root app-context app-alert controller plus AppAlertHost",
       "direct_callers": [
@@ -15767,7 +15768,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Replace Desktop DOM/window-chrome mechanics with Android-native system window/theme/insets while preserving the visible+connected root focus-refresh invariant.",
       "source_owner": "Desktop window-chrome model",
       "visible_effect": "Android chrome remains native and root data refreshes only when the app is visible and canonical transport is connected.",
@@ -15815,7 +15816,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project canonical Host error trays into the Android root shell with bounded safe actions, snapshot/event reconciliation, dismiss/clear, action single-flight and account/transport/generation fencing.",
       "source_owner": "Desktop notification host consuming tray service",
       "visible_effect": "Root errors and recovery actions appear in the shipping Android shell without duplicating tray truth.",
@@ -15864,7 +15865,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own presentation-only multi-step Agent history entries/cursor/pendingTarget/appliedAgentId with back/forward, deleted-Agent skipping, branch truncation, account fencing and same-account process recovery.",
       "source_owner": "Desktop root-shell-state navigation reducer",
       "visible_effect": "Back/forward traverses real prior Agent selections instead of a one-slot target, while removed Agents and stale accounts are fenced.",
@@ -15907,7 +15908,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project canonical root transport state into a native Android badge with Connecting/Connected/Disconnected semantics and hide it outside an active root session.",
       "source_owner": "Desktop WindowStatusBadge",
       "visible_effect": "Android shows the same coarse connection status without creating a second state owner.",
@@ -15953,7 +15954,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Replace Desktop renderer-owned draggable titlebar and minimize/maximize/close controls with Android system-window ownership while preserving safe content geometry.",
       "source_owner": "Desktop WindowChrome over DesktopBridge window controls",
       "visible_effect": "Android content respects display cutout/status/navigation safe areas and relies on system task/window controls rather than rendering desktop titlebar buttons.",
@@ -15995,7 +15996,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose the active workspace/Agent label in the native Android chat header without a desktop titlebar overlay and keep the label bound to the canonical active Agent projection.",
       "source_owner": "Desktop WorkspaceIndicator",
       "visible_effect": "The active Agent/workspace name remains visible and accessible in Android chat while respecting native mobile layout.",
@@ -16048,7 +16049,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Desktop recovered-entrypoint identity and typed availability as one production authority, including sand_agent_network available/retained/unavailable semantics while keeping Computer, Hidden Chats, Plugins and Settings always available.",
       "source_owner": "Desktop recovered runtime entrypoint registry plus Org Chart sand_agent_network availability",
       "direct_callers": [
@@ -16114,7 +16115,7 @@
       "notes": "Do not upgrade to verified until the final exact HEAD passes required Actions and package/device evidence. snapshot-store.ts is intentionally excluded because its direct-caller closure remains incomplete."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "source_owner": "Desktop production account edge",
       "android_disposition": "android-adapted",
       "implementation_status": "implemented",
@@ -16152,7 +16153,7 @@
       "notes": "Do not guess protobuf fields from empty generated placeholders. Production implementation landed at 19cde62c68f92cbdaf7aea9d6ba1e1ddfbe31908; keep not-verified until exact-head Rust/architecture/package evidence and a real authenticated backend response are captured."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "source_owner": "Desktop production account edge",
       "android_disposition": "android-adapted",
       "implementation_status": "implemented",
@@ -16194,7 +16195,7 @@
       "notes": "Implemented, not verified. Trial cancellation is side-effectful and the current production path classifies uncertain settlement for reconciliation instead of automatically retrying. Exact-head CI/package/device evidence is still open."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "source_owner": "Desktop production account edge",
       "android_disposition": "android-adapted",
       "implementation_status": "implemented",
@@ -16235,7 +16236,7 @@
       "notes": "Implemented source/runtime/presentation slice from Desktop cursor-profile.ts privacy responsibility without moving privacy truth into Compose. Keep verification_status not-verified until same-final-head Rust/Kotlin/package/device evidence exists."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "source_owner": "Desktop production account edge",
       "android_disposition": "android-adapted",
       "implementation_status": "implemented",
@@ -16301,7 +16302,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve bounded attachment preview/read semantics and explicit save/download to a user-selected destination, deleting partial output on transfer failure.",
       "source_owner": "Desktop attachment edge owns transient transfer/download state; canonical bytes remain runtime-owned.",
       "visible_effect": "Users can preview supported attachments and explicitly save a complete file; failed transfers do not leave a misleading partial download.",
@@ -16343,7 +16344,7 @@
     {
       "responsibility_id": "EDGE-FAILURE-TELEMETRY-ANDROID-001",
       "domain": "diagnostics",
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "desktop_sources": [
         {
           "path": "source/electron-main/desktop-edge-failures.ts",
@@ -16408,7 +16409,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Detect the platform time zone, durably own an optional validated IANA override, restore/clear it across process death, present detected/effective values, and make the effective time-zone setting available to canonical Host execution without Presentation owning durable truth.",
       "source_owner": "Desktop settingsStore + main-edge platform detection + Host-settings synchronization",
       "direct_callers": [
@@ -16476,7 +16477,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project bounded team plugin popularity without making popularity a catalog/install authority; failures degrade to no popularity signal and never block browsing/install.",
       "source_owner": "Desktop MCP team-popularity read-only backend edge",
       "visible_effect": "Marketplace may show/use how many team members installed a plugin while remaining usable if popularity is unavailable.",
@@ -16511,7 +16512,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Discover the authenticated user-available inference model catalog with provider parameters, account/generation fencing and explicit unavailable/error state, while keeping model execution ownership in Host/Coordinator.",
       "source_owner": "Desktop Cursor model catalog edge",
       "visible_effect": "Model selection can show only models actually available to the signed-in user instead of accepting arbitrary unverified model IDs.",
@@ -16565,7 +16566,7 @@
           "blob_sha": "7d4b1c923ba59285ec6b671fed60c5a9ab7ac3d2"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve safe 1Password-backed credential provisioning without executing the macOS-only op runtime inside Android: select an authorized provider, create/find vaults, mint bounded expiring credentials, deliver to the intended consumer exactly once, classify cancellation/timeout/denial, and reconcile indeterminate delivery.",
       "source_owner": "Desktop OnePasswordDesktopProvisioningBridge + verified macOS CLI runtime/executor",
       "visible_effect": "A user can provision a short-lived read-scoped 1Password service credential to the intended Fabushi consumer without exposing the token to UI/logs or accidentally minting/delivering it twice.",
@@ -16633,7 +16634,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Collect bounded CPU/memory performance diagnostics under an explicit enable/kill-switch policy, fence stale scans/reports, redact process identity, bound reporting latency, and dispose cleanly without allowing telemetry failure to affect product state.",
       "source_owner": "Desktop process-metrics collector/sampler/runtime with Cursor numeric/process reporting backend",
       "direct_callers": [
@@ -16712,7 +16713,7 @@
           "blob_sha": "48493d6f77dbb0116320af3ea089941877a10e1d"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own one canonical Android storage root per data class, version and migrate durable schemas explicitly, fail closed on foreign/corrupt/conflicting storage or unknown writers, and recover upgrades/process death without duplicate canonical owners or destructive clear-and-recreate fallback.",
       "source_owner": "Desktop startup data-root/user-data settlement",
       "visible_effect": "App upgrades and process restarts preserve account-scoped messages, runs, approvals, settings and protected credentials without reverting to an old writer or silently losing state.",
@@ -16754,7 +16755,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Validate and project bounded agent-load latency/outcome telemetry with stable box-state and severity semantics.",
       "source_owner": "Desktop agent-load telemetry projection",
       "direct_callers": [
@@ -16817,7 +16818,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project entered/retry/recovered agent-unreachable lifecycle telemetry from the canonical connectivity owner with bounded optional failure metadata.",
       "source_owner": "Desktop agents-unreachable telemetry projection",
       "direct_callers": [
@@ -16883,7 +16884,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the stable SAND-E06xx error taxonomy, retryability and bounded payload-tag allowlists while adapting the platform domain from desktop to android.",
       "source_owner": "Desktop telemetry error-tag mapper",
       "direct_callers": [
@@ -16967,7 +16968,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist a bounded process-session marker, heartbeat liveness, distinguish recent unclean exit from stale orphan, retain crash-seen context across process death, and clear the marker only on proven clean shutdown.",
       "source_owner": "Desktop main-process unclean-exit settlement/wiring",
       "direct_callers": [
@@ -17069,7 +17070,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Bound already-authorized AndroidLocal filesystem access to one app-owned root with traversal/symlink escape rejection, bounded regular-file I/O, atomic writes and cwd fallback.",
       "source_owner": "Desktop local-exec machine/provider filesystem boundary",
       "direct_callers": [
@@ -17157,7 +17158,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the platform-independent Agent session database schema, bounded/validated state decoding, and resumable transcript paging/window contracts as Rust foundations for the canonical Android Host session owner.",
       "source_owner": "Desktop Rust Host Session extension",
       "direct_callers": [
@@ -17238,7 +17239,8 @@
       "device_test": "Required: multi-Agent isolation/reopen under Android process death and storage pressure.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "83e5d6075e8cc6d825d05318c2b26e33ab2a5e8d ports the missing platform-independent worker/mirror foundation. Do not promote until shipping Session production composition is implemented and exact-head Actions/package/device evidence closes it."
+      "notes": "83e5d6075e8cc6d825d05318c2b26e33ab2a5e8d ports the missing platform-independent worker/mirror foundation. Do not promote until shipping Session production composition is implemented and exact-head Actions/package/device evidence closes it.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "BOX-AUTHORIZED-RUNNER-ANDROID-001",
@@ -17297,7 +17299,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "android_head_at_update": "a2fb6651d7106683b83fa4bbf8f166102da27850"
     },
     {
@@ -17340,7 +17342,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2"
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "CLOUD-AGENT-REMOTE-TOOL-ANDROID-001",
@@ -17368,7 +17370,8 @@
       "device_test": "required for protected launch/reply/lifecycle flow",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Client-side production routing implemented; does not claim model/image/trace/transcript or server executor closure."
+      "notes": "Client-side production routing implemented; does not claim model/image/trace/transcript or server executor closure.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "CONNECTOR-CHANNEL-DELIVERY-ANDROID-001",
@@ -17400,7 +17403,8 @@
       "device_test": "required for text+attachment send/failure/reconnect on Android",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Outbound Host ownership and failed-delivery recovery are now implemented sub-responsibilities. This broader connector responsibility remains mapped/not-verified because a real provider transport is not currently shipping in the canonical Desktop manifests and packaged/device provider acceptance remains open."
+      "notes": "Outbound Host ownership and failed-delivery recovery are now implemented sub-responsibilities. This broader connector responsibility remains mapped/not-verified because a real provider transport is not currently shipping in the canonical Desktop manifests and packaged/device provider acceptance remains open.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "BACKGROUND-WAKES-CHANNEL-REVIVAL-ANDROID-001",
@@ -17430,7 +17434,8 @@
       "device_test": "Required for final channel failure correction journey; no current canonical provider success path is claimed.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Outbound failed-delivery revival remains an implemented narrow responsibility. Inbound channel revival is tracked separately; aggregate background-wakes remains mapped/not-verified until all shipping callers have exact-head evidence."
+      "notes": "Outbound failed-delivery revival remains an implemented narrow responsibility. Inbound channel revival is tracked separately; aggregate background-wakes remains mapped/not-verified until all shipping callers have exact-head evidence.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "BACKGROUND-WAKES-TIMELINE-ANDROID-001",
@@ -17458,7 +17463,8 @@
       "device_test": "Required in final automation/process-death acceptance.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Timeline caller implementation now includes automation-changed, channel-connected, channel-disconnected and admin-broadcast. Keep not-verified until the new exact HEAD passes Actions; aggregate source row remains mapped."
+      "notes": "Timeline caller implementation now includes automation-changed, channel-connected, channel-disconnected and admin-broadcast. Keep not-verified until the new exact HEAD passes Actions; aggregate source row remains mapped.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "BACKGROUND-WAKES-INBOUND-ANDROID-001",
@@ -17487,7 +17493,8 @@
       "device_test": "Required with a real shipping channel provider when that provider is enabled.",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Narrow Host inbound wake owner only. This does not claim a currently non-shipping Slack/Discord provider or promote the aggregate Desktop background-wakes source row."
+      "notes": "Narrow Host inbound wake owner only. This does not claim a currently non-shipping Slack/Discord provider or promote the aggregate Desktop background-wakes source row.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "DURABLE-FILE-POLICY-ANDROID-001",
@@ -17513,7 +17520,8 @@
       "device_test": "covered by recovery/upgrade/device acceptance",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Narrow source responsibility closed; this does not imply complete Box snapshot parity."
+      "notes": "Narrow source responsibility closed; this does not imply complete Box snapshot parity.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "ACTION-AUDIT-ANDROID-001",
@@ -17542,7 +17550,8 @@
       "device_test": "required for auditable tool/computer-use execution and recovery",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not infer audit parity from permission enforcement alone; execution authorization and action audit are distinct responsibilities."
+      "notes": "Do not infer audit parity from permission enforcement alone; execution authorization and action audit are distinct responsibilities.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "MEDIA-ADVANCED-ATTACHMENTS-ANDROID-001",
@@ -17612,7 +17621,8 @@
           ]
         }
       ],
-      "android_head_at_update": "85aba05976bc454e0f39de04477f19b529f77d1c"
+      "android_head_at_update": "85aba05976bc454e0f39de04477f19b529f77d1c",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "AUTH-INFERENCE-CREDENTIAL-ANDROID-001",
@@ -17642,7 +17652,8 @@
       "device_test": "required for long-lived Agent session across credential rotation and account switch",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Do not downgrade ACCOUNT-SESSION-001: canonical Fabushi account lifecycle is separately implemented. This responsibility tracks Desktop inference/backend auth semantics not yet proven equivalent."
+      "notes": "Do not downgrade ACCOUNT-SESSION-001: canonical Fabushi account lifecycle is separately implemented. This responsibility tracks Desktop inference/backend auth semantics not yet proven equivalent.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "AUTO-REVIEW-ANDROID-001",
@@ -17741,7 +17752,8 @@
             "Auto Review production/focused contract"
           ]
         }
-      ]
+      ],
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "AUTOMATION-CLOUD-SYNC-ANDROID-001",
@@ -17770,7 +17782,8 @@
       "device_test": "required for restart/offline/reconnect/cloud fire without duplicate execution",
       "artifact": null,
       "verification_status": "not-verified",
-      "notes": "Separate from AUTOMATION-WORKFLOW-001 local durable run lifecycle. Local success does not prove cloud/listener automation parity."
+      "notes": "Separate from AUTOMATION-WORKFLOW-001 local durable run lifecycle. Local success does not prove cloud/listener automation parity.",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb"
     },
     {
       "responsibility_id": "WEBAUTHN-PROXY-ANDROID-001",
@@ -17809,7 +17822,7 @@
           "blob_sha": "fd52784e73159ee1d0759394ad10b900be2105f1"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own WebAuthn/passkey ceremonies behind a bounded platform proxy with origin/rpId validation, canonical pending lifecycle, cancellation/stall timeout and stale-provider fencing.",
       "source_owner": "Desktop preload WebAuthn boundary",
       "visible_effect": "Allowed passkey requests complete or fail deterministically without hanging or leaking credentials.",
@@ -17934,7 +17947,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Sand/Box durable workspace state across recreation and process loss using conflict-safe manifest/object storage, verified hydration, staged database and browser-session capture, bounded scheduling, diagnostics and vacuum; never blind-replay an ambiguous remote storage side effect.",
       "source_owner": "Desktop BoxStoreSync extension and Agent Store/CAS clients",
       "direct_callers": [
@@ -18027,7 +18040,7 @@
           "blob_sha": "7fe428f4c510279cb8907dc989a6fd8687d482b1"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve browser-side account owner stamping and server kill-switch control across auth renewal without leaking bearer tokens or allowing a stale browser process to retain token injection.",
       "source_owner": "Desktop BrowserUa Host extension plus local Sand browser marker contract",
       "visible_effect": "Authenticated browser automation stays associated with the correct account and can have UA token injection revoked by policy without restarting the product.",
@@ -18126,7 +18139,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the privacy/account/lifecycle contract around codebase telemetry without granting the Android app arbitrary local-workspace access; when codebase snapshot collection is applicable, execute it only inside the codebase-owning authorized Remote Runner.",
       "source_owner": "Desktop SandCodebaseTelemetryHost + CsnapsCodebaseTelemetryAdapter + CodebaseSnapshotTrigger",
       "direct_callers": [
@@ -18226,7 +18239,7 @@
           "blob_sha": "0b3963b06a4806ef546e65b3e1ec3481d8d411b9"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the product/privacy boundary of Desktop codebase telemetry: Sand execution environments may snapshot their own codebase under telemetry privacy policy, while Android must not reinterpret phone storage as that codebase, spawn csnaps, or smuggle telemetry collection through a generic Remote Runner privilege.",
       "source_owner": "Desktop Sand Host codebase_telemetry extension + csnaps process",
       "visible_effect": "No Android user-visible feature is removed; codebase telemetry remains attached to the environment that actually owns the codebase. Android avoids unexpected phone/remote-code collection and keeps explicit Remote Runner actions separately authorized.",
@@ -18263,7 +18276,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Search one canonical Agent transcript for visible user/assistant text using Desktop-equivalent normalization, recent-first ordering, snippets and bounded result limits without exposing hidden agent-to-agent traffic.",
       "source_owner": "Desktop content-search Agent transcript matcher",
       "direct_callers": [
@@ -18341,7 +18354,7 @@
           "blob_sha": "419f1307e13849c799183a90c638d29039ce73be"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve global Agent transcript message/media search semantics, deterministic limits and attachment projection while keeping the search index rebuildable rather than canonical.",
       "source_owner": "Desktop ProductionContentSearchExtension / SandSearchIndexService derived-index owner",
       "visible_effect": "Users can search durable Agent conversation text and media across restarts with bounded results and current-account fencing.",
@@ -18390,7 +18403,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Accept each cross-user remote-turn nonce at most once across process death, prune expired dedupe state after the three-day protocol TTL, and fail closed on malformed identifiers or durable-write failure.",
       "source_owner": "Desktop SandXuserTurnDedupeStore",
       "visible_effect": "Relay redelivery or Android restart cannot execute the same shared-room remote turn twice.",
@@ -18432,7 +18445,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Expose account-fenced global message and media search with Desktop-equivalent visible filtering, recent ordering, bounded results, filename/media classification and cold-start durability without creating a second canonical transcript owner.",
       "source_owner": "Desktop content-search query/index projection",
       "direct_callers": [
@@ -18526,7 +18539,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Maintain a derived durable FTS message/media index fed by transcript mutations with worker isolation, reconcile, corruption rebuild, bounded respawn/retry, health state and deterministic disposal.",
       "source_owner": "Desktop SandSearchIndexService/worker/writer",
       "direct_callers": [
@@ -18597,7 +18610,7 @@
           "blob_sha": "46c0ed1d24a497e62aff51ac55d1e546bae86d4c"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Classify executor storage pressure with hysteresis, preserve durable pressure reminder episodes across process death, and surface pressure from the canonical execution boundary without duplicate warnings or unsafe retries.",
       "source_owner": "Desktop ForeverBox disk-pressure guard/watch",
       "visible_effect": "Low-storage execution environments are detected and pressure reminders are de-duplicated per episode.",
@@ -18651,7 +18664,7 @@
           "blob_sha": "90606429ea52411e40203dde4be1c5ec166f4d8c"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Safely update the shipping runtime while quiescing automation/shared-room/transcript work, preserving durable apply/outcome state, refusing unsafe replay after uncertain installation, and recovering on the next process start.",
       "source_owner": "Desktop HostUpgradeService/Sand supervisor protocol; Android native updater + Rust Host quiesce replacement",
       "visible_effect": "Users can receive/install updates without corrupting active Agent/shared-room work or silently retrying an installation whose outcome is unknown.",
@@ -18689,7 +18702,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Resolve account/team-managed Sand rules across direct teams, filter supported Agent types, dedupe stable full paths, preload/refresh with account/auth fencing, and preserve the previous known-good snapshot when a refresh fails.",
       "source_owner": "Desktop Managed Setup ProductionTeamRulesResolver",
       "visible_effect": "Managed team instructions remain available and stable across transient backend failures instead of disappearing or mixing accounts.",
@@ -18760,7 +18773,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own canonical Agent/user/project memory, project membership and prompt recall; ingest bounded turn evidence; synthesize only evidence-backed changes through a verification pass; protect explicit memories; retry/cancel safely; recover durable state after process death; and keep memory account/Agent/project fenced.",
       "source_owner": "Desktop Host MemoryExtension / MemoryService / MemorySynthesisService",
       "visible_effect": "Agents remember durable user/project context across turns and restarts without inventing unsupported memories or leaking another account/project state.",
@@ -18805,7 +18818,7 @@
           "blob_sha": "68097353db975c2833294bc4df2eb969985a5d83"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Normalize remotely managed Agent skills, persist a durable materialized cache, coalesce refresh work, remove revoked skills, and expose on-demand cache presence without creating a second account/network credential owner.",
       "source_owner": "Desktop ManagedSetup managed-skills core",
       "visible_effect": "Managed skills can be safely materialized for Agent use and remain stable across Host restart once the Android production fetch adapter supplies them.",
@@ -18844,7 +18857,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Recover canonical Agent session persistence after interrupted writes or storage corruption without silently publishing partial state: validate storage on open, quarantine corruption, salvage valid durable state where possible, fail closed around unsafe concurrent recovery, emit recovery diagnostics, and rebuild derived projections after recovery.",
       "source_owner": "Desktop SandAgentDb recovery owner",
       "direct_callers": [
@@ -18930,7 +18943,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own one durable Rust Agent session SQLite store per live Agent, including metadata/root CAS, transcript mutation/paging, unread/awaiting/profile/memory/request state, live-handle fencing, write generations, recovery retry and close/checkpoint lifecycle.",
       "source_owner": "Desktop Rust Host SandAgentDb",
       "direct_callers": [
@@ -19029,7 +19042,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Compose the shipping Agent session lifecycle: bind experiment-driven conversation limits and maintenance gates, retain one canonical session/store owner, own Human takeover handoff lifecycle, release subscriptions/workers on shutdown, and prevent stale handoff work from crossing account/process boundaries.",
       "source_owner": "Desktop SessionExtension",
       "direct_callers": [
@@ -19116,7 +19129,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Materialize one durable Agent session with bounded per-user cardinality, stable identity, default profile/settings, durable origin/purpose/introduction metadata, failure-atomic persistence and process-reopen recovery without creating a second roster/transcript owner.",
       "source_owner": "Desktop Rust Host Session extension",
       "direct_callers": [
@@ -19199,7 +19212,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own one durable mapping from Agent/box-store identities to stable source IDs and source modes across process death, without Presentation or Remote Runner becoming a second source-identity owner.",
       "source_owner": "Desktop SandSourceMap Host extension",
       "direct_callers": [
@@ -19282,7 +19295,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide a bounded durable Agent store.db backstop with debounced snapshot scheduling, checkpointed reads, maximum-size enforcement, stable source/object-store routing, explicit enablement, readback, error reporting, and lifecycle disposal without making Presentation a storage owner.",
       "source_owner": "Desktop StateBackstop extension",
       "direct_callers": [
@@ -19351,7 +19364,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Send canonical Human direct-message attachments without leaking bearer credentials or blindly replaying ambiguous upload/message side effects.",
       "source_owner": "Desktop NativeMessagingClient plus SessionExtension Human messaging owner",
       "direct_callers": [
@@ -19433,7 +19446,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide one Host event fan-out/capability dispatch boundary with listener and topic-handler lifecycle, Continue/Reject failure semantics, panic/error fencing, and structured failure diagnostics without duplicating canonical event state.",
       "source_owner": "Desktop SandHostEventBus plus host_event_bus_telemetry",
       "direct_callers": [
@@ -19499,7 +19512,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Host distributed trace context and bounded span export with token refresh, parent/child trace propagation, flush/shutdown and failure isolation without making telemetry part of product truth.",
       "source_owner": "Desktop Host tracing/OTLP exporter",
       "direct_callers": [
@@ -19588,7 +19601,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "After explicit first-Agent kickstart intent, run a hidden canonical Host turn without fabricating a user message; keep introductionPending durable until a real visible assistant delivery; when the initial completed turn produces no visible delivery, issue at most one reply nudge and recover that decision across process death without duplicating unknown-outcome work.",
       "source_owner": "Desktop transcript Agent lifecycle owner",
       "direct_callers": [
@@ -19662,7 +19675,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Before removing a canonical Agent, fence and retire Agent-scoped live runtime state so no in-flight turn, visible-ack redrive, durable pending wake, or generated child can continue writing into the deleted Agent; preserve other Agents and account epochs.",
       "source_owner": "Desktop transcript Agent lifecycle owner coordinating Agent deletion runtime dependencies",
       "direct_callers": [
@@ -19745,7 +19758,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own authenticated feature-gate, dynamic-config and experiment assignment state with deterministic fallback precedence, refresh-generation fencing, account-scope clearing, subscriber notification and model-selection exposure semantics without making Presentation a second owner.",
       "source_owner": "Desktop Host experiments extension",
       "visible_effect": "Feature availability and model/config choices remain stable, account-scoped and stale-refresh safe across Android runtime transitions.",
@@ -19785,7 +19798,7 @@
           "blob_sha": "18afdfb8eaa8770a44e86ea998bcba617885db9e"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Project canonical Agent done/needs-input transitions into bounded mobile notifications with baseline seeding, preference/hidden/focus suppression, throttle and message de-duplication, forgotten-Agent cleanup, deep-link routing and account fencing.",
       "source_owner": "Desktop Host notifications extension plus mobile notifier",
       "visible_effect": "Android users receive meaningful Agent completion/needs-input updates without duplicate or stale notifications.",
@@ -19943,7 +19956,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Track the Host-side cross-user sharing extension, relay, publisher, environment and remote-turn source closure as a sub-responsibility of the single canonical AGENT-SHARED-ROOM-ANDROID-001 runtime owner.",
       "source_owner": "Desktop cross_user_sharing Host extension",
       "visible_effect": "Shared-room collaboration retains relay/reconnect/remote-turn behavior while using one canonical Android shared-room owner.",
@@ -19980,7 +19993,7 @@
           "blob_sha": "7ff636d90d684f70e1923a5284a8bd256f31d792"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Attribute model-experiment exposure only after authenticated assignment settles, require real provider exposure for normal network assignments, allow Product Analytics fallback only for an explicit process override, and emit at most once per relevant account/bootstrap scope.",
       "source_owner": "Desktop model experiment exposure owner",
       "state_owner": "HostExperimentsExtension plus AndroidProductAnalyticsRuntime; Presentation owns no experiment truth",
@@ -20025,7 +20038,7 @@
           "blob_sha": "ca35607a273d2d0019116ca0333a68fa30cf8fa2"
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Capture bounded diagnostics after sustained CPU/event-loop pressure with configurable duration/window/cooldown/retention, avoid overlapping captures, dispose cleanly, and retain useful evidence without granting Android arbitrary desktop profiler process execution.",
       "source_owner": "Desktop pressure CPU profiler",
       "state_owner": "AndroidPressureCpuProfiler in Rust Host",
@@ -20083,7 +20096,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Emit bounded telemetry for send dispatch, queue acceptance/dequeue/watchdog settlement, visible-ack obligations and pending wake lifecycle from the canonical queue/ack/wake owners.",
       "source_owner": "Desktop queue telemetry mapper + queue/ack/wake producers",
       "state_owner": "Canonical queue/ack/pending-wake owners; telemetry mappers own no business state",
@@ -20130,7 +20143,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Emit Desktop-compatible sand.turn.interrupt telemetry only for a canonical Agent turn interruption, with the durable conversation identity plus truthful pre-settlement active/in-flight state, without allowing observability failure to alter cancellation truth.",
       "source_owner": "Desktop turn telemetry mapper + turn lifecycle producer",
       "direct_callers": [
@@ -20200,7 +20213,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Emit sand.user_message.received exactly once for a newly durably accepted visible user message, preserving truthful conversation identity and whether a prior account-fenced Agent turn was already in flight; nonce replay must not double-count.",
       "source_owner": "Desktop turn telemetry mapper + user-message acceptance producer",
       "direct_callers": [
@@ -20364,7 +20377,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Settle a completed Box handoff and continue the same Agent with one hidden, non-user-visible resume turn whose prompt depends on returned/dismissed/viewer-closed semantics; never duplicate the continuation after process death or stale callback.",
       "source_owner": "Desktop transcript Box handoff settlement/resume owner",
       "direct_callers": [
@@ -20439,7 +20452,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own per-Agent run admission and ordering across user, agent and background lanes; assign active generations; detect watchdog trip/escape; fence late zombie settlement; expose bounded diagnostics; and dispose queue state without creating a second transcript owner.",
       "source_owner": "Desktop RunScheduler, composed by ProductionTurnDispatch",
       "direct_callers": [
@@ -20508,7 +20521,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve Box browser WebAuthn policy enablement without granting the Android app local Box filesystem/process authority.",
       "source_owner": "Desktop Box WebAuthn marker/policy helper",
       "direct_callers": [
@@ -20589,7 +20602,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve scheduled wallpaper/tone behavior for an authorized remote Box/desktop without granting the Android app local X11/root process authority.",
       "source_owner": "Desktop Host Wallpaper extension",
       "direct_callers": [
@@ -20650,7 +20663,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist and project account-scoped Human contact groups with stable Pinned/named/Unassigned ordering, exclusive membership, collapse state, reserved-id normalization, search expansion, process-death recovery and stale-account fencing.",
       "source_owner": "Desktop sidebar contact-group model exercised by packaged Electron E2E",
       "direct_callers": [
@@ -20770,7 +20783,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Compose the shipping transcript extension around the canonical transcript/session owners; bridge profile/timeline/run/configuration events through the Host event bus; coalesce runner outline updates; publish roster projection events without creating a second transcript or roster owner; dispose observers/workers deterministically.",
       "source_owner": "Desktop TranscriptExtension + ProductionRosterEmit over ProductionSessionWorkers/TranscriptManager/SandHostEventBus",
       "direct_callers": [
@@ -20864,7 +20877,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide process-epoch replica stamps with monotonic per-replica sequence/coverage snapshots and deterministic roster outline stream coalescing with stale-deadline fencing, stream identity lifecycle and last-known-name projection.",
       "source_owner": "Desktop HostReplicaWriter + RosterProjection/OutlineStreamCoalescingPolicy",
       "direct_callers": [
@@ -20950,7 +20963,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own in-memory per-Agent run/session/provider/subagent lifecycle projection, request-id deduplication, usage settlement and composing/retrying/activity state used to derive visible running status without becoming the durable transcript owner.",
       "source_owner": "Desktop Transcript RunLifecycleState",
       "direct_callers": [
@@ -21019,7 +21032,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Coordinate routed-provider and group-member stream registration, current-stream identity, supersede/watchdog cancellation, execution binding and forced-upgrade quiescing without allowing stale streams to mutate current runs.",
       "source_owner": "Desktop TranscriptRunnerRegistry",
       "direct_callers": [
@@ -21090,7 +21103,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Classify background automation triggers, normalize dynamic failure details into stable error kinds, and apply bounded power-of-two notification backoff.",
       "source_owner": "Desktop transcript automation failure policy helper",
       "direct_callers": [
@@ -21179,7 +21192,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Persist per-Agent upgrade-resume markers so Host upgrade/process restart can resume the original durable work without fabricating or duplicating a new turn.",
       "source_owner": "Desktop SandUpgradeResumeStore",
       "direct_callers": [
@@ -21245,7 +21258,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Make visible Agent sends acceptance-safe and idempotent, preserve canonical user echo identity/activity, and seed a default Agent name from the first accepted visible prompt using the Desktop UTF-16 contract.",
       "source_owner": "Desktop transcript send acceptance helper",
       "direct_callers": [
@@ -21302,7 +21315,7 @@
       "notes": "Android splits the Desktop helper into durable owners but preserves canonical acceptance and name-seeding semantics; no verified claim until descendant CI/device evidence."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "artifact": null,
       "verification_status": "not-verified",
       "packaged_test": "required on final exact-head githubRelease artifact",
@@ -21429,7 +21442,7 @@
       "notes": "Mapped conservatively; no implementation promotion until the Desktop fanout semantic matrix is closed. Reverse-link audit 2964bcac536302cf1e2f8afb676e757d43fba0b3: source/host/src/extensions/transcript/shared_rooms.rs@657a55ea77b814d03f05d7d307ac1819cda3870e — Desktop SharedRooms owns local group post/fanout plus hosted/mirror shared-room mutation. Android has shared-room/cross-user owners, but local per-member fanout, failure isolation and recovery are not fully closed."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "artifact": null,
       "verification_status": "not-verified",
       "packaged_test": "required on final exact-head githubRelease artifact",
@@ -21502,7 +21515,7 @@
       "notes": "Mapped because Desktop shaping responsibilities are distributed and several sub-responsibilities remain unproven."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "artifact": null,
       "verification_status": "not-verified",
       "packaged_test": "required on final exact-head githubRelease artifact",
@@ -21560,7 +21573,7 @@
       "notes": "Production semantics are now implemented and focused failure coverage exists. Keep not-verified until the descendant exact HEAD passes Rust/architecture CI; packaged/device evidence remains a broader release gate."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "artifact": null,
       "verification_status": "not-verified",
       "packaged_test": "required on final exact-head githubRelease artifact",
@@ -21642,7 +21655,7 @@
       "notes": "Implemented across canonical Android owners; intentionally not verified until descendant CI and final artifact/device evidence."
     },
     {
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "artifact": null,
       "verification_status": "not-verified",
       "packaged_test": "required on final exact-head githubRelease artifact",
@@ -21728,7 +21741,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own active transcript/session selection, focus/viewed state, one-open session materialization, bounded deferred activation/catch-up, deleted-Agent fencing, inactive-session retirement and active-Agent switching without a second transcript owner.",
       "source_owner": "Desktop SessionRuntime over ProductionSessionWorkers and canonical active-Agent/session state",
       "direct_callers": [
@@ -21804,7 +21817,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Mint stable collision-free transcript entry IDs for user messages, attachments, assistant messages and send-message entries while preserving Desktop turn numbering including boot-turn identity.",
       "source_owner": "Desktop transcript_entry_ids pure Rust helper",
       "direct_callers": [
@@ -21870,7 +21883,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Provide transcript runtime primitives for entry identity/kind inspection and cancellable scheduled callbacks used by transcript composition without owning canonical transcript state.",
       "source_owner": "Desktop transcript_hub runtime primitives",
       "direct_callers": [
@@ -21938,7 +21951,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Own canonical transcript mutation semantics for get/set/append/update/remove/clear while Android additionally makes those mutations durable, duplicate-safe, searchable, pageable and recoverable after interrupted/corrupt writes.",
       "source_owner": "Desktop TranscriptStore; Android canonical durable TranscriptStore",
       "direct_callers": [
@@ -22072,7 +22085,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the Desktop Host gateway's closed command surface, request/result/event shaping, failure classification, authorization and remote reachability while replacing the Desktop process-local HTTP/SSE transport with Android's typed Kotlin/JNI façade and explicit authorized remote-device gateway.",
       "source_owner": "Desktop Host GatewayServer/GatewayApi plus frozen host_gateway_api command ownership",
       "direct_callers": [
@@ -22152,7 +22165,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Load the initial canonical Agent transcript with bounded SQLite-busy retry and explicit degraded handling for Agent-limit/storage-corruption without creating a second transcript owner.",
       "source_owner": "Desktop initial transcript bootstrap over ProductionSessionWorkers/SessionRuntime",
       "direct_callers": [
@@ -22225,7 +22238,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve fail-stop Host invariant reporting with stripped user-safe diagnostics and a single reporter owner.",
       "source_owner": "Desktop Host invariant reporter",
       "direct_callers": [
@@ -22294,7 +22307,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Guarantee one canonical Host process owner per app-private lock root, recover stale PID locks, and refuse a competing live owner without Desktop process-kill takeover.",
       "source_owner": "Desktop Host lock/takeover owner",
       "direct_callers": [
@@ -22358,7 +22371,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Resolve canonical Host durable roots and well-known marker/secret/lock paths inside Android app-private storage and re-anchor migrated paths without Desktop home/Box assumptions.",
       "source_owner": "Desktop Host path resolver",
       "direct_callers": [
@@ -22450,7 +22463,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Compose all applicable shipping Host extensions exactly once, wire diagnostics/backstops/events to canonical owners, and dispose/account-fence them with the Host lifecycle.",
       "source_owner": "Desktop production Host extension composition",
       "direct_callers": [
@@ -22524,7 +22537,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Create a validated per-request Host context carrying request identity, account identity and effective time zone without allowing presentation to become an account/policy owner.",
       "source_owner": "Desktop Host request-context provider",
       "direct_callers": [
@@ -22586,7 +22599,7 @@
           ]
         }
       ],
-      "source_commit": "371b72f1cd20de03dc4dff9a15ed761054968093",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Coordinate cross-store bookkeeping when Agents are created/deleted/recovered so transcript, attachments, snapshot/source-map and remote workspace state cannot retain contradictory orphan ownership.",
       "source_owner": "Desktop HostRosterBookkeeping over multiple durable ports",
       "direct_callers": [
@@ -22665,7 +22678,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Compose bounded local and authenticated remote Runner execution behind the Capability Broker, preserve cancellation/result routing, and prevent unauthorized fallback or unknown-side-effect retry.",
       "source_owner": "Desktop Host Runner composition and production turn surfaces",
       "direct_callers": [
@@ -22736,7 +22749,7 @@
           ]
         }
       ],
-      "source_commit": "b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the reusable scheduling-policy semantics used by shipping Host domains: cancellable deadlines, bounded exponential retry, serialized polling, keyed expiry, idle watchdog and debounce, with one monotonic/real-time clock abstraction and deterministic disposal.",
       "source_owner": "Desktop source/internal/scheduling.ts",
       "direct_callers": [
@@ -22861,7 +22874,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve the durable user-visible Agent transcript and recovery semantics represented by Desktop's journal-first transcript mirror without creating a second canonical transcript owner on Android.",
       "source_owner": "Desktop ProductionTranscriptMirrorProvider + RoutedTranscriptMirror + FileTranscriptMirror/LegacyFileTranscriptMirror",
       "direct_callers": [
@@ -23218,7 +23231,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve native Fabushi account login/session expiry/refresh/logout capability without shipping Codex's desktop CLI callback server, device-code/API-key/keyring login stack on Android.",
       "source_owner": "Legacy/upstream Codex login crate retained in source authority but no longer selected by current MahayanaProduct; current Desktop owner is Mahayana-native mahayana-auth.",
       "direct_callers": [
@@ -23316,7 +23329,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve MahayanaProduct protected account/managed-secret storage and redaction without importing desktop keyring/cwd filesystem assumptions into Android or exposing plaintext to Presentation.",
       "source_owner": "Legacy/upstream Codex secrets crate retained in source authority but no longer selected by current MahayanaProduct; current Desktop owner is Mahayana-native mahayana-secrets.",
       "direct_callers": [
@@ -58191,7 +58204,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Classify the retained upstream Codex Rust workspace by actual current Fabushi build reachability so Android does not mechanically port non-shipping CLI/TUI/app-server/sandbox/tooling code or mistake source authority for product runtime responsibility.",
       "source_owner": "Upstream codex-rs compatibility workspace retained under Desktop source authority; current Fabushi product owners are Mahayana-native crates plus source/host, Coordinator and platform adapters.",
       "direct_callers": [
@@ -58360,7 +58373,7 @@
           ]
         }
       ],
-      "source_commit": "8148bfb9e747d446dd3d97342c3cf04a0ed407a2",
+      "source_commit": "c33a9495fc1e640557d65f3e2daedc1449be7fcb",
       "responsibility": "Preserve applicable user/developer capabilities without shipping Desktop Mahayana CLI/TUI/test-driver/plugin-dev binaries or the disabled Codex compatibility adapter inside the Android app.",
       "source_owner": "Desktop Mahayana CLI/developer binaries plus optional Mahayana Agent Codex compatibility adapter.",
       "direct_callers": [
