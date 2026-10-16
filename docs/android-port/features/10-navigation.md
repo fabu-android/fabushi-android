@@ -50,10 +50,10 @@ Compose 测试覆盖投影、空/加载/错误/部分数据、真实导航和交
 
 ## 参考
 
-[Android 既有 Compose 构建入口](https://github.com/fabu-android/fabushi-android/blob/5d049353e167d9b91b5c765e1686f1ac8670f2ff/mobile/android/app/build.gradle)、[Desktop 种子旅程定义](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/shared/src/mahayana-host-features.ts)。视觉细节与完整导航表仍须通过 pinned Desktop 的实际页面和源码逐项填证。
+[Android Compose 构建入口](https://github.com/fabu-android/fabushi-android/blob/6a96011c2a5866b6f73d32c5fbdbb6d53b106a74/mobile/android/app/build.gradle)；Desktop 种子旅程的旧 `3bc924...` anchor 仅作 predecessor provenance，当前语义必须以 Desktop `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` / tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2` 重新核对。视觉细节与完整导航表仍须通过 pinned Desktop 的实际页面和源码逐项填证。
 
 ## 状态、追溯与使用规则
 
 本文件原写于 2026-10-09，现入库为 Android 原生导航实施规范；不代表已完成全部页面或产品测试。内部状态是设计约束，真实 shipping 页面与后端合同仍需定位并按当前 Desktop 精确对照。只在 GitHub Actions 构建和验收。
 
-固定 Desktop main：`3bc92400826cc4ca7ac665b467708e22261edc61`。登记 8,172 个文件不构成逐文件语义验收。
+当前 Desktop main：`12a4e29819592e3a7e32f7435cb0cf2e3cc53848` / tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`。登记数量本身不构成逐文件语义验收。
