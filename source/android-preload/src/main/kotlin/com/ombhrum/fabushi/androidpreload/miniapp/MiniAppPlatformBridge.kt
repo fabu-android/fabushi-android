@@ -15,17 +15,6 @@ import java.util.UUID
  * receives a five-minute plugin-audience token when it must speak Streamable
  * HTTP MCP, and never forwards that token into a WebView or persistent storage.
  */
-private object CanonicalInstalledProjectionCache {
-    @Volatile
-    private var projectionJson: String? = null
-
-    fun store(manifests: JSONArray) {
-        projectionJson = manifests.toString()
-    }
-
-    fun load(): JSONArray? = projectionJson?.let { JSONArray(it) }
-}
-
 internal class MiniAppPlatformBridge(
     private val coordinator: AndroidCoordinatorPort,
 ) {
@@ -41,42 +30,14 @@ internal class MiniAppPlatformBridge(
         private val ToolName = Regex("^[A-Za-z0-9_.-]{1,120}$")
     }
 
-    fun readInstalledMiniApps(): JSONArray {
-        val response = platform("GET", "/v1/marketplace/added")
-        return response.optJSONArray("apps")
-            ?: error("Canonical installed projection did not include apps array")
-    }
+    fun readInstalledMiniApps(): JSONArray =
+        coordinator.listInstalledMiniApps().optJSONArray("apps") ?: JSONArray()
 
-    fun rememberInstalledMiniApps(manifests: JSONArray) {
-        CanonicalInstalledProjectionCache.store(manifests)
-    }
+    fun confirmInstalledMiniApp(pluginId: String): JSONObject =
+        coordinator.installApprovedMiniApp(pluginId, "miniapp:install:" + pluginId + ":" + UUID.randomUUID())
 
-    fun lastInstalledMiniApps(): JSONArray? = CanonicalInstalledProjectionCache.load()
-
-    fun confirmInstalledMiniApp(pluginId: String): JSONObject {
-        requirePluginId(pluginId)
-        platform(
-            method = "POST",
-            path = "/v1/marketplace/plugins/$pluginId/add",
-            body = JSONObject().put("platform", "android"),
-        )
-        val manifests = readInstalledMiniApps()
-        for (index in 0 until manifests.length()) {
-            val manifest = manifests.optJSONObject(index) ?: continue
-            val projectedId = manifest.optString("id").ifBlank { manifest.optString("pluginId") }
-            if (projectedId != pluginId) continue
-            if (pluginId == GLOBAL_DHARMA_ID) {
-                val bot = manifest.optJSONObject("bot")
-                    ?: error("Canonical Global Dharma manifest did not include bot projection")
-                check(bot.optString("id").isNotBlank()) {
-                    "Canonical Global Dharma bot projection did not include id"
-                }
-            }
-            rememberInstalledMiniApps(manifests)
-            return manifest
-        }
-        error("Canonical installed projection did not include $pluginId after account install")
-    }
+    fun lastInstalledMiniApps(): JSONArray? =
+        coordinator.listInstalledMiniApps().optJSONArray("apps")
 
     fun routeInput(pluginId: String, input: String): JSONObject {
         requirePluginId(pluginId)
