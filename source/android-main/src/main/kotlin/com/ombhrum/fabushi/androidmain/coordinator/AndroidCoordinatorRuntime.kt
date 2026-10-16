@@ -3481,6 +3481,20 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
 
     override fun marketplaceBrowse(params: JSONObject) = host.request("feature.marketplace.browse", params)
     override fun marketplaceRelease(params: JSONObject) = host.request("feature.marketplace.release", params)
+
+    override fun listApprovedMiniApps(): JSONObject = host.request("feature.miniapp.listApproved")
+    override fun listInstalledMiniApps(): JSONObject = host.request("feature.miniapp.listInstalled")
+    override fun installApprovedMiniApp(appId: String, operationId: String): JSONObject =
+        host.request("feature.miniapp.installApproved", JSONObject().put("appId", appId).put("operationId", operationId))
+    override fun getInstalledMiniAppResources(appId: String, operationId: String): JSONObject =
+        host.request("feature.miniapp.getResources", JSONObject().put("appId", appId).put("operationId", operationId))
+    override fun readMiniAppResource(loadId: String, resourcePath: String): JSONObject =
+        host.request("feature.miniapp.readResource", JSONObject().put("loadId", loadId).put("path", resourcePath))
+    override fun disposeMiniAppLoad(loadId: String): JSONObject =
+        host.request("feature.miniapp.disposeLoad", JSONObject().put("loadId", loadId))
+    override fun uninstallMiniApp(appId: String, operationId: String): JSONObject =
+        host.request("feature.miniapp.uninstall", JSONObject().put("appId", appId).put("operationId", operationId))
+
     override fun pluginInstall(params: JSONObject) = host.request("feature.plugin.install", params)
     override fun pluginVariableFields(schema: JSONObject): JSONArray =
         host.request("feature.plugin.variables.fields", JSONObject().put("schema", schema))
