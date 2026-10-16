@@ -1,8 +1,12 @@
 # F01 账户、登录与会话
 
+## Current authority
+
+bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+
 ## 范围与 owner
 
-当前 Desktop source fact 以 `bhrumom/fabushi-desktop@371b72f1cd20de03dc4dff9a15ed761054968093` 为准。认证主入口是 `source/electron-main/account/cursor-auth.ts`（blob `c2e4c95306f8822adb22176d594b488e9717b28f`）及其真实生产调用者，不再把历史 `source/product/fabushi/fabushi-account-service.ts` 路径当作当前 authority。
+历史 source fact `371b72f1cd20de03dc4dff9a15ed761054968093` 已失效；当前 Desktop authority 固定为上述 `12a4e298.../72fc5f77...`，本文件中的具体 source anchor 必须以该 exact tree 重新核对。认证主入口是 `source/electron-main/account/cursor-auth.ts`（blob `c2e4c95306f8822adb22176d594b488e9717b28f`）及其真实生产调用者，不再把历史 `source/product/fabushi/fabushi-account-service.ts` 路径当作当前 authority。
 
 Desktop 的 `SandCursorAuthService` / `SandBackendLoginManager` 负责登录尝试、凭据状态、刷新、资料 hydration、退出与账户拒绝撤销。源码事实包括：认证操作 epoch 防旧回调、credential mutation 串行化、同 refresh token 的并发 refresh 合并、refresh rotation rescue、登录取消、受保护存储 settle、失败/恢复/退出 telemetry，以及退出删除失败时禁止继续使用已撤销凭据。网络或响应解析失败与明确 session revoke 是不同状态，不能把“刷新暂时失败”直接等同于“durable session 已撤销”。
 
