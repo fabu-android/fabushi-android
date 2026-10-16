@@ -19,8 +19,8 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: android-port-docs-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: android-port-docs-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
 jobs:
   source-inventory:
     name: Pinned Desktop complete source inventory
@@ -40,7 +40,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/android-port-docs.py inventory
       - name: Commit regenerated exact-main authority manifest
-        if: ${{ false }}
+        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -57,7 +57,7 @@ jobs:
           assert data.get('authority', {}).get('desktop_commit') == '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
           assert data.get('authority', {}).get('desktop_root_tree') == '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
           PY
-          # Semantic ledgers are durable review state; do not let this machine rebaseline job overwrite them.
+          # Never add responsibility-ledger.json here: semantic mappings are owned by the serialized branch workflow.
           git add docs/android-port/authority/baseline.json docs/android-port/authority/source-inventory-manifest.json
           if git diff --cached --quiet; then
             echo "No regenerated authority changes to commit."
