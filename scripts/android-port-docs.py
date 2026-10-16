@@ -245,6 +245,39 @@ def _has_real_owner(value: object) -> bool:
     )
 
 
+def _has_package_evidence(
+    entries: object,
+    *,
+    source_path: str,
+    source_commit: str,
+    android_head: str,
+    required_kinds: frozenset[str],
+) -> bool:
+    """Require path-scoped exact-checkout evidence; prose and mapping provenance are insufficient."""
+    if not isinstance(entries, list):
+        return False
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        paths = entry.get('source_paths')
+        if not isinstance(paths, list):
+            paths = [entry.get('source_path')]
+        if (
+            source_path in paths
+            and entry.get('kind') in required_kinds
+            and entry.get('source_commit') == source_commit
+            and entry.get('desktop_commit') == source_commit
+            and entry.get('android_pr_head_sha') == android_head
+            and entry.get('android_tested_checkout_sha') == android_head
+            and entry.get('workflow_sha') == android_head
+            and isinstance(entry.get('evidence_ref'), str)
+            and bool(entry.get('evidence_ref').strip())
+            and entry.get('result') == 'passed'
+        ):
+            return True
+    return False
+
+
 def _package_semantic_coverage(
     ledger_rows: list[dict],
     responsibilities: list[dict],
@@ -298,6 +331,37 @@ def _package_semantic_coverage(
             android_owner_rows += 1
         else:
             reasons.append('missing-real-android-owner')
+
+        expected_head = row.get('android_pr_head_sha')
+        expected_source_commit = row.get('source_commit')
+        has_production_evidence = any(
+            _has_package_evidence(
+                item.get('production_evidence'),
+                source_path=path,
+                source_commit=expected_source_commit,
+                android_head=expected_head,
+                required_kinds=frozenset({'production-wiring'}),
+            )
+            for item in linked
+        )
+        if not has_production_evidence:
+            reasons.append('missing-exact-head-production-evidence')
+
+        has_test_evidence = any(
+            _has_package_evidence(
+                item.get('test_evidence'),
+                source_path=path,
+                source_commit=expected_source_commit,
+                android_head=expected_head,
+                required_kinds=frozenset({
+                    'focused-unit-test', 'contract-test', 'integration-test',
+                    'packaged-test', 'device-test',
+                }),
+            )
+            for item in linked
+        )
+        if not has_test_evidence:
+            reasons.append('missing-exact-head-test-evidence')
 
         row_targets = row.get('android_targets') or []
         valid_row_targets = [
