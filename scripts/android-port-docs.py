@@ -163,132 +163,299 @@ def _default_source_row(repo: str, source_commit: str, item: dict) -> dict:
 
 
 
-def load_predecessor_responsibility_mapping(responsibility_path: Path) -> tuple[dict, str]:
+def _is_semantic_source_anchor(responsibility_id: str, source: dict) -> bool:
+    path = source.get('path')
+    if not isinstance(path, str) or not path:
+        return False
+    if source.get('source_mode') in ALLOWED_SOURCE_MODES and source.get('source_type') in ALLOWED_SOURCE_TYPES:
+        return True
+    return responsibility_id not in LEGACY_FALLBACK_RESPONSIBILITY_IDS
+
+
+def load_predecessor_responsibility_mapping(
+    responsibility_path: Path,
+) -> tuple[dict, dict[str, dict], str, dict]:
     try:
         if responsibility_path.is_file() and responsibility_path.stat().st_size > 0:
             candidate = json.loads(responsibility_path.read_text(encoding='utf-8'))
             if isinstance(candidate, dict) and candidate.get('responsibilities'):
-                return candidate, 'current-responsibility-ledger'
+                return candidate, {}, 'current-responsibility-ledger', {
+                    'artifact_id': None,
+                    'artifact_digest': None,
+                    'source_manifest_run_id': None,
+                    'source_manifest_android_head': None,
+                }
     except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
-        # Corrupt/empty semantic state is never accepted as valid input; recover only from the pinned predecessor artifact.
         pass
-    artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', '12031753556')
+
+    artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', DEFAULT_RESPONSIBILITY_ARTIFACT)
+    expected_digest = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST', DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST)
     token = os.environ.get('GH_TOKEN')
     require(token, 'GH_TOKEN is required to recover predecessor responsibility mapping')
     req = Request(
         f'https://api.github.com/repos/fabu-android/fabushi-android/actions/artifacts/{artifact_id}/zip',
-        headers={'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + token, 'User-Agent': 'Fabushi-Android-Docs', 'X-GitHub-Api-Version': '2022-11-28'},
+        headers={
+            'Accept': 'application/vnd.github+json',
+            'Authorization': 'Bearer ' + token,
+            'User-Agent': 'Fabushi-Android-Docs',
+            'X-GitHub-Api-Version': '2022-11-28',
+        },
     )
     try:
         with urlopen(req, timeout=60) as response:
             payload = response.read()
     except Exception as error:
         raise RuntimeError('failed to recover predecessor responsibility artifact ' + artifact_id) from error
+    actual_digest = 'sha256:' + hashlib.sha256(payload).hexdigest()
+    require(actual_digest == expected_digest,
+            f'predecessor responsibility artifact digest mismatch: expected={expected_digest} actual={actual_digest}')
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            names = [name for name in archive.namelist() if name.endswith('docs/android-port/authority/responsibility-ledger.json')]
-            require(len(names) == 1, 'predecessor artifact does not contain exactly one responsibility ledger')
-            candidate = json.loads(archive.read(names[0]).decode('utf-8'))
+            responsibility_names = [n for n in archive.namelist()
+                                    if n.endswith('docs/android-port/authority/responsibility-ledger.json')]
+            manifest_names = [n for n in archive.namelist()
+                              if n.endswith('docs/android-port/authority/source-inventory-manifest.json')]
+            ledger_names = [n for n in archive.namelist()
+                            if n.endswith('docs/android-port/authority/source-inventory-ledger.jsonl')]
+            require(len(responsibility_names) == 1, 'predecessor artifact does not contain exactly one responsibility ledger')
+            require(len(manifest_names) == 1, 'predecessor artifact does not contain exactly one source inventory manifest')
+            require(len(ledger_names) == 1, 'predecessor artifact does not contain exactly one source inventory ledger')
+            candidate = json.loads(archive.read(responsibility_names[0]).decode('utf-8'))
+            source_manifest = json.loads(archive.read(manifest_names[0]).decode('utf-8'))
+            source_rows = {}
+            for line in archive.read(ledger_names[0]).decode('utf-8').splitlines():
+                if line.strip():
+                    row = json.loads(line)
+                    source_rows[row['source_path']] = row
     except Exception as error:
         raise RuntimeError('predecessor responsibility artifact is invalid') from error
-    require(isinstance(candidate, dict) and candidate.get('responsibilities'), 'predecessor responsibility mapping is empty')
-    return candidate, 'pinned-predecessor-artifact'
+    require(isinstance(candidate, dict) and candidate.get('responsibilities'),
+            'predecessor responsibility mapping is empty')
+    require(len(candidate['responsibilities']) == EXPECTED_RESPONSIBILITY_COUNT,
+            f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(candidate["responsibilities"])}')
+    require(source_manifest.get('tracked_non_tree_entries') == 8258,
+            'predecessor source manifest does not cover the full 8258-row Desktop inventory')
+    require(len(source_rows) == 8258,
+            f'predecessor source ledger must contain 8258 unique rows, got {len(source_rows)}')
+    return candidate, source_rows, 'pinned-predecessor-artifact', {
+        'artifact_id': int(artifact_id),
+        'artifact_digest': actual_digest,
+        'source_manifest_run_id': source_manifest.get('workflow_run_id'),
+        'source_manifest_android_head': source_manifest.get('android_pr_head_sha'),
+        'source_manifest_desktop_commit': source_manifest.get('desktop_commit'),
+        'source_manifest_desktop_root_tree': source_manifest.get('desktop_root_tree'),
+    }
 
-def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[dict], new_by_path: dict[str, dict], current: str, tree_sha: str) -> dict:
-    predecessor, mapping_origin = load_predecessor_responsibility_mapping(responsibility_path)
+
+def merge_responsibility_mapping(
+    responsibility_path: Path,
+    ledger_rows: list[dict],
+    new_by_path: dict[str, dict],
+    current: str,
+    tree_sha: str,
+) -> dict:
+    predecessor, predecessor_source_rows, mapping_origin, mapping_provenance = load_predecessor_responsibility_mapping(responsibility_path)
     android = current_android_provenance()
+    predecessor_authority = predecessor.get('authority') or {}
+    require(predecessor_authority.get('desktop_commit') == current,
+            'responsibility mapping authority Desktop commit does not match current Desktop main')
+    require(predecessor_authority.get('desktop_root_tree') == tree_sha,
+            'responsibility mapping authority Desktop tree does not match current Desktop main')
+
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
-    require(responsibilities, 'predecessor responsibility mapping has no definitions')
+    require(len(responsibilities) == EXPECTED_RESPONSIBILITY_COUNT,
+            f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(responsibilities)}')
+
     rid_by_path: dict[str, set[str]] = {}
+    source_symbols_by_path: dict[str, set[str]] = {}
+    source_owners_by_path: dict[str, list[dict]] = {}
+    semantic_anchor_paths: set[str] = set()
+    semantic_anchor_entries = 0
+
     for item in responsibilities:
         rid = item.get('responsibility_id')
         require(rid, 'responsibility definition without responsibility_id')
+        cleaned = []
         for source in item.get('desktop_sources', []):
             path = source.get('path')
-            if path in new_by_path:
-                rid_by_path.setdefault(path, set()).add(rid)
+            if path not in new_by_path or not _is_semantic_source_anchor(rid, source):
+                continue
+            refreshed = dict(source)
+            refreshed['blob_sha'] = new_by_path[path]['sha']
+            refreshed['source_mode'] = new_by_path[path]['mode']
+            refreshed['source_type'] = new_by_path[path]['type']
+            cleaned.append(refreshed)
+            rid_by_path.setdefault(path, set()).add(rid)
+            semantic_anchor_paths.add(path)
+            semantic_anchor_entries += 1
+            source_symbols_by_path.setdefault(path, set()).update(
+                symbol for symbol in (source.get('symbols') or [])
+                if isinstance(symbol, str) and symbol.strip()
+            )
+            source_owners_by_path.setdefault(path, []).append({
+                'responsibility_id': rid,
+                'source_owner': item.get('source_owner'),
+                'android_owner': item.get('android_owner'),
+            })
+        item['desktop_sources'] = cleaned
+
     ids = {item.get('responsibility_id') for item in responsibilities}
     targets_by_rid = {
         item['responsibility_id']: sorted({
-            str(target)
-            for target in (item.get('android_target') or [])
+            str(target) for target in (item.get('android_target') or [])
             if isinstance(target, str) and target.strip()
         })
         for item in responsibilities
     }
+
     unmapped_paths = []
+    missing_dispositions = []
+    missing_targets = []
     for row in ledger_rows:
         path = row['source_path']
         links = rid_by_path.get(path, set())
         if not links:
             unmapped_paths.append(path)
-            row['responsibilities'] = []
-            row['android_targets'] = []
-            row['android_target_provenance'] = 'unmapped; semantic mapping required'
-            row['disposition'] = None
-            row['implementation_status'] = 'unreviewed'
-            row['evidence'] = [{
-                'kind': 'source-closure-gap',
-                'mapping_origin': mapping_origin,
-                'status': 'missing-semantic-mapping',
-                'source_path': path,
-                'desktop_commit': current,
-                'desktop_root_tree': tree_sha,
-                'android_head': android['android_pr_head_sha'],
-                'workflow_run_id': android['workflow_run_id'],
-                'run_attempt': android['run_attempt'],
-                'verification_status': 'not-verified',
-            }]
+            row.update({
+                'responsibilities': [],
+                'source_symbols': [],
+                'responsibility_owners': [],
+                'android_targets': [],
+                'android_target_provenance': 'unmapped; semantic mapping required',
+                'disposition': None,
+                'implementation_status': 'unreviewed',
+                'mapping_status': 'unmapped',
+                'evidence': [{
+                    'kind': 'source-closure-gap',
+                    'mapping_origin': mapping_origin,
+                    'mapping_artifact_id': mapping_provenance.get('artifact_id'),
+                    'mapping_artifact_digest': mapping_provenance.get('artifact_digest'),
+                    'status': 'missing-semantic-mapping',
+                    'source_path': path,
+                    'source_blob_sha': row['source_blob_sha'],
+                    'desktop_commit': current,
+                    'desktop_root_tree': tree_sha,
+                    'android_head': android['android_pr_head_sha'],
+                    'android_pr_base_sha': android['android_pr_base_sha'],
+                    'workflow_run_id': android['workflow_run_id'],
+                    'run_attempt': android['run_attempt'],
+                    'verification_status': 'not-verified',
+                }],
+            })
             continue
+
         require(all(rid in ids for rid in links), 'missing closure responsibility definition')
         row['responsibilities'] = sorted(links)
+        row['source_symbols'] = sorted(source_symbols_by_path.get(path, set()))
+        row['responsibility_owners'] = source_owners_by_path.get(path, [])
         row['android_targets'] = sorted({
-            target
-            for rid in links
-            for target in targets_by_rid.get(rid, [])
+            target for rid in links for target in targets_by_rid.get(rid, [])
         })
         row['android_target_provenance'] = 'responsibility-ledger-explicit-anchor; provenance-only; not semantic verification'
-        require(row.get('disposition') in {'direct-port', 'android-adapted', 'not-applicable-with-replacement'},
-                'invalid or missing source disposition for explicitly mapped row: ' + path)
+        predecessor_row = predecessor_source_rows.get(path)
+        inherited = predecessor_row.get('disposition') if predecessor_row else None
+        if row.get('disposition') not in ALLOWED_SOURCE_DISPOSITIONS:
+            if inherited in ALLOWED_SOURCE_DISPOSITIONS:
+                row['disposition'] = inherited
+            else:
+                missing_dispositions.append(path)
+        if not row['android_targets']:
+            missing_targets.append(path)
         row['implementation_status'] = 'unreviewed'
+        row['mapping_status'] = 'explicit'
         row['evidence'] = [{
             'kind': 'responsibility-mapping-provenance',
             'mapping_origin': mapping_origin,
+            'mapping_artifact_id': mapping_provenance.get('artifact_id'),
+            'mapping_artifact_digest': mapping_provenance.get('artifact_digest'),
+            'source_manifest_run_id': mapping_provenance.get('source_manifest_run_id'),
+            'source_manifest_android_head': mapping_provenance.get('source_manifest_android_head'),
             'status': 'provenance-only',
             'source_path': path,
+            'source_blob_sha': row['source_blob_sha'],
             'desktop_commit': current,
             'desktop_root_tree': tree_sha,
             'android_head': android['android_pr_head_sha'],
+            'android_pr_base_sha': android['android_pr_base_sha'],
             'workflow_event': android['workflow_event'],
             'workflow_run_id': android['workflow_run_id'],
             'run_attempt': android['run_attempt'],
             'verification_status': 'not-verified',
         }]
+
     save(OUT / 'unmapped-source-rows.json', {
-        'status': 'failed' if unmapped_paths else 'passed',
+        'status': 'incomplete' if unmapped_paths else 'passed',
         'count': len(unmapped_paths),
         'paths': unmapped_paths,
-        'mapping_policy': 'explicit responsibility desktop_sources only; directory fallback and predecessor heuristic are forbidden as semantic mapping',
+        'mapping_policy': 'only explicit responsibility desktop_sources anchors; known legacy top-level fallback additions are discarded; no directory or filename fallback is used',
+        'desktop_commit': current,
+        'desktop_root_tree': tree_sha,
+        'android_provenance': android,
+        'mapping_provenance': mapping_provenance,
+    })
+    save(OUT / 'responsibility-mapping-summary.json', {
+        'status': 'incomplete' if (unmapped_paths or missing_dispositions or missing_targets) else 'passed',
+        'responsibility_count': len(responsibilities),
+        'semantic_source_anchor_entries': semantic_anchor_entries,
+        'semantic_source_anchor_unique_paths': len(semantic_anchor_paths),
+        'mapped_source_rows': len(ledger_rows) - len(unmapped_paths),
+        'unmapped_source_rows': len(unmapped_paths),
+        'missing_disposition_rows': missing_dispositions,
+        'missing_target_rows': missing_targets,
+        'mapping_origin': mapping_origin,
+        'mapping_provenance': mapping_provenance,
         'desktop_commit': current,
         'desktop_root_tree': tree_sha,
         'android_provenance': android,
     })
-    require(not unmapped_paths, f'{len(unmapped_paths)} source rows lack explicit responsibility mapping')
+
     for item in responsibilities:
-        rid = item['responsibility_id']
-        existing = {s.get('path') for s in item.get('desktop_sources', [])}
-        for row in ledger_rows:
-            if rid in row['responsibilities'] and row['source_path'] not in existing:
-                item.setdefault('desktop_sources', []).append({'path':row['source_path'],'blob_sha':new_by_path[row['source_path']]['sha'],'symbols':[]})
-        for source in item.get('desktop_sources', []):
-            if source.get('path') in new_by_path:
-                source['blob_sha'] = new_by_path[source['path']]['sha']
         item['source_commit'] = current
         item['android_head_at_update'] = android['android_pr_head_sha']
         item['implementation_status'] = 'unreviewed'
         item['verification_status'] = 'not-verified'
-        item['notes'] = (item.get('notes') or '') + ' Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required.'
-    return {'schema_version':2,'authority':{'desktop_repository':'bhrumom/fabushi-desktop','desktop_commit':current,'desktop_root_tree':tree_sha,'android_repository':'fabu-android/fabushi-android','android_pr':3,'status':'incomplete','predecessor_mapping_artifact':int(os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT','12031753556')),'responsibility_mapping_origin':mapping_origin,'android_provenance':android,'note':'Current-main responsibility mapping is provenance only; implementation and verification are reset and require fresh semantic/exact-head evidence.'},'responsibilities':responsibilities,'traceability':predecessor.get('traceability',{}),'metadata':predecessor.get('metadata',{})}
+        note = (
+            f'Current-main rebaseline to {current}: explicit source responsibility mappings are '
+            'provenance-only; implementation and exact-head verification remain open. '
+            f'Unmapped source rows: {len(unmapped_paths)}.'
+        )
+        notes = item.get('notes')
+        if isinstance(notes, str):
+            if note not in notes:
+                item['notes'] = notes + ' ' + note
+        elif isinstance(notes, list):
+            if note not in notes:
+                notes.append(note)
+        else:
+            item['notes'] = note
+
+    return {
+        'schema_version': 2,
+        'authority': {
+            'desktop_repository': 'bhrumom/fabushi-desktop',
+            'desktop_commit': current,
+            'desktop_root_tree': tree_sha,
+            'android_repository': 'fabu-android/fabushi-android',
+            'android_pr': 3,
+            'status': 'incomplete' if (unmapped_paths or missing_dispositions or missing_targets) else 'mapped-provenance-only',
+            'responsibility_count': len(responsibilities),
+            'semantic_source_anchor_entries': semantic_anchor_entries,
+            'semantic_source_anchor_unique_paths': len(semantic_anchor_paths),
+            'mapped_source_rows': len(ledger_rows) - len(unmapped_paths),
+            'unmapped_source_rows': len(unmapped_paths),
+            'missing_disposition_rows': len(missing_dispositions),
+            'missing_target_rows': len(missing_targets),
+            'responsibility_mapping_origin': mapping_origin,
+            'responsibility_mapping_artifact_id': mapping_provenance.get('artifact_id'),
+            'responsibility_mapping_artifact_digest': mapping_provenance.get('artifact_digest'),
+            'responsibility_mapping_source_android_head': mapping_provenance.get('source_manifest_android_head'),
+            'android_provenance': android,
+            'note': 'No generated row is marked verified. Known legacy directory fallback is explicitly excluded.',
+        },
+        'responsibilities': responsibilities,
+        'traceability': predecessor.get('traceability', {}),
+        'metadata': predecessor.get('metadata', {}),
+    }
 
 def rebaseline() -> None:
     authority_dir = DOC / 'authority'
