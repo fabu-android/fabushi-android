@@ -5,13 +5,13 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::android_agent_roster::AndroidAgentRoster;
+use fabushi_android_shared::ordering::ROSTER_REPLICA_KEY;
 
 use super::replica_writer::HostReplicaWriter;
 use super::roster_projection::{
     OutlineQueueResult, OutlineStreamCoalescingPolicy, OutlineUpdate, RosterProjection,
 };
 
-pub const ROSTER_REPLICA_KEY: &str = "roster";
 pub const OUTLINE_STREAM_COALESCE_MS: u64 = 250;
 
 pub type RosterEventSink = Arc<dyn Fn(Value) + Send + Sync + 'static>;
