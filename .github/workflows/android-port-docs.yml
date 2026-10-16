@@ -141,7 +141,8 @@ jobs:
           echo "Persisted authority at exact Android HEAD ${NEW_HEAD}"
           gh workflow run grok-android-architecture.yml --ref "${GITHUB_REF_NAME}"
           gh workflow run android-parity-full-ci.yml --ref "${GITHUB_REF_NAME}"
-          gh workflow run android-port-docs.yml --ref "${GITHUB_REF_NAME}"
+          # The persistence commit changes docs/android-port/** and triggers this workflow via push.
+          # Do not dispatch a duplicate run; the next run validates the persisted exact HEAD.
       - name: Package documentation and source evidence
         if: always()
         run: python3 scripts/android-port-docs.py bundle
