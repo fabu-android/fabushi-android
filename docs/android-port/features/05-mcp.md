@@ -50,10 +50,10 @@ bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root 
 
 ## 参考
 
-Desktop SDK：[bridge.ts](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/mcp-app-sdk/src/bridge.ts)、[webmcp.ts](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/mcp-app-sdk/src/webmcp.ts)。外部认证和 MCP 协议版本需要由源码 lock 与实际服务协商结果进一步固定，不以本文猜测版本。
+Desktop SDK：历史 predecessor source anchors：`frontend/packages/mcp-app-sdk/src/bridge.ts` / `webmcp.ts` 曾绑定 `3bc924...`；当前 authority 为 Desktop `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` / tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`，必须重新读取并取得当前证据。外部认证和 MCP 协议版本需要由源码 lock 与实际服务协商结果进一步固定，不以本文猜测版本。
 
 ## 状态、追溯与使用规则
 
 本文件原写于 2026-10-09，现作为 Android 仓库中的实施规范；不代表代码已实现或产品测试通过。本文中新模块、内部模型、状态名称与错误类别是 Android 设计要求；除明确引用的 Desktop 符号外，不冒充真实后端 wire API。开发者须把职责绑定至 Desktop 固定 SHA 的源码符号、调用者与测试，再落实到 Android shipping 模块。构建、测试及真机测试调度统一通过 GitHub Actions。
 
-源锁：`bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61`。Actions 已登记 8,172 个文件条目，但不等于全部源码已人工审阅。
+历史源锁：`bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61`；当前源锁为 `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` / tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`。旧 8,172 条目不构成当前 verified evidence。
