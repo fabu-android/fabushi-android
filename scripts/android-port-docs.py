@@ -113,6 +113,7 @@ def load_predecessor_responsibility_mapping(responsibility_path: Path) -> dict:
             if isinstance(candidate, dict) and candidate.get('responsibilities'):
                 return candidate
     except (OSError, ValueError, json.JSONDecodeError):
+        # Corrupt/empty semantic state is never accepted as valid input; recover only from the pinned predecessor artifact.
         pass
     artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', '12031753556')
     token = os.environ.get('GH_TOKEN')
