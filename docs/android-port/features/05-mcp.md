@@ -1,5 +1,9 @@
 # 05 — 插件市场、MCP 与连接器
 
+## Current authority
+
+bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+
 ## 用户目标与职责边界
 
 用户应能查找插件、查看来源与权限、安装、更新、连接账户、发现工具、审批调用、查看结果、取消、断开连接和卸载。市场项目存在、已经安装、账户已连接、工具可用、用户已授权是五个不同事实，不得用一个 `isInstalled` 布尔值混为一谈。
