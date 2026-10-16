@@ -253,7 +253,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    mpsc, Arc, Condvar, Mutex,
+    mpsc, Arc, Condvar, Mutex, OnceLock,
 };
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1473,6 +1473,8 @@ fn wait_for_turn_scheduler_lease(
     }
 }
 
+static ANDROID_INVARIANT_REPORTER: OnceLock<InstalledInvariantReporter> = OnceLock::new();
+
 pub struct AndroidJsonHost {
     mode: AndroidHostMode,
     device_id: String,
@@ -1488,7 +1490,6 @@ pub struct AndroidJsonHost {
     edge_failures: EdgeFailureBuffer,
     structured_log_spool: Arc<Mutex<AndroidStructuredLogSpool>>,
     structured_log_counter_id: String,
-    _invariant_reporter: Option<InstalledInvariantReporter>,
     host_roster_bookkeeping: HostRosterBookkeeping,
     structured_log_shipping: Arc<AtomicBool>,
     _event_loop_telemetry: AndroidEventLoopTelemetryRuntime,
@@ -1839,28 +1840,27 @@ impl AndroidJsonHost {
         .unwrap_or_else(|error| {
             panic!("failed to open durable Android structured-log spill: {error}")
         });
-        let invariant_report_path = get_android_invariant_report_path(&app_data_dir);
-        let invariant_reporter = if mode == AndroidHostMode::Production {
-            let report_path = invariant_report_path.clone();
-            Some(install_invariant_reporter(Arc::new(move |report| {
-                let payload = json!({
-                    "name": report.name,
-                    "frame": report.frame,
-                    "recordedAtMs": now_ms(),
-                });
-                let Ok(encoded) = serde_json::to_vec(&payload) else { return; };
-                let Ok(mut file) = std::fs::OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(&report_path)
-                else { return; };
-                let _ = std::io::Write::write_all(&mut file, &encoded);
-                let _ = std::io::Write::write_all(&mut file, b"\n");
-                let _ = file.sync_data();
-            })))
-        } else {
-            None
-        };
+        if mode == AndroidHostMode::Production {
+            let report_path = get_android_invariant_report_path(&app_data_dir);
+            let _ = ANDROID_INVARIANT_REPORTER.get_or_init(|| {
+                install_invariant_reporter(Arc::new(move |report| {
+                    let payload = json!({
+                        "name": report.name,
+                        "frame": report.frame,
+                        "recordedAtMs": now_ms(),
+                    });
+                    let Ok(encoded) = serde_json::to_vec(&payload) else { return; };
+                    let Ok(mut file) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&report_path)
+                    else { return; };
+                    let _ = std::io::Write::write_all(&mut file, &encoded);
+                    let _ = std::io::Write::write_all(&mut file, b"\n");
+                    let _ = file.sync_data();
+                }))
+            });
+        }
         let (agent_roster, agent_roster_recovery) =
             AndroidAgentRoster::open_recovering(app_data_dir.join("agents.json"))
                 .unwrap_or_else(|error| {
@@ -2770,7 +2770,6 @@ impl AndroidJsonHost {
             edge_failures: EdgeFailureBuffer::default(),
             structured_log_spool,
             structured_log_counter_id,
-            _invariant_reporter: invariant_reporter,
             host_roster_bookkeeping: HostRosterBookkeeping::default(),
             structured_log_shipping: Arc::new(AtomicBool::new(false)),
             _event_loop_telemetry: event_loop_telemetry,

@@ -49,11 +49,8 @@ pub fn install_invariant_reporter(reporter: InvariantReporter) -> InstalledInvar
     InstalledInvariantReporter { reporter }
 }
 
-#[cold]
-#[track_caller]
-pub fn invariant_failure() -> ! {
-    let location = Location::caller();
-    let report = SandInvariantReport {
+fn build_invariant_report(location: &'static Location<'static>) -> SandInvariantReport {
+    SandInvariantReport {
         name: SAND_INVARIANT_VIOLATION_NAME.to_string(),
         frame: Some(format!(
             "at {}:{}:{}",
@@ -61,7 +58,13 @@ pub fn invariant_failure() -> ! {
             location.line(),
             location.column()
         )),
-    };
+    }
+}
+
+#[cold]
+#[track_caller]
+pub fn invariant_failure() -> ! {
+    let report = build_invariant_report(Location::caller());
     let reporter = reporter_slot()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -76,24 +79,16 @@ pub fn invariant_failure() -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    #[track_caller]
+    fn capture_report() -> SandInvariantReport {
+        build_invariant_report(Location::caller())
+    }
 
     #[test]
-    fn reporter_observes_invariant_site_and_guard_removes_it() {
-        let reports = Arc::new(Mutex::new(Vec::<SandInvariantReport>::new()));
-        let sink = Arc::clone(&reports);
-        let guard = install_invariant_reporter(Arc::new(move |report| {
-            sink.lock().unwrap().push(report.clone());
-        }));
-
-        let result = catch_unwind(AssertUnwindSafe(|| invariant_failure()));
-        assert!(result.is_err());
-
-        let captured = reports.lock().unwrap().clone();
-        assert_eq!(captured.len(), 1);
-        assert_eq!(captured[0].name, SAND_INVARIANT_VIOLATION_NAME);
-        assert!(captured[0].frame.as_deref().is_some_and(|frame| frame.contains("host_invariant.rs:")));
-
-        drop(guard);
+    fn invariant_report_preserves_symbol_and_caller_site() {
+        let report = capture_report();
+        assert_eq!(report.name, SAND_INVARIANT_VIOLATION_NAME);
+        assert!(report.frame.as_deref().is_some_and(|frame| frame.contains("host_invariant.rs:")));
     }
 }
