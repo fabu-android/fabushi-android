@@ -54,4 +54,4 @@ Android 的 `SpeechRecognizer.createOnDeviceSpeechRecognizer` / `isOnDeviceRecog
 
 本文件原写于 2026-10-09，现为 Android 实施规范；不构成产品实现和测试通过的声明。内部模型与状态为设计约束，真实后端 wire 需重新审计固定 Desktop SHA，按实际符号、调用与测试锚点补齐。构建与验收只使用 GitHub Actions，禁止在 bhrum2 或 Mac 本地执行。
 
-统一源锁：`bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61`。Actions 已登记 8,172 个源码文件条目，不代表逐职责 verified。
+历史源锁：`bhrumom/fabushi-desktop@3bc92400826cc4ca7ac665b467708e22261edc61`。当前源锁为 `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` / tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`；旧 8,172 条目不代表当前 verified。
