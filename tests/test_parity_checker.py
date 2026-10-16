@@ -22,7 +22,7 @@ class ParityCheckerTest(unittest.TestCase):
             (ROOT / "docs/android-port/authority/source-inventory-manifest.json").read_text(encoding="utf-8")
         )
         self.assertEqual(manifest["tracked_non_tree_entries"], result.summary["full_source_entries"])
-        self.assertGreater(result.summary["full_source_empty_responsibilities"], 0)
+        self.assertEqual(0, result.summary["full_source_empty_responsibilities"])
         self.assertEqual(0, result.summary["missing_reverse_links"])
         self.assertEqual(0, result.summary["blob_mismatches"])
         self.assertEqual(0, result.summary["legacy_monoliths_present"])
