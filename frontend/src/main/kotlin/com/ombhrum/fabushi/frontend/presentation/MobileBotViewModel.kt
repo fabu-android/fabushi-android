@@ -901,15 +901,13 @@ class MobileBotViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     /**
-     * Canonical Mini App Bot projection. Messenger refresh is read-only: account installation
-     * mutation belongs to the install flow, while `/marketplace/added` owns cross-device identity.
-     * No Android-private Bot/contact database is created. The only fallback is the last validated
-     * in-process canonical projection, never a second persistent install/Bot truth.
+     * Canonical Mini App Bot projection. Messenger refresh is read-only: installation state and
+     * resource activation are owned by the Host ledger and exposed through the typed Coordinator
+     * port. No Android-private install/Bot database or REST projection cache is maintained.
      */
     private fun loadInstalledMiniAppBots(): List<MobileBotSummaryAndroid> {
         val manifests = miniApps.readInstalledMiniApps()
         val bots = projectInstalledMiniAppBots(manifests)
-        miniApps.rememberInstalledMiniApps(manifests)
         return bots
     }
 
