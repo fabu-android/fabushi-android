@@ -6,9 +6,9 @@
     "desktop_root_tree": "72fc5f777012f6e7bf5f5f471b6f121fd3612bb2",
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_head_at_update": null,
+    "android_head_at_update": "295bba01a6cfcd0003444951f97db957a08eb97a",
     "status": "incomplete",
-    "note": "Current-main rebaseline. Responsibility implementation and verification states were reset; no historical verified state is inherited."
+    "note": "Current-main rebaseline; exact Desktop source anchors added for the ten previously anchorless existing responsibilities. Implementation and verification states remain unchanged and unverified."
   },
   "responsibilities": [
     {
@@ -18857,7 +18857,78 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "83e5d6075e8cc6d825d05318c2b26e33ab2a5e8d ports the missing platform-independent worker/mirror foundation. Do not promote until shipping Session production composition is implemented and exact-head Actions/package/device evidence closes it. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/src/agent_isolation/agent_store_worker.rs",
+          "blob_sha": "f0e00680fda3358fe3e8501707c4b09d03d5e3a5",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/agent_worker_pool.rs",
+          "blob_sha": "adfd1a261bb9ba92738b90dee7efd44d110d2448",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/conversation_blob_db.rs",
+          "blob_sha": "cce3bfaee92a0f9be538ce663a19933f594de477",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/conversation_blob_gc.rs",
+          "blob_sha": "7fd6d3803c2e229f1fd02d4fd8b48f2b3f88b124",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/conversation_blob_store.rs",
+          "blob_sha": "9e778c386e0474b38a569574648c9a96fdfd8733",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/legacy_blob_retirement.rs",
+          "blob_sha": "6f897a2f1b70d581c8f836f17c74c1bbdabd6005",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/mod.rs",
+          "blob_sha": "a12200c7e027b6c1b202fd14a4768b4af092a64e",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/transcript_mirror_offload.rs",
+          "blob_sha": "fe21e43039dd5fce9e6795250647e0ba9e1d5dc1",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/transcript_mirror_worker.rs",
+          "blob_sha": "fc9de2159f539d8d2443785c1840d93021983260",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/agent_isolation/worker_blob_store.rs",
+          "blob_sha": "5131ef6a84f19f2f64d8088264285739bf41ed8b",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -18999,7 +19070,15 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Client-side production routing implemented; does not claim model/image/trace/transcript or server executor closure. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/src/cloud_agents/cloud_agent_tool.rs",
+          "blob_sha": "6a5a1aacbe87bd302e99e730211d2d464eb56046",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -19034,7 +19113,29 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Outbound Host ownership and failed-delivery recovery are now implemented sub-responsibilities. This broader connector responsibility remains mapped/not-verified because a real provider transport is not currently shipping in the canonical Desktop manifests and packaged/device provider acceptance remains open. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/src/connectors/channel_attachment.rs",
+          "blob_sha": "225fc409e4f2dfe68ff14f89ecbc81dc5e8a6da8",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/connectors/channel_delivery.rs",
+          "blob_sha": "67a2766a16d5f59a664e9b4d9c1d7fb3dbcacc5d",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/connectors/mod.rs",
+          "blob_sha": "ee0dc2cf8c6c7c611286d30a08b5bc2d891b8607",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -19067,7 +19168,15 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Outbound failed-delivery revival remains an implemented narrow responsibility. Inbound channel revival is tracked separately; aggregate background-wakes remains mapped/not-verified until all shipping callers have exact-head evidence. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/background_wakes_production_contract.rs",
+          "blob_sha": "fccb102632895449c487ef45e9b5969de7746e91",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -19098,7 +19207,22 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Timeline caller implementation now includes automation-changed, channel-connected, channel-disconnected and admin-broadcast. Keep not-verified until the new exact HEAD passes Actions; aggregate source row remains mapped. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/background_wakes_production_contract.rs",
+          "blob_sha": "fccb102632895449c487ef45e9b5969de7746e91",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/app/src/main.rs",
+          "blob_sha": "8f7136b0bab90ef9fe755fdef70ed25e865dc361",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -19130,7 +19254,15 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Narrow Host inbound wake owner only. This does not claim a currently non-shipping Slack/Discord provider or promote the aggregate Desktop background-wakes source row. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/tests/background_wakes_production_contract.rs",
+          "blob_sha": "fccb102632895449c487ef45e9b5969de7746e91",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -19159,7 +19291,15 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Narrow source responsibility closed; this does not imply complete Box snapshot parity. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/src/durable_file_policy.rs",
+          "blob_sha": "2006be99737ad30a4ea10d9eed6ed36056059823",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -19191,7 +19331,36 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not infer audit parity from permission enforcement alone; execution authorization and action audit are distinct responsibilities. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/action_audit/action_audit_backend.rs",
+          "blob_sha": "6180f84211e0dface14fd0ae5f3f57dbaa2b8f3f",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/action_audit/action_audit_service.rs",
+          "blob_sha": "bfd5e6e650131148a761b174ceac9a7de8c32102",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/action_audit/extension.rs",
+          "blob_sha": "2b1f9d14f9e1c4423e249da622caae51332f9c37",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/action_audit/mod.rs",
+          "blob_sha": "ea586e626929ee72e5157fd6bdc63bb36fcd4f19",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -19303,7 +19472,43 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Do not downgrade ACCOUNT-SESSION-001: canonical Fabushi account lifecycle is separately implemented. This responsibility tracks Desktop inference/backend auth semantics not yet proven equivalent. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/auth/auth_service.rs",
+          "blob_sha": "e063f2d072d64559544fc1cb8a1050f5999599e3",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/auth/credential_renewer.rs",
+          "blob_sha": "dfe4f8e1ba1e25e5ede8c545fb731dec161750e7",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/auth/extension.rs",
+          "blob_sha": "afc6c89fc2d39d17b5cf20ea622cdabe639261fe",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/auth/mod.rs",
+          "blob_sha": "ce3eba8a78900efd5f5dfb857b07146332944963",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/auth/user_full_name_service.rs",
+          "blob_sha": "a1bd19df957da3b55a49e3abd0771cedabb1ad23",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
@@ -19454,7 +19659,120 @@
       "artifact": null,
       "verification_status": "not-verified",
       "notes": "Separate from AUTOMATION-WORKFLOW-001 local durable run lifecycle. Local success does not prove cloud/listener automation parity. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset.",
-      "desktop_sources": [],
+      "desktop_sources": [
+        {
+          "path": "source/host/src/extensions/automations/automations_proto.rs",
+          "blob_sha": "33164a54bb73e8cd5a53a9f9c14bef7cf5be430a",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/backend_relay_source.rs",
+          "blob_sha": "1543a2c3364cb0b14f5f5eeba507bed123ab2fe3",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/backend_transport.rs",
+          "blob_sha": "6dc4477c72a38179d71ab33013c9b7e2c3b89991",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/connect_unary.rs",
+          "blob_sha": "94f8388973d755176b8736fe3c68058e74dce965",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/extension.rs",
+          "blob_sha": "96638d1c3c8532deb726f85ebc99bf93022c767d",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/fire_delivery.rs",
+          "blob_sha": "04e3a192e7fa9b1d3bda7ea1757084153679bd79",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/listener_connect_watcher.rs",
+          "blob_sha": "11bdcdc6c99c761775a109dea45110191a44d42a",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/listener_connect_watcher_production.rs",
+          "blob_sha": "3e99ae3c54f637e64ab6bc025053dfd910a914ee",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/listener_integrations.rs",
+          "blob_sha": "2602bce81af72f2710ea0e30558712dcb8076c9f",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/mod.rs",
+          "blob_sha": "70825dc9432cdc120fe65ce5bc684b6a5c6bbd8c",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/production.rs",
+          "blob_sha": "3927e9736bebd27302cd9c4c2139b583e80b7aa4",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/production_lifecycle.rs",
+          "blob_sha": "acc5d67aef35ede93a0f87e317f966013ee2eb8b",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/sand_automation_cloud_sync.rs",
+          "blob_sha": "184e4398e5fc0f2dbe3ac7556ba7d03c0c57877e",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/sand_automation_cloud_trigger.rs",
+          "blob_sha": "2e26dd5275cd62fe1708f6ca2d2eab1cf59bcf12",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/sand_automation_fire_consumer.rs",
+          "blob_sha": "b38b1614a95a34bbfe34acff39b8c3cdfaae943e",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        },
+        {
+          "path": "source/host/src/extensions/automations/sand_trigger_hub.rs",
+          "blob_sha": "28bea088715a13b75556e7ff5f2afde48b667780",
+          "symbols": [],
+          "source_mode": "100644",
+          "source_type": "blob"
+        }
+      ],
       "source_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
       "android_head_at_update": null
     },
