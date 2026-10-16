@@ -3,8 +3,8 @@
   "observed_date": "2026-10-16",
   "desktop_repository": "bhrumom/fabushi-desktop",
   "desktop_branch": "main",
-  "desktop_commit": "e875a19b03b11d0de8eae5cbb671076d0b4cf638",
-  "desktop_root_tree": "a95d4e16ce599aa3270e9116868f7b1570e0e443",
+  "desktop_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
+  "desktop_root_tree": "72fc5f777012f6e7bf5f5f471b6f121fd3612bb2",
   "android_repository": "fabu-android/fabushi-android",
   "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
   "android_pr": 3,
@@ -32,5 +32,6 @@
     "docs/specs/grok-bot-018-runtime-product-parity-recovery.md",
     "docs/specs/offline-first-installable-mini-app-platform.md",
     "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
-  ]
+  ],
+  "rebaseline_note": "Desktop main advanced from predecessor e875a19/a95d4e16 to 12a4e298/72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; derived inventory/ledger evidence must be regenerated in GitHub Actions on this exact authority."
 }
