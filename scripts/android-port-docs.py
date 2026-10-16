@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -104,6 +105,90 @@ def _default_source_row(repo: str, source_commit: str, item: dict) -> dict:
     }
 
 
+
+def load_predecessor_responsibility_mapping(responsibility_path: Path) -> dict:
+    try:
+        if responsibility_path.is_file() and responsibility_path.stat().st_size > 0:
+            candidate = json.loads(responsibility_path.read_text(encoding='utf-8'))
+            if isinstance(candidate, dict) and candidate.get('responsibilities'):
+                return candidate
+    except (OSError, ValueError, json.JSONDecodeError):
+        pass
+    artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', '12031753556')
+    token = os.environ.get('GH_TOKEN')
+    require(token, 'GH_TOKEN is required to recover predecessor responsibility mapping')
+    req = Request(
+        f'https://api.github.com/repos/fabu-android/fabushi-android/actions/artifacts/{artifact_id}/zip',
+        headers={'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + token, 'User-Agent': 'Fabushi-Android-Docs', 'X-GitHub-Api-Version': '2022-11-28'},
+    )
+    try:
+        with urlopen(req, timeout=60) as response:
+            payload = response.read()
+    except Exception as error:
+        raise RuntimeError('failed to recover predecessor responsibility artifact ' + artifact_id) from error
+    try:
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            names = [name for name in archive.namelist() if name.endswith('docs/android-port/authority/responsibility-ledger.json')]
+            require(len(names) == 1, 'predecessor artifact does not contain exactly one responsibility ledger')
+            candidate = json.loads(archive.read(names[0]).decode('utf-8'))
+    except Exception as error:
+        raise RuntimeError('predecessor responsibility artifact is invalid') from error
+    require(isinstance(candidate, dict) and candidate.get('responsibilities'), 'predecessor responsibility mapping is empty')
+    return candidate
+
+def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[dict], new_by_path: dict[str, dict], current: str, tree_sha: str) -> dict:
+    predecessor = load_predecessor_responsibility_mapping(responsibility_path)
+    responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
+    require(responsibilities, 'predecessor responsibility mapping has no definitions')
+    rid_by_path: dict[str, set[str]] = {}
+    for item in responsibilities:
+        rid = item.get('responsibility_id')
+        require(rid, 'responsibility definition without responsibility_id')
+        for source in item.get('desktop_sources', []):
+            path = source.get('path')
+            if path in new_by_path:
+                rid_by_path.setdefault(path, set()).add(rid)
+    choices = {
+        '.github': 'CI-DESKTOP-SOURCE-AUTHORITY-REPLACEMENT-001',
+        'desktop': 'UI-PRODUCTION-COMPOSITION-ANDROID-001',
+        'docs': 'GOVERNANCE-SPEC-FIRST-ANDROID-001',
+        'frontend': 'UI-PRODUCTION-COMPOSITION-ANDROID-001',
+        'native': 'RUST-ANDROID-RUNTIME-GATE-001',
+        'projects': 'AUTHORITY-CANONICAL-MIGRATION-SOURCE-001',
+        'source': 'RUST-ANDROID-RUNTIME-GATE-001',
+        'chatgpt-vps-control': 'REMOTE-COMPUTER-001',
+        'contracts': 'VERIFICATION-CROSS-PLATFORM-JOURNEY-CONTRACT-001',
+        'AGENTS.md': 'GOVERNANCE-SPEC-FIRST-ANDROID-001',
+        'README.md': 'GOVERNANCE-REPOSITORY-BOUNDARY-001',
+        'MIGRATION_SOURCE.md': 'AUTHORITY-CANONICAL-MIGRATION-SOURCE-001',
+        'RUST_RUNTIME_SOURCE.md': 'AUTHORITY-RUST-RUNTIME-SOURCE-001',
+        'DESKTOP_SOURCE_CLOSURE.md': 'AUTHORITY-SOURCE-CLOSURE-REPLACEMENT-001',
+    }
+    ids = {item.get('responsibility_id') for item in responsibilities}
+    for row in ledger_rows:
+        path = row['source_path']
+        links = rid_by_path.get(path) or {choices.get(path.split('/')[0], 'GOVERNANCE-REPOSITORY-BOUNDARY-001')}
+        require(all(rid in ids for rid in links), 'missing closure responsibility definition')
+        row['responsibilities'] = sorted(links)
+        if row.get('disposition') is None:
+            row['disposition'] = 'not-applicable-with-replacement' if path.startswith(('docs/', '.github/')) or path in {'AGENTS.md','README.md','MIGRATION_SOURCE.md','RUST_RUNTIME_SOURCE.md','DESKTOP_SOURCE_CLOSURE.md'} else 'android-adapted'
+        row['implementation_status'] = 'unreviewed'
+        row['evidence'] = [{'kind':'predecessor-mapping-source','artifact_id':int(os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT','12031753556')),'status':'provenance-only','source_path':path,'desktop_commit':current,'desktop_root_tree':tree_sha,'verification_status':'not-verified'}]
+    for item in responsibilities:
+        rid = item['responsibility_id']
+        existing = {s.get('path') for s in item.get('desktop_sources', [])}
+        for row in ledger_rows:
+            if rid in row['responsibilities'] and row['source_path'] not in existing:
+                item.setdefault('desktop_sources', []).append({'path':row['source_path'],'blob_sha':new_by_path[row['source_path']]['sha'],'symbols':[]})
+        for source in item.get('desktop_sources', []):
+            if source.get('path') in new_by_path:
+                source['blob_sha'] = new_by_path[source['path']]['sha']
+        item['source_commit'] = current
+        item['implementation_status'] = 'unreviewed'
+        item['verification_status'] = 'not-verified'
+        item['notes'] = (item.get('notes') or '') + ' Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required.'
+    return {'schema_version':2,'authority':{'desktop_repository':'bhrumom/fabushi-desktop','desktop_commit':current,'desktop_root_tree':tree_sha,'android_repository':'fabu-android/fabushi-android','android_pr':3,'status':'incomplete','predecessor_mapping_artifact':int(os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT','12031753556')),'note':'Current-main responsibility mapping regenerated from predecessor mapping; verification remains unverified.'},'responsibilities':responsibilities,'traceability':predecessor.get('traceability',{}),'metadata':predecessor.get('metadata',{})}
+
 def rebaseline() -> None:
     authority_dir = DOC / 'authority'
     baseline_path = authority_dir / 'baseline.json'
@@ -195,7 +280,7 @@ def rebaseline() -> None:
     touched_responsibilities = 0
     deleted_anchor_count = 0
     if responsibility_path.is_file():
-        responsibility_doc = json.loads(responsibility_path.read_text(encoding='utf-8'))
+        responsibility_doc = merge_responsibility_mapping(responsibility_path, new_rows, new_by_path, current, tree_sha)
         authority = responsibility_doc.setdefault('authority', {})
         authority['desktop_commit'] = current
         authority['desktop_root_tree'] = tree_sha
