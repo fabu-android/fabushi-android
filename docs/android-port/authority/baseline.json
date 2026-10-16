@@ -33,5 +33,6 @@
     "docs/specs/offline-first-installable-mini-app-platform.md",
     "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
   ],
-  "rebaseline_note": "Desktop main advanced from predecessor e875a19/a95d4e16 to 12a4e298/72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; derived inventory/ledger evidence must be regenerated in GitHub Actions on this exact authority."
+  "rebaseline_note": "Desktop main advanced from predecessor e875a19/a95d4e16 to 12a4e298/72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; derived inventory/ledger evidence must be regenerated in GitHub Actions on this exact authority.",
+  "rebaseline_requested_at": "2026-10-16T12:15:00+08:00"
 }
