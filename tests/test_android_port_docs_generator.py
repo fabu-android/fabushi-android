@@ -18,6 +18,13 @@ def load_generator():
     return module
 
 
+def padded_responsibilities(primary):
+    return [primary] + [
+        {"responsibility_id": f"RESP-{index:03d}", "desktop_sources": []}
+        for index in range(2, 307)
+    ]
+
+
 class AndroidPortDocsGeneratorTest(unittest.TestCase):
     def test_legacy_top_level_fallback_is_not_a_semantic_anchor(self):
         module = load_generator()
@@ -48,23 +55,21 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                     "desktop_commit": "d" * 40,
                     "desktop_root_tree": "t" * 40,
                 },
-                "responsibilities": [
-                    {
-                        "responsibility_id": "RESP-001",
-                        "source_owner": "source/host canonical owner",
-                        "android_owner": "Rust Host",
-                        "android_target": ["source/host/src/lib.rs"],
-                        "desktop_sources": [
-                            {
-                                "path": "source/host/src/lib.rs",
-                                "blob_sha": "old",
-                                "symbols": ["real_symbol"],
-                                "source_mode": "100644",
-                                "source_type": "blob",
-                            }
-                        ],
-                    }
-                ],
+                "responsibilities": padded_responsibilities({
+                    "responsibility_id": "RESP-001",
+                    "source_owner": "source/host canonical owner",
+                    "android_owner": "Rust Host",
+                    "android_target": ["source/host/src/lib.rs"],
+                    "desktop_sources": [
+                        {
+                            "path": "source/host/src/lib.rs",
+                            "blob_sha": "old",
+                            "symbols": ["real_symbol"],
+                            "source_mode": "100644",
+                            "source_type": "blob",
+                        }
+                    ],
+                }),
             }
             source_rows = {
                 "source/host/src/lib.rs": {
@@ -155,18 +160,16 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             module.OUT = Path(temp)
             predecessor = {
                 "authority": {"desktop_commit": "d" * 40, "desktop_root_tree": "t" * 40},
-                "responsibilities": [
-                    {
-                        "responsibility_id": "RESP-001",
-                        "source_owner": "canonical",
-                        "android_owner": "Rust Host",
-                        "android_target": ["source/host/src/lib.rs"],
-                        "desktop_sources": [
-                            {"path": "source/host/src/lib.rs", "blob_sha": "old",
-                             "symbols": ["symbol"], "source_mode": "100644", "source_type": "blob"}
-                        ],
-                    }
-                ],
+                "responsibilities": padded_responsibilities({
+                    "responsibility_id": "RESP-001",
+                    "source_owner": "canonical",
+                    "android_owner": "Rust Host",
+                    "android_target": ["source/host/src/lib.rs"],
+                    "desktop_sources": [
+                        {"path": "source/host/src/lib.rs", "blob_sha": "old",
+                         "symbols": ["symbol"], "source_mode": "100644", "source_type": "blob"}
+                    ],
+                }),
             }
             provenance = {
                 "android_repository": "fabu-android/fabushi-android",
