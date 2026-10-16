@@ -79,7 +79,7 @@ jobs:
           assert len(r.get('responsibilities',[]))==306
           PY
       - name: Commit regenerated exact-main authority to PR branch
-        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'spec/grok-bot-018-android-parity-20260922' && !startsWith(github.event.head_commit.message, 'chore(android): persist exact Desktop main authority evidence') }}
+        if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref_name == 'spec/grok-bot-018-android-parity-20260922' && github.event.head_commit.message != 'chore(android): persist exact Desktop main authority evidence' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
