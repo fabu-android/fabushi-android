@@ -1219,6 +1219,16 @@ interface AndroidCoordinatorPort {
 
     fun marketplaceBrowse(params: JSONObject): JSONObject
     fun marketplaceRelease(params: JSONObject): JSONObject
+
+    /** Host-owned Mini App lifecycle; callers cannot select arbitrary Host methods. */
+    fun listApprovedMiniApps(): JSONObject
+    fun listInstalledMiniApps(): JSONObject
+    fun installApprovedMiniApp(appId: String, operationId: String): JSONObject
+    fun getInstalledMiniAppResources(appId: String, operationId: String): JSONObject
+    fun readMiniAppResource(loadId: String, resourcePath: String): JSONObject
+    fun disposeMiniAppLoad(loadId: String): JSONObject
+    fun uninstallMiniApp(appId: String, operationId: String): JSONObject
+
     fun pluginInstall(params: JSONObject): JSONObject
     fun pluginVariableFields(schema: JSONObject): JSONArray
     fun pluginVariablesConfigure(params: JSONObject): JSONObject
