@@ -1,5 +1,9 @@
 # 12 — 设置、通知、隐私、诊断与持续维护
 
+## Current authority
+
+bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+
 ## 责任清单
 
 设置必须覆盖 Desktop 当前已承载的账户、模型/提供者、语言、外观、语音、通知、存储、设备、插件授权、数据管理、更新和诊断入口；是否存在某项具体开关仍以 pinned source 和真实 UI 审计为准。未知设置不能因为没有列入本文就被默认为可删。
@@ -44,7 +48,7 @@ Android 13+ 的非豁免通知有运行时权限要求，权限被拒时保留�
 
 ## Android 应用更新的空闲策略与遥测
 
-Desktop `371b72f1cd20de03dc4dff9a15ed761054968093` 的更新责任由 `source/electron-main/update/update-wiring.ts`、`sand-update-service.ts`、`idle-relaunch-apply.ts`、`safe-relaunch-gate.ts` 和 `update-telemetry.ts` 联合定义。Android 必须保留同一组安全决策输入：用户设备级 opt-in、Statsig `sand_auto_update_when_idle` gate、真实签名包 transport、canonical Host idle、用户离开状态，以及更新下载/暂存/申请安装/恢复的结构化 telemetry；Compose 不能自己判定 Host 是否空闲。
+历史 Desktop predecessor `371b72f1cd20de03dc4dff9a15ed761054968093` 的更新责任由 `source/electron-main/update/update-wiring.ts`、`sand-update-service.ts`、`idle-relaunch-apply.ts`、`safe-relaunch-gate.ts` 和 `update-telemetry.ts` 联合定义。Android 必须保留同一组安全决策输入：用户设备级 opt-in、Statsig `sand_auto_update_when_idle` gate、真实签名包 transport、canonical Host idle、用户离开状态，以及更新下载/暂存/申请安装/恢复的结构化 telemetry；Compose 不能自己判定 Host 是否空闲。
 
 普通 Android 应用不能绕过系统 Package Installer 静默完成 APK 升级，因此 Desktop 的“safe relaunch + quitAndInstall”在 Android 上采用 `android-adapted` 替代：只有 opt-in 与 gate 同时为真、设备已锁定或非交互并持续至少 10 分钟、Host canonical Agent roster 没有任何 running Agent、且当前 effective track 有真实签名 package transport 时，进程存活期间才允许自动下载、校验并把包持久化为 `STAGED`。后台不得启动系统安装 Activity，不得把 opt-in 当成绕过平台安装确认的授权；恢复到前台后仍需用户显式继续。进程死亡后由 durable apply marker 恢复同一 staged/requested 状态；`REQUESTED` 且无法证明结果时保持 `OUTCOME_UNKNOWN`，绝不自动重放安装。
 
