@@ -1,5 +1,9 @@
 # 08 — 远程设备、Computer Use 与执行位置
 
+## Current authority
+
+bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+
 ## 三种场景必须分开
 
 一是 Android 作为客户端查看/控制用户已经授权的远程电脑；二是 Android 为 Agent 提供应用自身的可访问操作面；三是控制 Android 设备上其他应用。这三者权限、能力、分发合规和技术限制不同，不能用一个“Computer Use 可用”结论覆盖。
@@ -36,7 +40,7 @@ Android 进程死亡后只恢复持久任务和连接意图，不恢复旧网络
 
 ## 当前 main 的远程执行 authority 边界（2026-10-10）
 
-对 Desktop `3bc92400826cc4ca7ac665b467708e22261edc61` 的实际 shipping Rust 复核后，已经确认两层事实。Host/Runner 层的 `TurnToolsetDependencies` 与 `ProductionTurnAgentOwner` 只在显式注入 `RunnerBoxResourcePort`、`BrowserToolExecutor`、`ComputerToolExecutor`、`ExternalMachineExecutor` 时暴露对应执行能力；`RemoteBoxResourceCoordinator` 还要求 ready connection、monitor ownership，并在 delegate 前后执行 auto-review、导航基线、busy lease、审计和 finally probe。模型侧工具名本身不构成执行授权。
+对 历史 Desktop predecessor `3bc92400826cc4ca7ac665b467708e22261edc61` 的实际 shipping Rust 复核后，已经确认两层事实。Host/Runner 层的 `TurnToolsetDependencies` 与 `ProductionTurnAgentOwner` 只在显式注入 `RunnerBoxResourcePort`、`BrowserToolExecutor`、`ComputerToolExecutor`、`ExternalMachineExecutor` 时暴露对应执行能力；`RemoteBoxResourceCoordinator` 还要求 ready connection、monitor ownership，并在 delegate 前后执行 auto-review、导航基线、busy lease、审计和 finally probe。模型侧工具名本身不构成执行授权。
 
 服务端 `worker_api.rs` / `remote_computer.rs` 已证明真实 remote-computer control plane：`/v1/computers` 的 register/heartbeat/pair，client revoke，session list/create/activate/transport/close，以及 signals/drain；设备 secret、client token、mobile token 都有身份校验，pairing 默认 10 分钟，control session 默认 2 小时。这个证据足以定义配对、撤销、session 与 signaling 责任，但**尚不足以定义 Android Host 的 outbound side-effect command executor**：当前复核还没有找到把 Box/External/Computer/Browser 动作编码成远端命令、绑定哪一种 session credential、如何 ack/progress/result、如何对 commandId 重复和 process-death outcome-unknown 做 reconcile 的 production client wire。
 
