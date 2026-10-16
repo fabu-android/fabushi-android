@@ -247,6 +247,7 @@ use fabushi_android_local_exec_daemon::{bounded_file_handlers::bounded_file_runn
 use mahayana_plugin_runtime::{
     ExternalReleaseManifest, PermissionManager, PluginInstaller,
 };
+use crate::extensions::mcp::miniapp_host_service::MiniAppHostService;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -1584,6 +1585,7 @@ pub struct AndroidJsonHost {
     _tray_subscription: TraySubscription,
     installed_plugins: BTreeSet<String>,
     plugin_installer: PluginInstaller,
+    mini_app_host: MiniAppHostService,
     plugin_permissions: PermissionManager,
     js_runtime: Option<DeepSeekJsHost>,
     runtime_tools: BTreeMap<String, BTreeSet<String>>,
@@ -1763,6 +1765,8 @@ impl AndroidJsonHost {
         let host_runtime_root = crate::host_paths::get_android_host_runtime_root(&app_data_dir);
         std::fs::create_dir_all(&host_runtime_root)
             .unwrap_or_else(|error| panic!("failed to create Android Host runtime root: {error}"));
+        let mini_app_host = MiniAppHostService::open(&host_runtime_root)
+            .unwrap_or_else(|error| panic!("failed to open Host-owned Mini App runtime service: {error}"));
         let preexisting_account_durable_data = has_existing_account_durable_data(&app_data_dir);
         let startup_has_protected_session = mode == AndroidHostMode::Production
             && initial_account_session_json.is_some_and(|raw| !raw.trim().is_empty());
@@ -2878,6 +2882,7 @@ impl AndroidJsonHost {
             _tray_subscription: tray_subscription,
             installed_plugins: BTreeSet::new(),
             plugin_installer,
+            mini_app_host,
             plugin_permissions,
             js_runtime: None,
             runtime_tools: BTreeMap::new(),
@@ -5537,6 +5542,13 @@ impl AndroidJsonHost {
             "feature.approval.status" => self.feature_approval_status(params),
             "feature.marketplace.browse" => self.marketplace_browse(params),
             "feature.marketplace.release" => self.marketplace_release(params),
+            "feature.miniapp.listApproved" => self.miniapp_list_approved(),
+            "feature.miniapp.listInstalled" => self.miniapp_list_installed(),
+            "feature.miniapp.installApproved" => self.miniapp_install_approved(params),
+            "feature.miniapp.getResources" => self.miniapp_get_resources(params),
+            "feature.miniapp.readResource" => self.miniapp_read_resource(params),
+            "feature.miniapp.disposeLoad" => self.miniapp_dispose_load(params),
+            "feature.miniapp.uninstall" => self.miniapp_uninstall(params),
             "feature.plugin.install" => self.plugin_install(params),
             "feature.plugin.update" => self.plugin_update(params),
             "feature.plugin.uninstall" => self.plugin_uninstall(params),
@@ -17748,6 +17760,47 @@ impl AndroidJsonHost {
                 "execution":"denied"
             }))
         }
+    }
+
+    fn miniapp_list_approved(&mut self) -> Result<Value, String> {
+        self.mini_app_host.list_approved_mini_apps(&self.account)
+    }
+
+    fn miniapp_list_installed(&mut self) -> Result<Value, String> {
+        self.mini_app_host.list_installed_mini_apps(&self.account)
+    }
+
+    fn miniapp_install_approved(&mut self, params: &Value) -> Result<Value, String> {
+        let app_id = required_string(params, "appId")?;
+        let operation_id = required_string(params, "operationId")?;
+        self.mini_app_host
+            .install_approved_mini_app(&self.account, app_id, operation_id)
+    }
+
+    fn miniapp_get_resources(&mut self, params: &Value) -> Result<Value, String> {
+        let app_id = required_string(params, "appId")?;
+        let operation_id = required_string(params, "operationId")?;
+        self.mini_app_host
+            .get_installed_mini_app_resources(&self.account, app_id, operation_id)
+    }
+
+    fn miniapp_read_resource(&mut self, params: &Value) -> Result<Value, String> {
+        let load_id = required_string(params, "loadId")?;
+        let resource_path = required_string(params, "resourcePath")?;
+        self.mini_app_host
+            .read_installed_mini_app_resource(&self.account, load_id, resource_path)
+    }
+
+    fn miniapp_dispose_load(&mut self, params: &Value) -> Result<Value, String> {
+        let load_id = required_string(params, "loadId")?;
+        self.mini_app_host.dispose_mini_app_resource_load(load_id)
+    }
+
+    fn miniapp_uninstall(&mut self, params: &Value) -> Result<Value, String> {
+        let app_id = required_string(params, "appId")?;
+        let operation_id = required_string(params, "operationId")?;
+        self.mini_app_host
+            .uninstall_mini_app(&self.account, app_id, operation_id)
     }
 
     fn marketplace_browse(&mut self, _params: &Value) -> Result<Value, String> {

@@ -254,6 +254,12 @@ impl AndroidAccountService {
         Some(format!("account-device:{}", crate::sha256::sha256_hex(&encoded)))
     }
 
+    /// Read-only session expiry for Host-owned durable capability fencing.
+    /// This never exposes the bearer credential or refresh credential.
+    pub fn access_token_expires_at_ms(&self) -> Option<u64> {
+        self.session.as_ref().map(|session| session.access_token_expires_at)
+    }
+
     pub fn environment_descriptor_url(&self) -> String {
         self.base_url.to_string()
     }
