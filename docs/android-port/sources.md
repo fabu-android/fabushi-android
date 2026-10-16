@@ -4,11 +4,11 @@
 
 ## 源仓库
 
-Desktop 权威：[main 快照](https://github.com/bhrumom/fabushi-desktop/tree/3bc92400826cc4ca7ac665b467708e22261edc61)。根 [Rust 闭包](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/RUST_RUNTIME_SOURCE.md) 与 [前端闭包](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/DESKTOP_SOURCE_CLOSURE.md) 是必须继续追踪的真实路径。
+Desktop 权威：[main 快照](https://github.com/bhrumom/fabushi-desktop/tree/12a4e29819592e3a7e32f7435cb0cf2e3cc53848)。根 [Rust 闭包](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/RUST_RUNTIME_SOURCE.md) 与 [前端闭包](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/DESKTOP_SOURCE_CLOSURE.md) 是必须继续追踪的真实路径。
 
-已读取关键实现：[MCP App bridge](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/mcp-app-sdk/src/bridge.ts)、[WebMCP registry](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/mcp-app-sdk/src/webmcp.ts)、[共享 journey 特征](https://github.com/bhrumom/fabushi-desktop/blob/3bc92400826cc4ca7ac665b467708e22261edc61/frontend/packages/shared/src/mahayana-host-features.ts)。其中 private port、instance/nonce/grants、dispose pending 和 registry abort/fallback 的语义必须保留。
+已读取关键实现：[MCP App bridge](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/frontend/packages/mcp-app-sdk/src/bridge.ts)、[WebMCP registry](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/frontend/packages/mcp-app-sdk/src/webmcp.ts)、[共享 journey 特征](https://github.com/bhrumom/fabushi-desktop/blob/12a4e29819592e3a7e32f7435cb0cf2e3cc53848/frontend/packages/shared/src/mahayana-host-features.ts)。其中 private port、instance/nonce/grants、dispose pending 和 registry abort/fallback 的语义必须保留。
 
-Android 既有实现：[迁移前 HEAD](https://github.com/fabu-android/fabushi-android/tree/5d049353e167d9b91b5c765e1686f1ac8670f2ff)、[现有 app 构建配置](https://github.com/fabu-android/fabushi-android/blob/5d049353e167d9b91b5c765e1686f1ac8670f2ff/mobile/android/app/build.gradle)、[自有 Rust workspace](https://github.com/fabu-android/fabushi-android/blob/5d049353e167d9b91b5c765e1686f1ac8670f2ff/Cargo.toml)。已存在不等于当前 Desktop parity 已验收。
+Android 既有实现：[迁移前 HEAD](https://github.com/fabu-android/fabushi-android/tree/306fc0a577352a3d160823df67b806c72c5525d4)、[现有 app 构建配置](https://github.com/fabu-android/fabushi-android/blob/306fc0a577352a3d160823df67b806c72c5525d4/mobile/android/app/build.gradle)、[自有 Rust workspace](https://github.com/fabu-android/fabushi-android/blob/306fc0a577352a3d160823df67b806c72c5525d4/Cargo.toml)。已存在不等于当前 Desktop parity 已验收。
 
 ## Android 官方依据
 
