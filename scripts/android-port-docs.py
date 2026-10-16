@@ -46,10 +46,9 @@ def current_android_provenance() -> dict:
     require(checkout == head, f'Android checkout/head mismatch: checkout={checkout} head={head}')
     run_id = os.environ.get('GITHUB_RUN_ID')
     run_attempt = os.environ.get('GITHUB_RUN_ATTEMPT')
-    pr_number = os.environ.get('ANDROID_PR_NUMBER') or '3'
     return {
         'android_repository': os.environ.get('GITHUB_REPOSITORY', 'fabu-android/fabushi-android'),
-        'android_pr': int(pr_number),
+        'android_pr': int(os.environ.get('ANDROID_PR_NUMBER') or '3'),
         'android_pr_head_sha': head,
         'android_pr_head_ref': os.environ.get('ANDROID_PR_HEAD_REF') or os.environ.get('GITHUB_REF_NAME'),
         'android_pr_base_sha': os.environ.get('ANDROID_PR_BASE_SHA') or None,
@@ -210,7 +209,6 @@ def merge_responsibility_mapping(responsibility_path: Path, ledger_rows: list[di
                 'desktop_commit': current,
                 'desktop_root_tree': tree_sha,
                 'android_head': android['android_pr_head_sha'],
-                'workflow_event': android['workflow_event'],
                 'workflow_run_id': android['workflow_run_id'],
                 'run_attempt': android['run_attempt'],
                 'verification_status': 'not-verified',
@@ -435,7 +433,6 @@ def rebaseline() -> None:
         'deleted_rows': len(deleted_paths),
         'touched_responsibilities': touched_responsibilities,
         'deleted_responsibility_anchors': deleted_anchor_count,
-        'android_provenance': current_android_provenance(),
     }
     save(OUT / 'rebaseline-summary.json', summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
@@ -480,4 +477,75 @@ def inventory() -> None:
         top = item['path'].split('/')[0]
         top_counts[top] = top_counts.get(top, 0) + 1
     android = current_android_provenance()
-    manifest = {'schema_version': 2, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': checkout, 'android_repository': android['android_repository'], 'android_pr': android['android_pr'], 'android_pr_head_sha': android['android_pr_head_sha'], 'android_pr_head_ref': android['android_pr_head_ref'], 'android_pr_base_sha': android['android_pr_base_sha'], 'android_pr_base_ref': android['android_pr_base_ref'], 'workflow_event': android['workflow_event'], 'workflow_run_id': android['workflow_run_id'], 'run_attempt': android['run_attempt'], 'workflow_sha': android['workflow_sha'], 'workflow_ref': android['workflow_ref'], 'run_url': android['run_url'], 'generated_at_utc': android['generated_at_utc'], 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
+    authority_ledger = DOC / 'authority/source-inventory-ledger.jsonl'
+    authority_ledger_text = authority_ledger.read_text(encoding='utf-8') if authority_ledger.is_file() else ''
+    manifest = {'schema_version': 2, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': android['android_checkout_sha'], 'android_repository': android['android_repository'], 'android_pr': android['android_pr'], 'android_pr_head_sha': android['android_pr_head_sha'], 'android_pr_head_ref': android['android_pr_head_ref'], 'android_pr_base_sha': android['android_pr_base_sha'], 'android_pr_base_ref': android['android_pr_base_ref'], 'workflow_event': android['workflow_event'], 'workflow_run_id': android['workflow_run_id'], 'run_attempt': android['run_attempt'], 'workflow_sha': android['workflow_sha'], 'workflow_ref': android['workflow_ref'], 'run_url': android['run_url'], 'generated_at_utc': android['generated_at_utc'], 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(authority_ledger_text.encode('utf-8')).hexdigest() if authority_ledger_text else None, 'authority_ledger_rows': len([line for line in authority_ledger_text.splitlines() if line.strip()]), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
+    save(OUT / 'source-manifest.json', manifest)
+    print(json.dumps(manifest, ensure_ascii=False, indent=2))
+    require(before == sha == after, 'Desktop main moved: inventory saved, rebaseline required')
+
+
+def validate() -> None:
+    errors = []
+    docs = sorted(path for path in DOC.rglob('*.md') if 'generated' not in path.relative_to(DOC).parts)
+    for path in docs:
+        text = path.read_text(encoding='utf-8')
+        if not text.startswith('# ') or len(text.strip()) < 100:
+            errors.append('Empty or untitled document: ' + str(path.relative_to(ROOT)))
+        for target in re.findall(r'\[[^\]]*\]\(([^)]+)\)', text):
+            if re.match(r'^[a-zA-Z][a-zA-Z0-9+.-]*:', target) or target.startswith('#'):
+                continue
+            target = unquote(target.split('#')[0])
+            resolved = (path.parent / target).resolve()
+            if not resolved.is_relative_to(ROOT) or not resolved.exists():
+                errors.append(str(path.relative_to(ROOT)) + ' -> missing local target: ' + target)
+    for path in DOC.rglob('*.json'):
+        if 'generated' not in path.relative_to(DOC).parts:
+            try:
+                json.loads(path.read_text(encoding='utf-8'))
+            except (ValueError, OSError) as error:
+                errors.append(str(path.relative_to(ROOT)) + ': ' + str(error))
+    expected = ['01-account', '02-messaging', '03-agent', '04-tools', '05-mcp', '06-miniapp', '07-media', '08-remote', '09-commerce', '10-navigation', '11-automation', '12-settings']
+    for name in expected:
+        if not (DOC / 'features' / (name + '.md')).is_file():
+            errors.append('Required feature handbook missing: ' + name)
+    report = OUT / 'docs-validation.json'
+    save(report, {'status': 'failed' if errors else 'passed', 'markdown_files': len(docs), 'errors': errors, 'scope': 'local links, JSON syntax and required handbook presence; NOT product parity'})
+    require(report.is_file() and report.stat().st_size > 0, 'Documentation validation report was not persisted')
+    if errors:
+        for error in errors:
+            print('ERROR:', error)
+        raise ValueError('Documentation completeness gate failed')
+    print('Documentation structure passed:', len(docs), 'Markdown files')
+
+
+def bundle() -> None:
+    paths = [path for path in DOC.rglob('*') if path.is_file()]
+    paths += [ROOT / 'ANDROID_PORT.md', ROOT / 'docs/specs/desktop-main-android-full-parity.md']
+    paths = sorted(set(path for path in paths if path.is_file()))
+    with zipfile.ZipFile(ROOT / 'android-port-documentation.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
+        for path in paths:
+            archive.write(path, path.relative_to(ROOT))
+    digest = hashlib.sha256((ROOT / 'android-port-documentation.zip').read_bytes()).hexdigest()
+    (ROOT / 'android-port-documentation.zip.sha256').write_text(digest + '  android-port-documentation.zip\n', encoding='ascii')
+    print('Documentation bundle:', len(paths), 'files; SHA-256:', digest)
+
+
+def main() -> int:
+    if os.environ.get('GITHUB_ACTIONS') != 'true':
+        print('Run this validation only in GitHub Actions.', file=sys.stderr)
+        return 2
+    parser = argparse.ArgumentParser()
+    parser.add_argument('command', choices=('rebaseline', 'inventory', 'validate', 'bundle'))
+    args = parser.parse_args()
+    OUT.mkdir(parents=True, exist_ok=True)
+    try:
+        {'rebaseline': rebaseline, 'inventory': inventory, 'validate': validate, 'bundle': bundle}[args.command]()
+        return 0
+    except (ValueError, RuntimeError, OSError) as error:
+        print(type(error).__name__ + ': ' + str(error), file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
