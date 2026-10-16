@@ -261,6 +261,7 @@ def rebaseline() -> None:
         'android_tested_checkout_sha': None,
         'workflow_run_id': os.environ.get('GITHUB_RUN_ID'),
         'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'),
+        'android_pr_head_sha': os.environ.get('ANDROID_PR_HEAD_SHA') or os.environ.get('GITHUB_SHA'),
         'tree_entries': len(entries),
         'tracked_non_tree_entries': len(files),
         'root_counts': top_counts,
@@ -391,7 +392,7 @@ def inventory() -> None:
     for item in files:
         top = item['path'].split('/')[0]
         top_counts[top] = top_counts.get(top, 0) + 1
-    manifest = {'schema_version': 1, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': checkout, 'workflow_run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'), 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
+    manifest = {'schema_version': 1, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': checkout, 'workflow_run_id': os.environ.get('GITHUB_RUN_ID'), 'run_attempt': os.environ.get('GITHUB_RUN_ATTEMPT'), 'android_pr_head_sha': os.environ.get('ANDROID_PR_HEAD_SHA') or os.environ.get('GITHUB_SHA'), 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
     save(OUT / 'source-manifest.json', manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     require(before == sha == after, 'Desktop main moved: inventory saved, rebaseline required')

@@ -34,10 +34,12 @@ jobs:
       - name: Rebaseline persistent source authority in Actions worktree
         env:
           GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 scripts/android-port-docs.py rebaseline
       - name: Enumerate source and verify authority
         env:
           GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: python3 scripts/android-port-docs.py inventory
       - name: Commit regenerated exact-main authority manifest
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
@@ -45,6 +47,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "$(git log -1 --format=%s)" == "chore(android): persist exact Desktop main authority evidence" ]]; then
+            echo "Generated-authority commit already persisted; skipping recursive persistence."
+            exit 0
+          fi
           BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
