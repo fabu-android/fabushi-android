@@ -25,7 +25,28 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / 'docs/android-port'
 OUT = DOC / 'generated'
-SHA = re.compile(r"^[0-9a-f]{40}$")
+SHA = re.compile(r'^[0-9a-f]{40}')
+
+ALLOWED_SOURCE_MODES = frozenset({'100644', '100755', '120000', '160000'})
+ALLOWED_SOURCE_TYPES = frozenset({'blob', 'commit'})
+ALLOWED_SOURCE_DISPOSITIONS = frozenset({
+    'direct-port',
+    'android-adapted',
+    'not-applicable-with-replacement',
+    'mixed',
+})
+LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
+    'RUST-ANDROID-RUNTIME-GATE-001',
+    'AUTHORITY-CANONICAL-MIGRATION-SOURCE-001',
+    'UI-PRODUCTION-COMPOSITION-ANDROID-001',
+    'CI-DESKTOP-SOURCE-AUTHORITY-REPLACEMENT-001',
+    'GOVERNANCE-SPEC-FIRST-ANDROID-001',
+    'GOVERNANCE-REPOSITORY-BOUNDARY-001',
+})
+EXPECTED_RESPONSIBILITY_COUNT = 306
+DEFAULT_RESPONSIBILITY_ARTIFACT = '12053467058'
+DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:26fe89b6a05f76ce96ab5ddab5a6107251586ad8143f42fff0d4794a4da15eb5'
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
@@ -37,20 +58,28 @@ def save(path: Path, value: object) -> None:
 
 
 def current_android_provenance() -> dict:
-    """Return the exact Android checkout/run identity used to generate evidence."""
+    """Return the exact Android checkout and live PR identity used for evidence generation."""
     head = os.environ.get('ANDROID_PR_HEAD_SHA') or os.environ.get('GITHUB_SHA')
     require(SHA.fullmatch(head or '') is not None, 'Invalid Android PR head SHA')
     checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     require(checkout == head, f'Android checkout/head mismatch: checkout={checkout} head={head}')
     run_id = os.environ.get('GITHUB_RUN_ID')
     run_attempt = os.environ.get('GITHUB_RUN_ATTEMPT')
+    repository = os.environ.get('GITHUB_REPOSITORY', 'fabu-android/fabushi-android')
+    pr_number = int(os.environ.get('ANDROID_PR_NUMBER') or '3')
+    pr = get(f'/repos/{repository}/pulls/{pr_number}')
+    require(pr.get('number') == pr_number, 'Android PR lookup mismatch')
+    require(pr.get('head', {}).get('sha') == head,
+            f'Android PR/head mismatch: pr={pr.get("head", {}).get("sha")} checkout={head}')
+    require(pr.get('head', {}).get('repo', {}).get('full_name') == repository,
+            'Android PR head repository mismatch')
     return {
-        'android_repository': os.environ.get('GITHUB_REPOSITORY', 'fabu-android/fabushi-android'),
-        'android_pr': int(os.environ.get('ANDROID_PR_NUMBER') or '3'),
+        'android_repository': repository,
+        'android_pr': pr_number,
         'android_pr_head_sha': head,
-        'android_pr_head_ref': os.environ.get('ANDROID_PR_HEAD_REF') or os.environ.get('GITHUB_REF_NAME'),
-        'android_pr_base_sha': os.environ.get('ANDROID_PR_BASE_SHA') or None,
-        'android_pr_base_ref': os.environ.get('ANDROID_PR_BASE_REF') or None,
+        'android_pr_head_ref': pr.get('head', {}).get('ref') or os.environ.get('ANDROID_PR_HEAD_REF') or os.environ.get('GITHUB_REF_NAME'),
+        'android_pr_base_sha': pr.get('base', {}).get('sha'),
+        'android_pr_base_ref': pr.get('base', {}).get('ref') or os.environ.get('ANDROID_PR_BASE_REF') or 'main',
         'android_checkout_sha': checkout,
         'workflow_event': os.environ.get('GITHUB_EVENT_NAME'),
         'workflow_run_id': int(run_id) if run_id else None,
@@ -59,12 +88,11 @@ def current_android_provenance() -> dict:
         'workflow_ref': os.environ.get('GITHUB_WORKFLOW_REF') or None,
         'run_url': (
             f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/"
-            f"{os.environ.get('GITHUB_REPOSITORY', 'fabu-android/fabushi-android')}/actions/runs/{run_id}"
+            f"{repository}/actions/runs/{run_id}"
             if run_id else None
         ),
         'generated_at_utc': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
     }
-
 
 def get(endpoint: str) -> dict:
     require(endpoint.startswith('/repos/'), 'Only public repository GET endpoints are supported')
