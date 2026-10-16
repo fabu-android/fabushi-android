@@ -1221,13 +1221,18 @@ interface AndroidCoordinatorPort {
     fun marketplaceRelease(params: JSONObject): JSONObject
 
     /** Host-owned Mini App lifecycle; callers cannot select arbitrary Host methods. */
-    fun listApprovedMiniApps(): JSONObject
-    fun listInstalledMiniApps(): JSONObject
-    fun installApprovedMiniApp(appId: String, operationId: String): JSONObject
-    fun getInstalledMiniAppResources(appId: String, operationId: String): JSONObject
-    fun readMiniAppResource(loadId: String, resourcePath: String): JSONObject
-    fun disposeMiniAppLoad(loadId: String): JSONObject
-    fun uninstallMiniApp(appId: String, operationId: String): JSONObject
+    fun listApprovedMiniApps(): JSONObject = error("Mini App approved catalog is unavailable on this Coordinator port")
+    fun listInstalledMiniApps(): JSONObject = error("Mini App installed catalog is unavailable on this Coordinator port")
+    fun installApprovedMiniApp(appId: String, operationId: String): JSONObject =
+        error("Mini App installation is unavailable on this Coordinator port")
+    fun getInstalledMiniAppResources(appId: String, operationId: String): JSONObject =
+        error("Mini App resource loading is unavailable on this Coordinator port")
+    fun readMiniAppResource(loadId: String, resourcePath: String): JSONObject =
+        error("Mini App resource reads are unavailable on this Coordinator port")
+    fun disposeMiniAppLoad(loadId: String): JSONObject =
+        error("Mini App load disposal is unavailable on this Coordinator port")
+    fun uninstallMiniApp(appId: String, operationId: String): JSONObject =
+        error("Mini App uninstall is unavailable on this Coordinator port")
 
     fun pluginInstall(params: JSONObject): JSONObject
     fun pluginVariableFields(schema: JSONObject): JSONArray
