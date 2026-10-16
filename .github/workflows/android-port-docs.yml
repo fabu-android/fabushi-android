@@ -17,8 +17,8 @@ permissions:
   contents: write
   actions: write
 concurrency:
-  group: android-port-docs-${{ github.ref_name }}
-  cancel-in-progress: true
+  group: android-port-docs-${{ github.ref_name }}-${{ github.run_id }}
+  cancel-in-progress: false
 jobs:
   source-inventory:
     name: Pinned Desktop complete source inventory
@@ -63,38 +63,69 @@ jobs:
           EXPECTED_ANDROID_HEAD="$(git rev-parse HEAD)"
           test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8258
           python3 - "$EXPECTED_ANDROID_HEAD" <<'PY'
-          import json, sys
+          import hashlib, json, sys
           from pathlib import Path
           expected=sys.argv[1]
           m=json.loads(Path('docs/android-port/authority/source-inventory-manifest.json').read_text(encoding='utf-8'))
-          print(json.dumps({
-            'desktop_commit':m.get('desktop_commit'),
-            'desktop_root_tree':m.get('desktop_root_tree'),
-            'tree_entries':m.get('tree_entries'),
-            'tracked_non_tree_entries':m.get('tracked_non_tree_entries'),
-            'android_pr_head_sha':m.get('android_pr_head_sha'),
-            'android_tested_checkout_sha':m.get('android_tested_checkout_sha'),
-            'workflow_sha':m.get('workflow_sha'),
-            'expected_android_head':expected,
-            'ledger_sha256':m.get('ledger_sha256')
-          }, sort_keys=True))
+          ledger_bytes=Path('docs/android-port/authority/source-inventory-ledger.jsonl').read_bytes()
+          rows=[json.loads(line) for line in ledger_bytes.decode('utf-8').splitlines() if line.strip()]
+          assert hashlib.sha256(ledger_bytes).hexdigest()==m['ledger_sha256']
           assert m['desktop_commit']=='12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
+          assert m['source_commit']==m['desktop_commit']
           assert m['desktop_root_tree']=='72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
-          assert m['tracked_non_tree_entries']==8258
+          assert m['tracked_non_tree_entries']==8258 and len(rows)==8258
           assert m['tree_entries']==9412
-          assert m['android_pr_head_sha']==expected
-          assert m['android_tested_checkout_sha']==expected
-          assert m['workflow_sha']==expected
+          for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
+            assert m[field]==expected, (field,m[field],expected)
+          assert len({row['source_path'] for row in rows})==8258
+          for row in rows:
+            assert row['source_commit']==m['desktop_commit']
+            assert row['source_blob_sha'] and row['source_mode'] and row['source_type']
+            assert row['android_pr_head_sha']==expected
+            assert row['android_tested_checkout_sha']==expected
+            assert row['workflow_sha']==expected
+            assert row['implementation_status']=='unreviewed'
+            assert row['verification_status']=='not-verified'
           r=json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
-          assert len(r.get('responsibilities',[]))==306
+          assert r['source_commit']==m['desktop_commit']
+          for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
+            assert r[field]==expected, (field,r[field],expected)
+          responsibilities=r.get('responsibilities',[])
+          ids=[item.get('responsibility_id') for item in responsibilities]
+          assert len(responsibilities)==306 and len(set(ids))==306
+          for item in responsibilities:
+            assert item['source_commit']==m['desktop_commit']
+            assert item['android_head_at_update']==expected
+            assert item['implementation_status']=='unreviewed'
+            assert item['verification_status']=='not-verified'
+            for source in item.get('desktop_sources',[]):
+              row=next(row for row in rows if row['source_path']==source['path'])
+              assert source['source_commit']==m['desktop_commit']
+              assert source['blob_sha']==row['source_blob_sha']
+              assert source['source_mode']==row['source_mode']
+              assert source['source_type']==row['source_type']
+          coverage=json.loads(Path('docs/android-port/generated/packages-semantic-coverage.json').read_text(encoding='utf-8'))
+          assert coverage['expected_source_rows']==852 and coverage['observed_source_rows']==852
+          assert coverage['strict_incomplete_rows']>=0
+          rejected=json.loads(Path('docs/android-port/generated/rejected-android-targets.json').read_text(encoding='utf-8'))
+          print(json.dumps({
+            'android_head':expected,
+            'desktop_commit':m['desktop_commit'],
+            'tree_entries':m['tree_entries'],
+            'tracked_non_tree_entries':m['tracked_non_tree_entries'],
+            'ledger_sha256':m['ledger_sha256'],
+            'responsibility_count':len(responsibilities),
+            'package_semantic_coverage':{k:v for k,v in coverage.items() if k!='gaps'},
+            'rejected_android_target_count':rejected['count'],
+          }, sort_keys=True))
           PY
       - name: Commit regenerated exact-main authority to PR branch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "$(git log -1 --format=%s)" == "chore(android): persist exact Desktop main authority evidence" ]]; then
-            echo "Persistence commit already contains the generated authority; no recursive commit."
+          if [[ "$(git log -1 --format=%s)" == "chore(android): persist exact Desktop main authority evidence" ]]; then
+            echo "Persistence commit detected; exact-current-head evidence is retained in this run artifact without creating a commit loop."
             exit 0
           fi
           git config user.name "github-actions[bot]"
@@ -110,6 +141,7 @@ jobs:
           echo "Persisted authority at exact Android HEAD ${NEW_HEAD}"
           gh workflow run grok-android-architecture.yml --ref "${GITHUB_REF_NAME}"
           gh workflow run android-parity-full-ci.yml --ref "${GITHUB_REF_NAME}"
+          gh workflow run android-port-docs.yml --ref "${GITHUB_REF_NAME}"
       - name: Package documentation and source evidence
         if: always()
         run: python3 scripts/android-port-docs.py bundle

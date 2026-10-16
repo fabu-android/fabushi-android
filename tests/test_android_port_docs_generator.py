@@ -118,17 +118,27 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "source_blob_sha": source_blob,
             "source_type": "blob",
             "source_mode": "100644",
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
             "evidence": [{
                 "source_path": source_path,
                 "source_blob_sha": source_blob,
                 "desktop_commit": CURRENT_DESKTOP_COMMIT,
                 "desktop_root_tree": CURRENT_DESKTOP_TREE,
+                "source_commit": CURRENT_DESKTOP_COMMIT,
                 "android_head": android_head,
+                "android_pr_head_sha": android_head,
+                "android_tested_checkout_sha": android_head,
+                "workflow_sha": android_head,
                 "workflow_run_id": 456,
             }],
         }
         manifest = {
             "desktop_commit": CURRENT_DESKTOP_COMMIT,
+            "source_commit": CURRENT_DESKTOP_COMMIT,
             "desktop_root_tree": CURRENT_DESKTOP_TREE,
             "android_pr_head_sha": android_head,
             "android_tested_checkout_sha": android_head,
@@ -141,18 +151,27 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "android_head_at_update": android_head,
             "desktop_sources": [{
                 "path": source_path,
+                "source_commit": CURRENT_DESKTOP_COMMIT,
                 "blob_sha": source_blob,
                 "source_mode": "100644",
                 "source_type": "blob",
             }],
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
         }]
         responsibilities.extend({
             "responsibility_id": f"RESP-{index:03d}",
             "source_commit": CURRENT_DESKTOP_COMMIT,
             "android_head_at_update": android_head,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
             "desktop_sources": [],
         } for index in range(2, 307))
         responsibility_doc = {
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
             "authority": {
                 "desktop_commit": CURRENT_DESKTOP_COMMIT,
                 "desktop_root_tree": CURRENT_DESKTOP_TREE,
@@ -259,6 +278,12 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             self.assertEqual(rows[0]["evidence"][0]["status"], "provenance-only")
             self.assertEqual(rows[0]["evidence"][0]["verification_status"], "not-verified")
             self.assertEqual(result["responsibilities"][0]["verification_status"], "not-verified")
+            diagnostics = json.loads((Path(temp) / "rejected-android-targets.json").read_text())
+            self.assertEqual(diagnostics["count"], 2)
+            self.assertEqual(
+                {item["reason"] for item in diagnostics["rejected_targets"]},
+                {"legacy-consumer-label-not-a-path"},
+            )
 
     def test_merge_preserves_unmapped_rows_without_fabricating_closure(self):
         module = load_generator()
@@ -592,6 +617,176 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(digest, hashlib.sha256(serialized.encode("utf-8")).hexdigest())
         with self.assertRaisesRegex(ValueError, "canonical sorted path order"):
             module.serialize_source_inventory_ledger(list(reversed(rows)))
+
+
+    def test_android_targets_must_be_tracked_files_and_rejections_are_explicit(self):
+        module = load_generator()
+        accepted, rejected = module._filter_android_targets(
+            [
+                "source/host/src/lib.rs",
+                "source/host/src/not-tracked.rs",
+                "frontend MessagingViewModel JSON projection consumer",
+            ],
+            {"source/host/src/lib.rs"},
+        )
+        self.assertEqual(accepted, ["source/host/src/lib.rs"])
+        self.assertEqual(len(rejected), 2)
+        self.assertEqual(
+            {item["reason"] for item in rejected},
+            {"not-in-current-android-tracked-file-tree", "legacy-consumer-label-not-a-path"},
+        )
+
+    def test_packages_semantic_coverage_preserves_852_rows_and_requires_all_closure_fields(self):
+        module = load_generator()
+        target = "source/host/src/lib.rs"
+        paths = [f"source/packages/package-{index:03d}/lib.rs" for index in range(852)]
+        rows = [{
+            "source_path": path,
+            "responsibilities": [],
+            "mapping_status": "unmapped",
+            "android_targets": [],
+            "disposition": None,
+        } for path in paths]
+        empty_responsibilities = padded_responsibilities({"responsibility_id": "PKG-RESP-001"})
+        incomplete = module._package_semantic_coverage(rows, empty_responsibilities, {target})
+        self.assertEqual(incomplete["expected_source_rows"], 852)
+        self.assertEqual(incomplete["observed_source_rows"], 852)
+        self.assertEqual(incomplete["strict_incomplete_rows"], 852)
+        self.assertEqual(incomplete["semantic_responsibility_rows"], 0)
+        self.assertTrue(all(row["package_semantic_coverage_status"] == "incomplete" for row in rows))
+
+        semantic_sources = [
+            {"path": path, "mapping_quality": "semantic", "source_mode": "100644", "source_type": "blob"}
+            for path in paths
+        ]
+        owner = {
+            "responsibility_id": "PKG-RESP-001",
+            "source_owner": "Desktop package source owner",
+            "android_owner": "Android Mahayana package runtime owner",
+            "android_target": [target],
+            "desktop_sources": semantic_sources,
+        }
+        complete_rows = [{
+            "source_path": path,
+            "responsibilities": ["PKG-RESP-001"],
+            "mapping_status": "semantic",
+            "android_targets": [target],
+            "disposition": "direct-port",
+        } for path in paths]
+        complete = module._package_semantic_coverage(
+            complete_rows, padded_responsibilities(owner), {target}
+        )
+        self.assertEqual(complete["status"], "passed")
+        self.assertEqual(complete["strict_incomplete_rows"], 0)
+        self.assertEqual(complete["complete_rows"], 852)
+
+        coverage_only_owner = {
+            **owner,
+            "desktop_sources": [
+                {**source, "mapping_quality": "coverage-only"} for source in semantic_sources
+            ],
+        }
+        coverage_only_rows = [{
+            "source_path": path,
+            "responsibilities": ["PKG-RESP-001"],
+            "mapping_status": "coverage-only",
+            "android_targets": [target],
+            "disposition": "direct-port",
+        } for path in paths]
+        coverage_only = module._package_semantic_coverage(
+            coverage_only_rows, padded_responsibilities(coverage_only_owner), {target}
+        )
+        self.assertEqual(coverage_only["semantic_responsibility_rows"], 0)
+        self.assertGreater(coverage_only["strict_incomplete_rows"], 0)
+        self.assertIn("missing-semantic-responsibility", coverage_only["gaps"][0]["reasons"])
+
+    def test_exact_head_validation_rejects_promoted_status_and_stale_ledger_metadata(self):
+        module = load_generator()
+        android_head = "a" * 40
+        source_path = "source/host/src/lib.rs"
+        source_blob = "1" * 40
+        row = {
+            "source_path": source_path,
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "source_blob_sha": source_blob,
+            "source_type": "blob",
+            "source_mode": "100644",
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "evidence": [{
+                "source_path": source_path,
+                "source_blob_sha": source_blob,
+                "desktop_commit": CURRENT_DESKTOP_COMMIT,
+                "desktop_root_tree": CURRENT_DESKTOP_TREE,
+                "source_commit": CURRENT_DESKTOP_COMMIT,
+                "android_head": android_head,
+                "android_pr_head_sha": android_head,
+                "android_tested_checkout_sha": android_head,
+                "workflow_sha": android_head,
+                "workflow_run_id": 456,
+            }],
+        }
+        manifest = {
+            "desktop_commit": CURRENT_DESKTOP_COMMIT,
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "desktop_root_tree": CURRENT_DESKTOP_TREE,
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
+            "workflow_run_id": 456,
+        }
+        responsibilities = [{
+            "responsibility_id": "RESP-001",
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "android_head_at_update": android_head,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [{
+                "path": source_path,
+                "source_commit": CURRENT_DESKTOP_COMMIT,
+                "blob_sha": source_blob,
+                "source_mode": "100644",
+                "source_type": "blob",
+            }],
+        }]
+        responsibilities.extend({
+            "responsibility_id": f"RESP-{index:03d}",
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "android_head_at_update": android_head,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [],
+        } for index in range(2, 307))
+        doc = {
+            "source_commit": CURRENT_DESKTOP_COMMIT,
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
+            "authority": {
+                "desktop_commit": CURRENT_DESKTOP_COMMIT,
+                "desktop_root_tree": CURRENT_DESKTOP_TREE,
+            },
+            "responsibilities": responsibilities,
+        }
+        module.validate_exact_head_provenance(manifest, [row], doc, android_head)
+
+        promoted = json.loads(json.dumps([row]))
+        promoted[0]["implementation_status"] = "implemented"
+        with self.assertRaisesRegex(ValueError, "status was promoted"):
+            module.validate_exact_head_provenance(manifest, promoted, doc, android_head)
+
+        stale_ledger = json.loads(json.dumps([row]))
+        stale_ledger[0]["workflow_sha"] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "source ledger row mismatch for workflow_sha"):
+            module.validate_exact_head_provenance(manifest, stale_ledger, doc, android_head)
+
+        stale_doc = json.loads(json.dumps(doc))
+        stale_doc["android_tested_checkout_sha"] = "b" * 40
+        with self.assertRaisesRegex(ValueError, "responsibility ledger mismatch for android_tested_checkout_sha"):
+            module.validate_exact_head_provenance(manifest, [row], stale_doc, android_head)
 
 if __name__ == "__main__":
     unittest.main()

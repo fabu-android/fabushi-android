@@ -33,7 +33,6 @@ ALLOWED_SOURCE_DISPOSITIONS = frozenset({
     'direct-port',
     'android-adapted',
     'not-applicable-with-replacement',
-    'mixed',
 })
 INVALID_ANDROID_TARGET_LABELS = frozenset({
     'source/android-host-jni typed host dispatch path',
@@ -50,6 +49,11 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
 EXPECTED_RESPONSIBILITY_COUNT = 306
 EXPECTED_TREE_ENTRY_COUNT = 9412
 EXPECTED_TRACKED_NON_TREE_COUNT = 8258
+EXPECTED_PACKAGES_SOURCE_COUNT = 852
+OWNER_PLACEHOLDER_VALUES = frozenset({
+    '', 'unknown', 'tbd', 'todo', 'n/a', 'na', 'none', 'unassigned',
+    'not assigned', 'not reviewed', 'placeholder', 'owner unknown',
+})
 DEFAULT_RESPONSIBILITY_ARTIFACT = '12053467058'
 DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:26fe89b6a05f76ce96ab5ddab5a6107251586ad8143f42fff0d4794a4da15eb5'
 
@@ -181,19 +185,171 @@ def serialize_source_inventory_ledger(rows: list[dict]) -> str:
     require(paths == sorted(paths), 'source inventory rows must use canonical sorted path order')
     return ''.join(json.dumps(row, ensure_ascii=False, sort_keys=True) + '\n' for row in rows)
 
-def _real_android_targets(targets: object) -> list[str]:
-    """Keep concrete Android owner targets; drop legacy consumer labels that are not targets."""
+def _current_android_tracked_files() -> set[str]:
+    """Return exact file paths tracked by the current Android checkout."""
+    raw = subprocess.check_output(['git', 'ls-files', '-z'], cwd=ROOT)
+    paths = {
+        entry.decode('utf-8', 'surrogateescape')
+        for entry in raw.split(b'\0')
+        if entry
+    }
+    require(bool(paths), 'cannot validate Android targets against an empty tracked file tree')
+    return paths
+
+
+def _filter_android_targets(
+    targets: object,
+    tracked_paths: set[str] | None = None,
+) -> tuple[list[str], list[dict]]:
+    """Keep only concrete tracked-file targets and retain every rejected target as a diagnostic."""
+    if targets is None:
+        return [], []
     if not isinstance(targets, list):
-        return []
-    cleaned = set()
+        return [], [{'target': str(targets), 'reason': 'android-targets-not-a-list'}]
+    accepted = set()
+    rejected = []
     for target in targets:
         if not isinstance(target, str):
+            rejected.append({'target': repr(target), 'reason': 'target-not-a-string'})
             continue
         normalized = re.sub(r'\s+', ' ', target).strip()
-        if not normalized or normalized.casefold() in INVALID_ANDROID_TARGET_LABELS:
+        if not normalized:
+            rejected.append({'target': target, 'reason': 'empty-target'})
             continue
-        cleaned.add(normalized)
-    return sorted(cleaned)
+        if normalized.casefold() in INVALID_ANDROID_TARGET_LABELS:
+            rejected.append({'target': normalized, 'reason': 'legacy-consumer-label-not-a-path'})
+            continue
+        if tracked_paths is not None and normalized not in tracked_paths:
+            rejected.append({'target': normalized, 'reason': 'not-in-current-android-tracked-file-tree'})
+            continue
+        accepted.add(normalized)
+    return sorted(accepted), sorted(rejected, key=lambda item: (item['target'], item['reason']))
+
+
+def _real_android_targets(
+    targets: object,
+    tracked_paths: set[str] | None = None,
+) -> list[str]:
+    """Return concrete targets only; callers that need auditability use _filter_android_targets."""
+    accepted, _ = _filter_android_targets(targets, tracked_paths)
+    return accepted
+
+
+def _has_real_owner(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    normalized = re.sub(r'\s+', ' ', value).strip()
+    folded = normalized.casefold()
+    return bool(normalized) and folded not in OWNER_PLACEHOLDER_VALUES and not (
+        folded.startswith('unknown ') or folded.startswith('tbd ') or folded.startswith('todo ')
+    )
+
+
+def _package_semantic_coverage(
+    ledger_rows: list[dict],
+    responsibilities: list[dict],
+    tracked_android_paths: set[str],
+) -> dict:
+    """Report strict semantic/owner/target/disposition coverage for all 852 package source rows."""
+    package_rows = [
+        row for row in ledger_rows
+        if str(row.get('source_path') or '').startswith('source/packages/')
+    ]
+    responsibility_by_id = {
+        item.get('responsibility_id'): item
+        for item in responsibilities
+        if item.get('responsibility_id')
+    }
+    gaps = []
+    semantic_rows = 0
+    source_owner_rows = 0
+    android_owner_rows = 0
+    target_rows = 0
+    disposition_rows = 0
+
+    for row in package_rows:
+        path = row.get('source_path') or '<missing-source-path>'
+        linked = []
+        for rid in row.get('responsibilities') or []:
+            item = responsibility_by_id.get(rid)
+            if item is None:
+                continue
+            has_semantic_anchor = any(
+                source.get('path') == path
+                and _source_mapping_quality(rid, source) == 'semantic'
+                for source in item.get('desktop_sources') or []
+            )
+            if has_semantic_anchor:
+                linked.append(item)
+
+        reasons = []
+        if row.get('mapping_status') != 'semantic' or not linked:
+            reasons.append('missing-semantic-responsibility')
+        else:
+            semantic_rows += 1
+
+        has_source_owner = any(_has_real_owner(item.get('source_owner')) for item in linked)
+        has_android_owner = any(_has_real_owner(item.get('android_owner')) for item in linked)
+        if has_source_owner:
+            source_owner_rows += 1
+        else:
+            reasons.append('missing-real-source-owner')
+        if has_android_owner:
+            android_owner_rows += 1
+        else:
+            reasons.append('missing-real-android-owner')
+
+        row_targets = row.get('android_targets') or []
+        valid_row_targets = [
+            target for target in row_targets
+            if isinstance(target, str) and target in tracked_android_paths
+        ]
+        has_responsibility_target = any(
+            _real_android_targets(item.get('android_target'), tracked_android_paths)
+            for item in linked
+        )
+        if not row_targets or len(valid_row_targets) != len(row_targets) or not has_responsibility_target:
+            reasons.append('missing-valid-tracked-android-target')
+        else:
+            target_rows += 1
+
+        if row.get('disposition') not in ALLOWED_SOURCE_DISPOSITIONS:
+            reasons.append('missing-or-invalid-disposition')
+        else:
+            disposition_rows += 1
+
+        row['package_semantic_coverage_status'] = 'complete' if not reasons else 'incomplete'
+        row['package_semantic_coverage_reasons'] = reasons
+        if reasons:
+            gaps.append({
+                'source_path': path,
+                'responsibilities': sorted(
+                    item.get('responsibility_id') for item in linked
+                    if item.get('responsibility_id')
+                ),
+                'reasons': reasons,
+            })
+
+    count_delta = abs(EXPECTED_PACKAGES_SOURCE_COUNT - len(package_rows))
+    strict_incomplete_rows = len(gaps) + count_delta
+    return {
+        'status': 'passed' if strict_incomplete_rows == 0 else 'incomplete',
+        'expected_source_rows': EXPECTED_PACKAGES_SOURCE_COUNT,
+        'observed_source_rows': len(package_rows),
+        'semantic_responsibility_rows': semantic_rows,
+        'real_source_owner_rows': source_owner_rows,
+        'real_android_owner_rows': android_owner_rows,
+        'valid_android_target_rows': target_rows,
+        'valid_disposition_rows': disposition_rows,
+        'complete_rows': len(package_rows) - len(gaps),
+        'strict_incomplete_rows': strict_incomplete_rows,
+        'gaps': gaps,
+        'policy': (
+            'Every source/packages row requires an explicit semantic source anchor, real source_owner '
+            'and android_owner, a tracked Android file target, and one legal disposition. Coverage-only '
+            'anchors and provenance-only evidence do not satisfy semantic mapping or verification.'
+        ),
+    }
 
 
 def _source_mapping_quality(responsibility_id: str, source: dict) -> str:
@@ -368,6 +524,9 @@ def _parse_persisted_source_inventory(
 
     require(ordered_paths == sorted(ordered_paths),
             'local source inventory rows are not in canonical sorted path order')
+    if manifest.get('source_commit') is not None:
+        require(manifest.get('source_commit') == desktop_commit,
+                'local source inventory manifest source_commit mismatch')
     require(manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT,
             'local source authority does not preserve the 8258-entry tracked non-tree inventory')
     require(len(source_rows) == EXPECTED_TRACKED_NON_TREE_COUNT,
@@ -405,6 +564,13 @@ def validate_exact_head_provenance(
             'exact-head manifest has invalid Desktop commit')
     require(SHA.fullmatch(str(desktop_tree or '')) is not None,
             'exact-head manifest has invalid Desktop tree')
+    require(manifest.get('source_commit') == desktop_commit,
+            'exact-head manifest source_commit mismatch')
+    for field in ('android_pr_head_sha', 'android_tested_checkout_sha', 'workflow_sha'):
+        require(responsibility_doc.get(field) == expected_android_checkout_sha,
+                f'exact-head responsibility ledger mismatch for {field}')
+    require(responsibility_doc.get('source_commit') == desktop_commit,
+            'exact-head responsibility ledger source_commit mismatch')
     require(isinstance(run_id, int) and run_id > 0,
             'exact-head manifest has invalid workflow run id')
 
@@ -416,6 +582,10 @@ def validate_exact_head_provenance(
     responsibilities = responsibility_doc.get('responsibilities')
     require(isinstance(responsibilities, list) and len(responsibilities) == EXPECTED_RESPONSIBILITY_COUNT,
             f'exact-head responsibility ledger must retain {EXPECTED_RESPONSIBILITY_COUNT} definitions')
+    responsibility_ids = [item.get('responsibility_id') for item in responsibilities]
+    require(all(isinstance(rid, str) and rid for rid in responsibility_ids)
+            and len(set(responsibility_ids)) == EXPECTED_RESPONSIBILITY_COUNT,
+            'exact-head responsibility ledger must retain 306 unique responsibility definitions')
 
     rows_by_path = {}
     for row in ledger_rows:
@@ -424,6 +594,16 @@ def validate_exact_head_provenance(
                 'exact-head source ledger contains a missing or duplicate path')
         require(row.get('source_commit') == desktop_commit,
                 'exact-head source ledger has stale Desktop source commit: ' + path)
+        for field in ('android_pr_head_sha', 'android_tested_checkout_sha', 'workflow_sha'):
+            require(row.get(field) == expected_android_checkout_sha,
+                    f'exact-head source ledger row mismatch for {field}: ' + path)
+        require(row.get('source_type') in ALLOWED_SOURCE_TYPES
+                and row.get('source_mode') in ALLOWED_SOURCE_MODES
+                and SHA.fullmatch(str(row.get('source_blob_sha') or '')) is not None,
+                'exact-head source ledger row has invalid blob/mode/type: ' + path)
+        require(row.get('implementation_status') == 'unreviewed'
+                and row.get('verification_status') == 'not-verified',
+                'exact-head source ledger status was promoted without verification: ' + path)
         evidence = row.get('evidence')
         require(isinstance(evidence, list) and evidence,
                 'exact-head source ledger row lacks provenance evidence: ' + path)
@@ -435,8 +615,14 @@ def validate_exact_head_provenance(
             require(item.get('desktop_commit') == desktop_commit
                     and item.get('desktop_root_tree') == desktop_tree,
                     'exact-head source evidence has stale Desktop authority: ' + path)
+            require(item.get('source_commit') == desktop_commit,
+                    'exact-head source evidence has stale Desktop source commit: ' + path)
             require(item.get('android_head') == expected_android_checkout_sha,
                     'exact-head source evidence has stale Android head: ' + path)
+            require(item.get('android_pr_head_sha') == expected_android_checkout_sha
+                    and item.get('android_tested_checkout_sha') == expected_android_checkout_sha
+                    and item.get('workflow_sha') == expected_android_checkout_sha,
+                    'exact-head source evidence has inconsistent Android provenance: ' + path)
             require(item.get('workflow_run_id') == run_id,
                     'exact-head source evidence has stale workflow run: ' + path)
         rows_by_path[path] = row
@@ -447,12 +633,16 @@ def validate_exact_head_provenance(
                 'exact-head responsibility has stale Desktop source commit: ' + rid)
         require(responsibility.get('android_head_at_update') == expected_android_checkout_sha,
                 'exact-head responsibility has stale Android head: ' + rid)
+        require(responsibility.get('implementation_status') == 'unreviewed'
+                and responsibility.get('verification_status') == 'not-verified',
+                'exact-head responsibility status was promoted without verification: ' + rid)
         for source in responsibility.get('desktop_sources') or []:
             path = source.get('path')
             row = rows_by_path.get(path)
             require(row is not None,
                     'exact-head responsibility anchor is absent from source ledger: ' + str(path))
-            require(source.get('blob_sha') == row.get('source_blob_sha')
+            require(source.get('source_commit') == desktop_commit
+                    and source.get('blob_sha') == row.get('source_blob_sha')
                     and source.get('source_mode') == row.get('source_mode')
                     and source.get('source_type') == row.get('source_type'),
                     'exact-head responsibility anchor differs from current Desktop object: ' + str(path))
@@ -576,6 +766,7 @@ def merge_responsibility_mapping(
                 continue
             quality = _source_mapping_quality(rid, source)
             refreshed = dict(source)
+            refreshed['source_commit'] = current
             refreshed['mapping_quality'] = quality
             refreshed['blob_sha'] = new_by_path[path]['sha']
             refreshed['source_mode'] = new_by_path[path]['mode']
@@ -605,15 +796,27 @@ def merge_responsibility_mapping(
                 })
         item['desktop_sources'] = cleaned
 
+    tracked_android_paths = _current_android_tracked_files()
+    rejected_android_targets = []
     ids = {item.get('responsibility_id') for item in responsibilities}
+    require(len(ids) == len(responsibilities),
+            'responsibility mapping contains duplicate responsibility IDs')
     for item in responsibilities:
+        rid = item['responsibility_id']
         raw_targets = item.get('android_target')
-        filtered_targets = _real_android_targets(raw_targets)
-        if raw_targets != filtered_targets:
+        filtered_targets, rejected = _filter_android_targets(raw_targets, tracked_android_paths)
+        if raw_targets is not None and raw_targets != filtered_targets:
             item['android_target'] = filtered_targets
+        if rejected:
+            item['android_target_rejections'] = rejected
+            rejected_android_targets.extend({
+                'responsibility_id': rid,
+                'target': entry['target'],
+                'reason': entry['reason'],
+            } for entry in rejected)
             note = (
-                'Removed non-target consumer labels from android_target; concrete Android owner '
-                'targets remain provenance-only until exact-head implementation verification.'
+                'Rejected Android target labels or paths absent from the current tracked Android file tree; '
+                'see generated/rejected-android-targets.json. Rejections are diagnostic and are not parity evidence.'
             )
             notes = item.get('notes')
             if isinstance(notes, str):
@@ -624,8 +827,12 @@ def merge_responsibility_mapping(
                     notes.append(note)
             else:
                 item['notes'] = note
+        else:
+            item.pop('android_target_rejections', None)
     targets_by_rid = {
-        item['responsibility_id']: _real_android_targets(item.get('android_target'))
+        item['responsibility_id']: _real_android_targets(
+            item.get('android_target'), tracked_android_paths
+        )
         for item in responsibilities
     }
 
@@ -635,6 +842,18 @@ def merge_responsibility_mapping(
     missing_targets = []
     for row in ledger_rows:
         path = row['source_path']
+        source_object = new_by_path.get(path)
+        require(source_object is not None,
+                'source inventory row is absent from current Desktop tree: ' + path)
+        row['source_repository'] = 'bhrumom/fabushi-desktop'
+        row['source_commit'] = current
+        row['source_blob_sha'] = source_object['sha']
+        row['source_mode'] = source_object['mode']
+        row['source_type'] = source_object['type']
+        row['android_pr_head_sha'] = android['android_pr_head_sha']
+        row['android_tested_checkout_sha'] = android['android_checkout_sha']
+        row['workflow_sha'] = android['workflow_sha']
+        row['verification_status'] = 'not-verified'
         links = rid_by_path.get(path, set())
         coverage_links = coverage_rid_by_path.get(path, set())
         if not links:
@@ -673,7 +892,11 @@ def merge_responsibility_mapping(
                     'source_blob_sha': row['source_blob_sha'],
                     'desktop_commit': current,
                     'desktop_root_tree': tree_sha,
+                    'source_commit': current,
                     'android_head': android['android_pr_head_sha'],
+                    'android_pr_head_sha': android['android_pr_head_sha'],
+                    'android_tested_checkout_sha': android['android_checkout_sha'],
+                    'workflow_sha': android['workflow_sha'],
                     'android_pr_base_sha': android['android_pr_base_sha'],
                     'workflow_run_id': android['workflow_run_id'],
                     'run_attempt': android['run_attempt'],
@@ -715,7 +938,11 @@ def merge_responsibility_mapping(
             'source_blob_sha': row['source_blob_sha'],
             'desktop_commit': current,
             'desktop_root_tree': tree_sha,
+            'source_commit': current,
             'android_head': android['android_pr_head_sha'],
+            'android_pr_head_sha': android['android_pr_head_sha'],
+            'android_tested_checkout_sha': android['android_checkout_sha'],
+            'workflow_sha': android['workflow_sha'],
             'android_pr_base_sha': android['android_pr_base_sha'],
             'workflow_event': android['workflow_event'],
             'workflow_run_id': android['workflow_run_id'],
@@ -724,6 +951,22 @@ def merge_responsibility_mapping(
         }]
 
 
+    package_coverage = _package_semantic_coverage(
+        ledger_rows, responsibilities, tracked_android_paths
+    )
+    package_coverage_summary = {
+        key: value for key, value in package_coverage.items() if key != 'gaps'
+    }
+    save(OUT / 'packages-semantic-coverage.json', package_coverage)
+    save(OUT / 'rejected-android-targets.json', {
+        'status': 'incomplete' if rejected_android_targets else 'passed',
+        'count': len(rejected_android_targets),
+        'rejected_targets': sorted(
+            rejected_android_targets,
+            key=lambda item: (item['responsibility_id'], item['target'], item['reason']),
+        ),
+        'policy': 'Rejected targets are retained for diagnosis and never count as Android parity evidence.',
+    })
     save(OUT / 'unmapped-source-rows.json', {
         'status': 'incomplete' if unmapped_paths else 'passed',
         'count': len(unmapped_paths),
@@ -737,7 +980,10 @@ def merge_responsibility_mapping(
         'mapping_provenance': mapping_provenance,
     })
     save(OUT / 'responsibility-mapping-summary.json', {
-        'status': 'incomplete' if (unmapped_paths or missing_dispositions or missing_targets) else 'passed',
+        'status': 'incomplete' if (
+            unmapped_paths or missing_dispositions or missing_targets
+            or package_coverage_summary['strict_incomplete_rows']
+        ) else 'passed',
         'responsibility_count': len(responsibilities),
         'semantic_source_anchor_entries': semantic_anchor_entries,
         'semantic_source_anchor_unique_paths': len(semantic_anchor_paths),
@@ -748,6 +994,8 @@ def merge_responsibility_mapping(
         'coverage_only_source_rows': len(coverage_only_paths),
         'missing_disposition_rows': missing_dispositions,
         'missing_target_rows': missing_targets,
+        'packages_semantic_coverage': package_coverage_summary,
+        'rejected_android_target_count': len(rejected_android_targets),
         'mapping_origin': mapping_origin,
         'mapping_provenance': mapping_provenance,
         'desktop_commit': current,
@@ -777,13 +1025,20 @@ def merge_responsibility_mapping(
 
     return {
         'schema_version': 2,
+        'source_commit': current,
+        'android_pr_head_sha': android['android_pr_head_sha'],
+        'android_tested_checkout_sha': android['android_checkout_sha'],
+        'workflow_sha': android['workflow_sha'],
         'authority': {
             'desktop_repository': 'bhrumom/fabushi-desktop',
             'desktop_commit': current,
             'desktop_root_tree': tree_sha,
             'android_repository': 'fabu-android/fabushi-android',
             'android_pr': 3,
-            'status': 'incomplete' if (unmapped_paths or missing_dispositions or missing_targets) else 'mapped-provenance-only',
+            'status': 'incomplete' if (
+                unmapped_paths or missing_dispositions or missing_targets
+                or package_coverage_summary['strict_incomplete_rows']
+            ) else 'mapped-provenance-only',
             'responsibility_count': len(responsibilities),
             'semantic_source_anchor_entries': semantic_anchor_entries,
             'semantic_source_anchor_unique_paths': len(semantic_anchor_paths),
@@ -794,6 +1049,8 @@ def merge_responsibility_mapping(
             'coverage_only_source_rows': len(coverage_only_paths),
             'missing_disposition_rows': len(missing_dispositions),
             'missing_target_rows': len(missing_targets),
+            'packages_semantic_coverage': package_coverage_summary,
+            'rejected_android_target_count': len(rejected_android_targets),
             'responsibility_mapping_origin': mapping_origin,
             'responsibility_mapping_artifact_id': mapping_provenance.get('artifact_id'),
             'responsibility_mapping_artifact_digest': mapping_provenance.get('artifact_digest'),
@@ -870,6 +1127,7 @@ def rebaseline() -> None:
     manifest = {
         'schema_version': 2,
         'desktop_commit': current,
+        'source_commit': current,
         'desktop_root_tree': tree_sha,
         'desktop_main_before': current,
         'desktop_main_after': current,
@@ -939,7 +1197,7 @@ def rebaseline() -> None:
                 refreshed_sources.append(refreshed)
             if touched:
                 responsibility['desktop_sources'] = refreshed_sources
-                responsibility['implementation_status'] = 'mapped'
+                responsibility['implementation_status'] = 'unreviewed'
                 responsibility['verification_status'] = 'not-verified'
                 note = (
                     f"Desktop authority rebaseline to {current}: one or more source anchors changed; "
@@ -962,7 +1220,7 @@ def rebaseline() -> None:
                 continue
             for source in responsibility.get('desktop_sources', []):
                 path = source.get('path')
-                if path in new_by_path:
+                if path in new_by_path and _source_mapping_quality(rid, source) == 'semantic':
                     reverse_links.setdefault(path, set()).add(rid)
         for row in new_rows:
             linked = reverse_links.get(row['source_path'])
@@ -982,6 +1240,12 @@ def rebaseline() -> None:
         manifest['missing_target_rows'] = mapping_authority.get('missing_target_rows')
         manifest['responsibility_mapping_artifact_id'] = mapping_authority.get('responsibility_mapping_artifact_id')
         manifest['responsibility_mapping_artifact_digest'] = mapping_authority.get('responsibility_mapping_artifact_digest')
+        manifest['packages_semantic_coverage'] = mapping_authority.get('packages_semantic_coverage')
+        manifest['rejected_android_target_count'] = mapping_authority.get('rejected_android_target_count')
+        responsibility_doc['source_commit'] = current
+        responsibility_doc['android_pr_head_sha'] = android['android_pr_head_sha']
+        responsibility_doc['android_tested_checkout_sha'] = android['android_checkout_sha']
+        responsibility_doc['workflow_sha'] = android['workflow_sha']
         save(responsibility_path, responsibility_doc)
         save(manifest_path, manifest)
         persisted_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
@@ -1067,6 +1331,12 @@ def inventory() -> None:
     authority_rows = _parse_persisted_source_inventory(
         authority_ledger_text, authority_manifest, expected_paths=by_path
     )
+    package_coverage_path = OUT / 'packages-semantic-coverage.json'
+    require(package_coverage_path.is_file(),
+            'source/packages semantic coverage diagnostics are missing')
+    package_coverage = json.loads(package_coverage_path.read_text(encoding='utf-8'))
+    require(package_coverage.get('observed_source_rows') == EXPECTED_PACKAGES_SOURCE_COUNT,
+            'source/packages semantic coverage must retain all 852 source rows')
     responsibility_path = DOC / 'authority/responsibility-ledger.json'
     require(responsibility_path.is_file(), 'Persistent responsibility ledger is missing')
     responsibility_doc = json.loads(responsibility_path.read_text(encoding='utf-8'))
@@ -1074,7 +1344,7 @@ def inventory() -> None:
         authority_manifest, list(authority_rows.values()), responsibility_doc,
         android['android_checkout_sha'],
     )
-    manifest = {'schema_version': 2, 'desktop_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': android['android_checkout_sha'], 'android_repository': android['android_repository'], 'android_pr': android['android_pr'], 'android_pr_head_sha': android['android_pr_head_sha'], 'android_pr_head_ref': android['android_pr_head_ref'], 'android_pr_base_sha': android['android_pr_base_sha'], 'android_pr_base_ref': android['android_pr_base_ref'], 'workflow_event': android['workflow_event'], 'workflow_run_id': android['workflow_run_id'], 'run_attempt': android['run_attempt'], 'workflow_sha': android['workflow_sha'], 'workflow_ref': android['workflow_ref'], 'run_url': android['run_url'], 'generated_at_utc': android['generated_at_utc'], 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(authority_ledger_text.encode('utf-8')).hexdigest() if authority_ledger_text else None, 'authority_ledger_rows': len([line for line in authority_ledger_text.splitlines() if line.strip()]), 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
+    manifest = {'schema_version': 2, 'desktop_commit': sha, 'source_commit': sha, 'desktop_root_tree': tree_sha, 'desktop_main_before': before, 'desktop_main_after': after, 'authority_current': before == sha == after, 'android_tested_checkout_sha': android['android_checkout_sha'], 'android_repository': android['android_repository'], 'android_pr': android['android_pr'], 'android_pr_head_sha': android['android_pr_head_sha'], 'android_pr_head_ref': android['android_pr_head_ref'], 'android_pr_base_sha': android['android_pr_base_sha'], 'android_pr_base_ref': android['android_pr_base_ref'], 'workflow_event': android['workflow_event'], 'workflow_run_id': android['workflow_run_id'], 'run_attempt': android['run_attempt'], 'workflow_sha': android['workflow_sha'], 'workflow_ref': android['workflow_ref'], 'run_url': android['run_url'], 'generated_at_utc': android['generated_at_utc'], 'tree_entries': len(entries), 'tracked_non_tree_entries': len(files), 'root_counts': top_counts, 'gitlinks': [item for item in files if item['type'] == 'commit'], 'symlinks': [item for item in files if item['mode'] == '120000'], 'truncation_fallback_used': fallback, 'initial_status': 'unreviewed', 'ledger_sha256': hashlib.sha256(authority_ledger_text.encode('utf-8')).hexdigest() if authority_ledger_text else None, 'authority_ledger_rows': len([line for line in authority_ledger_text.splitlines() if line.strip()]), 'packages_semantic_coverage': {key: value for key, value in package_coverage.items() if key != 'gaps'}, 'closure_review': 'submodule-LFS-dynamic-import-and-semantic-review-pending', 'product_acceptance': 'not-claimed'}
     save(OUT / 'source-manifest.json', manifest)
     print(json.dumps(manifest, ensure_ascii=False, indent=2))
     require(before == sha == after, 'Desktop main moved: inventory saved, rebaseline required')
