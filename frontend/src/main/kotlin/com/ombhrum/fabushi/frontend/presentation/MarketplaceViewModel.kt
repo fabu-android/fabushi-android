@@ -1844,12 +1844,16 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
                     check(source.optString("sourceRef").isNotBlank() && !source.optBoolean("marketplaceHostsPackage")) {
                         "marketplace release is missing an immutable GitHub source"
                     }
-                    val installed = coordinator.pluginInstall(
-                        JSONObject().put("release", release).put("platform", "android"),
+                    // Installation is Host-owned. The legacy marketplace plugin install endpoint
+                    // and projection cache are deliberately not part of the Android Mini App path.
+                    val installed = coordinator.installApprovedMiniApp(
+                        appId = plugin.pluginId,
+                        operationId = "miniapp:install:" + plugin.pluginId + ":" + UUID.randomUUID(),
                     )
-                    val installedPluginId = installed.optString("pluginId", plugin.pluginId)
-                    miniApps.confirmInstalledMiniApp(installedPluginId)
-                    installed
+                    val installedPluginId = installed.optJSONObject("app")?.optString("appId")
+                        ?.takeIf(String::isNotBlank)
+                        ?: installed.optString("pluginId", plugin.pluginId)
+                    installed.put("pluginId", installedPluginId)
                 }
             }.onSuccess { installed ->
                 val pluginId = installed.optString("pluginId", plugin.pluginId)
@@ -1946,9 +1950,29 @@ class MarketplaceViewModel(application: Application) : AndroidViewModel(applicat
 
     suspend fun loadLocalMiniAppHtml(pluginId: String): String? = withContext(Dispatchers.IO) {
         runCatching {
-            coordinator.pluginUiDocument(
-                JSONObject().put("pluginId", pluginId),
-            ).optString("html").takeIf { it.isNotBlank() }
+            val resources = coordinator.getInstalledMiniAppResources(
+                appId = pluginId,
+                operationId = "miniapp:load:" + pluginId + ":" + UUID.randomUUID(),
+            )
+            val loadId = resources.optString("loadId").takeIf(String::isNotBlank)
+                ?: error("Host Mini App loader returned no load identity")
+            try {
+                val entrypoint = resources.optString("entrypoint").trim()
+                val selectedPath = resources.optJSONArray("resources")?.let { entries ->
+                    (0 until entries.length()).asSequence()
+                        .mapNotNull { entries.optJSONObject(it)?.optString("path")?.takeIf(String::isNotBlank) }
+                        .firstOrNull { it == entrypoint }
+                        ?: entries.optJSONObject(0)?.optString("path")?.takeIf(String::isNotBlank)
+                } ?: entrypoint.takeIf(String::isNotBlank)
+                val path = selectedPath ?: error("Host Mini App loader returned no entrypoint resource")
+                val resource = coordinator.readMiniAppResource(loadId, path)
+                val encoded = resource.optString("bytesBase64").takeIf(String::isNotBlank)
+                    ?: error("Host Mini App resource loader returned no bytes")
+                android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+                    .toString(Charsets.UTF_8)
+            } finally {
+                runCatching { coordinator.disposeMiniAppLoad(loadId) }
+            }
         }.getOrNull()
     }
 
