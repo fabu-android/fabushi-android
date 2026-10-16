@@ -163,31 +163,67 @@ def _default_source_row(repo: str, source_commit: str, item: dict) -> dict:
 
 
 
+
+def _source_mapping_quality(responsibility_id: str, source: dict) -> str:
+    explicit = source.get('mapping_quality')
+    if explicit in {'semantic', 'coverage-only'}:
+        return explicit
+    has_object_metadata = (
+        source.get('source_mode') in ALLOWED_SOURCE_MODES
+        and source.get('source_type') in ALLOWED_SOURCE_TYPES
+    )
+    if responsibility_id in LEGACY_FALLBACK_RESPONSIBILITY_IDS and not has_object_metadata:
+        return 'coverage-only'
+    return 'semantic'
+
+
 def _is_semantic_source_anchor(responsibility_id: str, source: dict) -> bool:
     path = source.get('path')
     if not isinstance(path, str) or not path:
         return False
-    if source.get('source_mode') in ALLOWED_SOURCE_MODES and source.get('source_type') in ALLOWED_SOURCE_TYPES:
-        return True
-    return responsibility_id not in LEGACY_FALLBACK_RESPONSIBILITY_IDS
+    return _source_mapping_quality(responsibility_id, source) == 'semantic'
 
 
-def load_predecessor_responsibility_mapping(
-    responsibility_path: Path,
-) -> tuple[dict, dict[str, dict], str, dict]:
-    try:
-        if responsibility_path.is_file() and responsibility_path.stat().st_size > 0:
-            candidate = json.loads(responsibility_path.read_text(encoding='utf-8'))
-            if isinstance(candidate, dict) and candidate.get('responsibilities'):
-                return candidate, {}, 'current-responsibility-ledger', {
-                    'artifact_id': None,
-                    'artifact_digest': None,
-                    'source_manifest_run_id': None,
-                    'source_manifest_android_head': None,
-                }
-    except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
-        pass
+def _merge_responsibility_sources(current: dict, predecessor: dict) -> dict:
+    """Merge current durable mappings with pinned predecessor coverage without promotion."""
+    current_by_id = {
+        item.get('responsibility_id'): item
+        for item in current.get('responsibilities', [])
+        if item.get('responsibility_id')
+    }
+    predecessor_by_id = {
+        item.get('responsibility_id'): item
+        for item in predecessor.get('responsibilities', [])
+        if item.get('responsibility_id')
+    }
+    require(set(current_by_id) == set(predecessor_by_id),
+            'current and predecessor responsibility authorities have different responsibility IDs')
+    require(len(current_by_id) == EXPECTED_RESPONSIBILITY_COUNT,
+            f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(current_by_id)}')
 
+    merged = json.loads(json.dumps(current))
+    for item in merged.get('responsibilities', []):
+        rid = item['responsibility_id']
+        current_sources = {
+            source.get('path'): source
+            for source in item.get('desktop_sources', [])
+            if isinstance(source, dict) and isinstance(source.get('path'), str)
+        }
+        merged_sources = list(current_sources.values())
+        for source in predecessor_by_id[rid].get('desktop_sources', []):
+            path = source.get('path')
+            if not isinstance(path, str) or not path or path in current_sources:
+                continue
+            restored = dict(source)
+            restored['mapping_quality'] = _source_mapping_quality(rid, restored)
+            merged_sources.append(restored)
+        for source in merged_sources:
+            source['mapping_quality'] = _source_mapping_quality(rid, source)
+        item['desktop_sources'] = sorted(merged_sources, key=lambda source: source.get('path', ''))
+    return merged
+
+
+def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
     artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', DEFAULT_RESPONSIBILITY_ARTIFACT)
     expected_digest = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST', DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST)
     token = os.environ.get('GH_TOKEN')
@@ -237,7 +273,7 @@ def load_predecessor_responsibility_mapping(
             'predecessor source manifest does not cover the full 8258-row Desktop inventory')
     require(len(source_rows) == 8258,
             f'predecessor source ledger must contain 8258 unique rows, got {len(source_rows)}')
-    return candidate, source_rows, 'pinned-predecessor-artifact', {
+    return candidate, source_rows, {
         'artifact_id': int(artifact_id),
         'artifact_digest': actual_digest,
         'source_manifest_run_id': source_manifest.get('workflow_run_id'),
@@ -246,6 +282,28 @@ def load_predecessor_responsibility_mapping(
         'source_manifest_desktop_root_tree': source_manifest.get('desktop_root_tree'),
     }
 
+
+def load_predecessor_responsibility_mapping(
+    responsibility_path: Path,
+) -> tuple[dict, dict[str, dict], str, dict]:
+    current_candidate = None
+    try:
+        if responsibility_path.is_file() and responsibility_path.stat().st_size > 0:
+            candidate = json.loads(responsibility_path.read_text(encoding='utf-8'))
+            if isinstance(candidate, dict) and candidate.get('responsibilities'):
+                current_candidate = candidate
+    except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
+        current_candidate = None
+
+    if current_candidate is not None:
+        require(len(current_candidate['responsibilities']) == EXPECTED_RESPONSIBILITY_COUNT,
+                f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(current_candidate["responsibilities"])}')
+        predecessor, source_rows, provenance = _load_pinned_responsibility_mapping()
+        merged = _merge_responsibility_sources(current_candidate, predecessor)
+        return merged, source_rows, 'current-responsibility-ledger+pin-predecessor-coverage', provenance
+
+    predecessor, source_rows, provenance = _load_pinned_responsibility_mapping()
+    return predecessor, source_rows, 'pinned-predecessor-artifact', provenance
 
 def merge_responsibility_mapping(
     responsibility_path: Path,
@@ -268,11 +326,16 @@ def merge_responsibility_mapping(
         require(len(responsibilities) == expected_responsibility_count,
                 f'expected {expected_responsibility_count} responsibility definitions, got {len(responsibilities)}')
 
+
     rid_by_path: dict[str, set[str]] = {}
+    coverage_rid_by_path: dict[str, set[str]] = {}
     source_symbols_by_path: dict[str, set[str]] = {}
     source_owners_by_path: dict[str, list[dict]] = {}
+    coverage_owners_by_path: dict[str, list[dict]] = {}
     semantic_anchor_paths: set[str] = set()
+    coverage_anchor_paths: set[str] = set()
     semantic_anchor_entries = 0
+    coverage_anchor_entries = 0
 
     for item in responsibilities:
         rid = item.get('responsibility_id')
@@ -280,25 +343,37 @@ def merge_responsibility_mapping(
         cleaned = []
         for source in item.get('desktop_sources', []):
             path = source.get('path')
-            if path not in new_by_path or not _is_semantic_source_anchor(rid, source):
+            if path not in new_by_path:
                 continue
+            quality = _source_mapping_quality(rid, source)
             refreshed = dict(source)
+            refreshed['mapping_quality'] = quality
             refreshed['blob_sha'] = new_by_path[path]['sha']
             refreshed['source_mode'] = new_by_path[path]['mode']
             refreshed['source_type'] = new_by_path[path]['type']
             cleaned.append(refreshed)
-            rid_by_path.setdefault(path, set()).add(rid)
-            semantic_anchor_paths.add(path)
-            semantic_anchor_entries += 1
-            source_symbols_by_path.setdefault(path, set()).update(
-                symbol for symbol in (source.get('symbols') or [])
-                if isinstance(symbol, str) and symbol.strip()
-            )
-            source_owners_by_path.setdefault(path, []).append({
-                'responsibility_id': rid,
-                'source_owner': item.get('source_owner'),
-                'android_owner': item.get('android_owner'),
-            })
+            if quality == 'semantic':
+                rid_by_path.setdefault(path, set()).add(rid)
+                semantic_anchor_paths.add(path)
+                semantic_anchor_entries += 1
+                source_symbols_by_path.setdefault(path, set()).update(
+                    symbol for symbol in (source.get('symbols') or [])
+                    if isinstance(symbol, str) and symbol.strip()
+                )
+                source_owners_by_path.setdefault(path, []).append({
+                    'responsibility_id': rid,
+                    'source_owner': item.get('source_owner'),
+                    'android_owner': item.get('android_owner'),
+                })
+            else:
+                coverage_rid_by_path.setdefault(path, set()).add(rid)
+                coverage_anchor_paths.add(path)
+                coverage_anchor_entries += 1
+                coverage_owners_by_path.setdefault(path, []).append({
+                    'responsibility_id': rid,
+                    'source_owner': item.get('source_owner'),
+                    'android_owner': item.get('android_owner'),
+                })
         item['desktop_sources'] = cleaned
 
     ids = {item.get('responsibility_id') for item in responsibilities}
@@ -311,28 +386,45 @@ def merge_responsibility_mapping(
     }
 
     unmapped_paths = []
+    coverage_only_paths = []
     missing_dispositions = []
     missing_targets = []
     for row in ledger_rows:
         path = row['source_path']
         links = rid_by_path.get(path, set())
+        coverage_links = coverage_rid_by_path.get(path, set())
         if not links:
             unmapped_paths.append(path)
+            if coverage_links:
+                coverage_only_paths.append(path)
             row.update({
                 'responsibilities': [],
                 'source_symbols': [],
                 'responsibility_owners': [],
                 'android_targets': [],
                 'android_target_provenance': 'unmapped; semantic mapping required',
+                'coverage_responsibilities': sorted(coverage_links),
+                'coverage_responsibility_owners': coverage_owners_by_path.get(path, []),
+                'coverage_source_symbols': sorted({
+                    symbol
+                    for rid in coverage_links
+                    for item in responsibilities
+                    if item.get('responsibility_id') == rid
+                    for source in item.get('desktop_sources', [])
+                    if source.get('path') == path
+                    for symbol in (source.get('symbols') or [])
+                    if isinstance(symbol, str) and symbol.strip()
+                }),
                 'disposition': None,
                 'implementation_status': 'unreviewed',
-                'mapping_status': 'unmapped',
+                'mapping_status': 'coverage-only' if coverage_links else 'unmapped',
                 'evidence': [{
                     'kind': 'source-closure-gap',
                     'mapping_origin': mapping_origin,
                     'mapping_artifact_id': mapping_provenance.get('artifact_id'),
                     'mapping_artifact_digest': mapping_provenance.get('artifact_digest'),
-                    'status': 'missing-semantic-mapping',
+                    'status': 'coverage-only-mapping' if coverage_links else 'missing-semantic-mapping',
+                    'coverage_responsibilities': sorted(coverage_links),
                     'source_path': path,
                     'source_blob_sha': row['source_blob_sha'],
                     'desktop_commit': current,
@@ -350,6 +442,8 @@ def merge_responsibility_mapping(
         row['responsibilities'] = sorted(links)
         row['source_symbols'] = sorted(source_symbols_by_path.get(path, set()))
         row['responsibility_owners'] = source_owners_by_path.get(path, [])
+        row['coverage_responsibilities'] = sorted(coverage_links)
+        row['coverage_responsibility_owners'] = coverage_owners_by_path.get(path, [])
         row['android_targets'] = sorted({
             target for rid in links for target in targets_by_rid.get(rid, [])
         })
@@ -364,7 +458,7 @@ def merge_responsibility_mapping(
         if not row['android_targets']:
             missing_targets.append(path)
         row['implementation_status'] = 'unreviewed'
-        row['mapping_status'] = 'explicit'
+        row['mapping_status'] = 'semantic'
         row['evidence'] = [{
             'kind': 'responsibility-mapping-provenance',
             'mapping_origin': mapping_origin,
@@ -385,14 +479,17 @@ def merge_responsibility_mapping(
             'verification_status': 'not-verified',
         }]
 
+
     save(OUT / 'unmapped-source-rows.json', {
         'status': 'incomplete' if unmapped_paths else 'passed',
         'count': len(unmapped_paths),
         'paths': unmapped_paths,
-        'mapping_policy': 'only explicit responsibility desktop_sources anchors; known legacy top-level fallback additions are discarded; no directory or filename fallback is used',
+        'mapping_policy': 'semantic responsibility anchors only; legacy fallback anchors are retained as coverage-only metadata and never promoted; no directory or filename fallback is used',
         'desktop_commit': current,
         'desktop_root_tree': tree_sha,
         'android_provenance': android,
+        'coverage_only_count': len(coverage_only_paths),
+        'coverage_only_paths': coverage_only_paths,
         'mapping_provenance': mapping_provenance,
     })
     save(OUT / 'responsibility-mapping-summary.json', {
@@ -400,8 +497,11 @@ def merge_responsibility_mapping(
         'responsibility_count': len(responsibilities),
         'semantic_source_anchor_entries': semantic_anchor_entries,
         'semantic_source_anchor_unique_paths': len(semantic_anchor_paths),
+        'coverage_only_source_anchor_entries': coverage_anchor_entries,
+        'coverage_only_source_anchor_unique_paths': len(coverage_anchor_paths),
         'mapped_source_rows': len(ledger_rows) - len(unmapped_paths),
         'unmapped_source_rows': len(unmapped_paths),
+        'coverage_only_source_rows': len(coverage_only_paths),
         'missing_disposition_rows': missing_dispositions,
         'missing_target_rows': missing_targets,
         'mapping_origin': mapping_origin,
@@ -419,7 +519,7 @@ def merge_responsibility_mapping(
         note = (
             f'Current-main rebaseline to {current}: explicit source responsibility mappings are '
             'provenance-only; implementation and exact-head verification remain open. '
-            f'Unmapped source rows: {len(unmapped_paths)}.'
+            f'Unmapped semantic source rows: {len(unmapped_paths)}; coverage-only rows retained: {len(coverage_only_paths)}.'
         )
         notes = item.get('notes')
         if isinstance(notes, str):
@@ -443,8 +543,11 @@ def merge_responsibility_mapping(
             'responsibility_count': len(responsibilities),
             'semantic_source_anchor_entries': semantic_anchor_entries,
             'semantic_source_anchor_unique_paths': len(semantic_anchor_paths),
+            'coverage_only_source_anchor_entries': coverage_anchor_entries,
+            'coverage_only_source_anchor_unique_paths': len(coverage_anchor_paths),
             'mapped_source_rows': len(ledger_rows) - len(unmapped_paths),
             'unmapped_source_rows': len(unmapped_paths),
+            'coverage_only_source_rows': len(coverage_only_paths),
             'missing_disposition_rows': len(missing_dispositions),
             'missing_target_rows': len(missing_targets),
             'responsibility_mapping_origin': mapping_origin,
