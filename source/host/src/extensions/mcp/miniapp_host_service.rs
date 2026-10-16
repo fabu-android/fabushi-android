@@ -356,8 +356,8 @@ impl MiniAppHostService {
                     .unwrap_or("unknown")
                     .to_string(),
                 version: verified.authorization.version.clone(),
-                package_digest: verified.authorization.bundle_digest.clone(),
-                size_bytes: verified.authorization.artifact_size_bytes,
+                package_digest: verified.authorization.package_sha256.clone(),
+                size_bytes: verified.artifact.size_bytes,
                 offline_core: true,
                 installed,
                 supported: true,
@@ -416,8 +416,8 @@ impl MiniAppHostService {
                                     .unwrap_or(&listing.publisher_id)
                                     .to_string();
                                 version = proof.authorization.version.clone();
-                                digest = proof.authorization.bundle_digest.clone();
-                                size_bytes = proof.authorization.artifact_size_bytes;
+                                digest = proof.authorization.package_sha256.clone();
+                                size_bytes = proof.artifact.size_bytes;
                             }
                             Err(reason) => {
                                 self.quarantine(&scope, &listing.app_id, &reason);
@@ -665,8 +665,8 @@ impl MiniAppHostService {
         let archive = self
             .catalog
             .download_artifact(
-                &verified_proof.authorization.bundle_digest,
-                verified_proof.authorization.artifact_size_bytes,
+                &verified_proof.authorization.package_sha256,
+                verified_proof.artifact.size_bytes,
             )
             .map_err(|error| format!("miniapp_artifact_download_failed: {error}"))?;
         let package = verify_catalog_bundle(&archive, &verified_proof.authorization)
@@ -715,7 +715,7 @@ impl MiniAppHostService {
                 .to_string(),
             version: installed.version.clone(),
             package_digest: installed.digest.clone(),
-            size_bytes: verified_proof.authorization.artifact_size_bytes,
+            size_bytes: verified_proof.artifact.size_bytes,
             offline_core: true,
             installed: true,
             supported: true,
@@ -746,12 +746,11 @@ impl MiniAppHostService {
         let load_id = format!("miniapp-load-{}", Uuid::new_v4());
         let resources = package
             .resource_entries()
-            .into_iter()
-            .map(|resource| {
+            .map(|(path, bytes, mime)| {
                 json!({
-                    "path": resource.path,
-                    "mimeType": resource.mime_type,
-                    "bytes": resource.bytes,
+                    "path": path,
+                    "mimeType": mime,
+                    "bytes": bytes,
                 })
             })
             .collect::<Vec<_>>();
@@ -767,8 +766,8 @@ impl MiniAppHostService {
             "loadId": load_id,
             "appId": app_id,
             "version": proof.authorization.version,
-            "packageDigest": proof.authorization.bundle_digest,
-            "entrypoint": proof.authorization.entrypoint,
+            "packageDigest": package.digest(),
+            "entrypoint": package.entrypoint(),
             "resources": resources,
             "generation": scope.generation,
             "operationId": operation_id
@@ -802,16 +801,16 @@ impl MiniAppHostService {
         if lease.app_id != lease_app_id {
             return Err("stale_load: Mini App load identity mismatch".into());
         }
-        let resource = lease
+        let (resource_bytes, resource_mime) = lease
             .package
             .resource(resource_path)
             .ok_or_else(|| "not_found: verified Mini App resource does not exist".to_string())?;
-        let bytes = base64::engine::general_purpose::STANDARD.encode(resource.bytes);
+        let bytes = base64::engine::general_purpose::STANDARD.encode(resource_bytes);
         Ok(json!({
             "loadId": load_id,
             "appId": lease.app_id,
-            "path": resource.path,
-            "mimeType": resource.mime_type,
+            "path": resource_path,
+            "mimeType": resource_mime,
             "bytesBase64": bytes,
             "generation": lease_scope.generation
         }))
