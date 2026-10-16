@@ -3489,7 +3489,7 @@ class AndroidCoordinatorRuntime private constructor(application: Application) : 
     override fun getInstalledMiniAppResources(appId: String, operationId: String): JSONObject =
         host.request("feature.miniapp.getResources", JSONObject().put("appId", appId).put("operationId", operationId))
     override fun readMiniAppResource(loadId: String, resourcePath: String): JSONObject =
-        host.request("feature.miniapp.readResource", JSONObject().put("loadId", loadId).put("path", resourcePath))
+        host.request("feature.miniapp.readResource", JSONObject().put("loadId", loadId).put("resourcePath", resourcePath))
     override fun disposeMiniAppLoad(loadId: String): JSONObject =
         host.request("feature.miniapp.disposeLoad", JSONObject().put("loadId", loadId))
     override fun uninstallMiniApp(appId: String, operationId: String): JSONObject =
