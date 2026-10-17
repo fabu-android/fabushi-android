@@ -78,6 +78,19 @@ jobs:
           cargo test -p fabushi-mahayana-host --test android_background_completion_shipping_contract -- --nocapture
           cargo test -p fabushi-android-host-jni tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host -- --exact
 
+      - name: Verify exact-HEAD cloud-agent artifact prompt owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::cloud_agent::CLOUD_AGENT_ARTIFACTS_DIR' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'sections.push(render_android_walkthrough_artifacts_system_prompt(None));' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'build_android_root_system_instructions(' source/host/src/android_json_runtime.rs
+      - name: Test exact-HEAD cloud-agent artifact prompt owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_directory_uses_canonical_cloud_agent_fallback_and_normalizes_override -- --exact
+          cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_prompt_is_deduped_and_does_not_grant_capability -- --exact
+
       - name: Verify exact-HEAD agent-store id production owner
         run: |
           set -euo pipefail

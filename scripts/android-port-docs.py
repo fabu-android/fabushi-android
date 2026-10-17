@@ -155,6 +155,37 @@ AGENT_KV_SOURCE_SPECS = {
 AGENT_KV_SOURCE_SPEC_BY_PATH = AGENT_KV_SOURCE_SPECS
 
 
+CLOUD_AGENT_CONSTANT_SOURCE_PATH = 'source/packages/constants/cloud-agent.ts'
+CLOUD_AGENT_CONSTANT_RESPONSIBILITY_ID = 'AGENT-RUNTIME-PROMPT-ASSEMBLY-ANDROID-001'
+CLOUD_AGENT_CONSTANT_PRODUCTION_STEP = 'Verify exact-HEAD cloud-agent artifact prompt owner'
+CLOUD_AGENT_CONSTANT_TEST_STEP = 'Test exact-HEAD cloud-agent artifact prompt owner'
+CLOUD_AGENT_CONSTANT_SOURCE_SPEC = {
+    'symbols': ['CLOUD_AGENT_ARTIFACTS_DIR'],
+    'source_owner': (
+        'Desktop source/packages/constants/cloud-agent.ts owns the canonical walkthrough artifact '
+        'fallback directory consumed by source/packages/agent/prompts/shared.ts, then the shipping '
+        'testing/parent.ts -> testing/index.ts -> composer2-cloud-testing-sections.ts prompt chain'
+    ),
+    'android_owner': (
+        'Existing Rust Host android_system_prompt root-turn prompt owner consumes the shared '
+        'fabushi-constants cloud-agent artifact-directory contract; AndroidJsonHost remains the '
+        'shipping caller and no second prompt or artifact-directory owner is introduced'
+    ),
+    'android_targets': [
+        'source/packages/constants/src/cloud_agent.rs',
+        'source/host/src/runner/android_system_prompt.rs',
+        'source/host/src/android_json_runtime.rs',
+    ],
+    'production_target': 'source/host/src/android_json_runtime.rs',
+    'test_target': 'source/host/src/runner/android_system_prompt.rs',
+    'focused_tests': [
+        'source/host/src/runner/android_system_prompt.rs::tests::walkthrough_artifact_directory_uses_canonical_cloud_agent_fallback_and_normalizes_override',
+        'source/host/src/runner/android_system_prompt.rs::tests::walkthrough_artifact_prompt_is_deduped_and_does_not_grant_capability',
+    ],
+    'disposition': 'android-adapted',
+}
+
+
 AGENT_STORE_IDS_SOURCE_PATH = 'source/packages/constants/agent-store-ids.ts'
 AGENT_STORE_IDS_RESPONSIBILITY_ID = 'REMOTE-BOX-STORE-SYNC-ANDROID-001'
 AGENT_STORE_IDS_PRODUCTION_STEP = 'Verify exact-HEAD agent-store id production owner'
@@ -2114,6 +2145,75 @@ def load_predecessor_responsibility_mapping(responsibility_path: Path) -> tuple[
     return _merge_responsibility_sources(candidate,predecessor),source_rows,'current-responsibility-ledger+pin-predecessor-coverage',provenance
 
 
+def _ensure_cloud_agent_constant_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach the Desktop walkthrough artifact-directory contract to the existing Host prompt owner."""
+    source_object = new_by_path.get(CLOUD_AGENT_CONSTANT_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop cloud-agent constant has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == CLOUD_AGENT_CONSTANT_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'cloud-agent semantic mapping requires exactly one '
+        + CLOUD_AGENT_CONSTANT_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(CLOUD_AGENT_CONSTANT_SOURCE_PATH, {})
+    source.update({
+        'path': CLOUD_AGENT_CONSTANT_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(CLOUD_AGENT_CONSTANT_SOURCE_SPEC['symbols']),
+        'focused_tests': list(CLOUD_AGENT_CONSTANT_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(CLOUD_AGENT_CONSTANT_SOURCE_SPEC['android_targets']),
+        'source_owner': CLOUD_AGENT_CONSTANT_SOURCE_SPEC['source_owner'],
+        'android_owner': CLOUD_AGENT_CONSTANT_SOURCE_SPEC['android_owner'],
+    })
+    existing_sources[CLOUD_AGENT_CONSTANT_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda value: value.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in CLOUD_AGENT_CONSTANT_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Desktop walkthrough artifact-directory fallback is semantically mapped to the existing '
+        'Host root-turn prompt owner. Android consumes the shared constant in android_system_prompt '
+        'and keeps AndroidJsonHost as the shipping caller; no second prompt owner is added.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
 def _ensure_agent_store_ids_semantic_mapping(
     responsibilities: list[dict],
     new_by_path: dict[str, dict],
@@ -2919,6 +3019,8 @@ def merge_responsibility_mapping(
         _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
     if any(path in new_by_path for path in BACKGROUND_COMPLETION_SOURCE_SPECS):
         _ensure_background_completion_semantic_mapping(responsibilities, new_by_path, current)
+    if CLOUD_AGENT_CONSTANT_SOURCE_PATH in new_by_path:
+        _ensure_cloud_agent_constant_semantic_mapping(responsibilities, new_by_path, current)
     if AGENT_STORE_IDS_SOURCE_PATH in new_by_path:
         _ensure_agent_store_ids_semantic_mapping(responsibilities, new_by_path, current)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
@@ -3285,6 +3387,80 @@ def merge_responsibility_mapping(
                 'agent-kv coverage remains incomplete',
                 file=sys.stderr,
             )
+
+    if CLOUD_AGENT_CONSTANT_SOURCE_PATH in new_by_path:
+        cloud_agent_constant_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == CLOUD_AGENT_CONSTANT_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = cloud_agent_constant_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            cloud_agent_constant_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if CLOUD_AGENT_CONSTANT_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        cloud_agent_constant_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=CLOUD_AGENT_CONSTANT_PRODUCTION_STEP,
+            test_step_name=CLOUD_AGENT_CONSTANT_TEST_STEP,
+            evidence_label='cloud-agent artifact prompt',
+        )
+        if cloud_agent_constant_evidence is not None:
+            production_target = CLOUD_AGENT_CONSTANT_SOURCE_SPEC['production_target']
+            test_target = CLOUD_AGENT_CONSTANT_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'cloud-agent artifact prompt evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [CLOUD_AGENT_CONSTANT_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': cloud_agent_constant_evidence['workflow_name'],
+                'workflow_id': cloud_agent_constant_evidence['workflow_id'],
+                'workflow_path': cloud_agent_constant_evidence['workflow_path'],
+                'workflow_event': cloud_agent_constant_evidence['workflow_event'],
+                'workflow_repository': cloud_agent_constant_evidence['workflow_repository'],
+                'workflow_run_id': cloud_agent_constant_evidence['workflow_run_id'],
+                'workflow_job_name': cloud_agent_constant_evidence['workflow_job_name'],
+                'workflow_job_id': cloud_agent_constant_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': cloud_agent_constant_evidence['workflow_job_run_attempt'],
+                'run_attempt': cloud_agent_constant_evidence['run_attempt'],
+                'run_conclusion': cloud_agent_constant_evidence['run_conclusion'],
+                'result': 'passed',
+            }
+            cloud_agent_constant_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': cloud_agent_constant_evidence['production_step_name'],
+                'workflow_step_number': cloud_agent_constant_evidence['production_step_number'],
+                'evidence_ref': production_target + '#cloud-agent-artifact-prompt-production-owner',
+            })
+            cloud_agent_constant_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': cloud_agent_constant_evidence['test_step_name'],
+                'workflow_step_number': cloud_agent_constant_evidence['test_step_number'],
+                'evidence_ref': test_target + '#cloud-agent-artifact-prompt-focused-tests',
+                'focused_tests': list(CLOUD_AGENT_CONSTANT_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head cloud-agent artifact prompt evidence; '
+                'cloud-agent artifact prompt package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
 
     if AGENT_STORE_IDS_SOURCE_PATH in new_by_path:
         agent_store_ids_responsibility = next(

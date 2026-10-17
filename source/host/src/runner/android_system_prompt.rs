@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 
+use fabushi_constants::cloud_agent::CLOUD_AGENT_ARTIFACTS_DIR;
 use serde_json::Value;
 
 /// Android-adapted root Agent instructions.
@@ -39,7 +40,32 @@ pub fn build_android_root_system_instructions(
     if let Some(time_zone) = time_zone.map(str::trim).filter(|value| !value.is_empty()) {
         sections.push(format!("## Runtime context\nUser time zone: {time_zone}"));
     }
+    sections.push(render_android_walkthrough_artifacts_system_prompt(None));
     sections.join("\n\n")
+}
+
+pub fn resolve_android_prompt_artifacts_dir(reported: Option<&str>) -> String {
+    let value = reported
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(CLOUD_AGENT_ARTIFACTS_DIR);
+    if value.ends_with('/') || value.ends_with('\\') {
+        value.to_string()
+    } else if value.contains('\\') && !value.contains('/') {
+        format!("{value}\\")
+    } else {
+        format!("{value}/")
+    }
+}
+
+fn render_android_walkthrough_artifacts_system_prompt(
+    reported_artifacts_dir: Option<&str>,
+) -> String {
+    let artifacts_dir = resolve_android_prompt_artifacts_dir(reported_artifacts_dir);
+    let display_dir = artifacts_dir.trim_end_matches(|ch| ch == '/' || ch == '\\');
+    format!(
+        "## Walkthrough artifacts\nWhen testing or computer-use capabilities are exposed for this turn and a user-facing walkthrough is warranted, save the selected final screenshots or recordings under {display_dir}. This directory contract does not grant filesystem, computer-use, recording, or upload capability; use only capabilities exposed for this turn."
+    )
 }
 
 pub fn append_android_team_rules_system_instructions(
@@ -760,7 +786,9 @@ mod tests {
         assert!(prompt.contains("User time zone: America/Los_Angeles"));
 
         let base_only = build_android_root_system_instructions("   ", Some("   "));
-        assert_eq!(base_only, ANDROID_ROOT_SYSTEM_INSTRUCTIONS);
+        assert!(base_only.starts_with(ANDROID_ROOT_SYSTEM_INSTRUCTIONS));
+        assert!(base_only.contains("## Walkthrough artifacts"));
+        assert!(base_only.contains("/opt/cursor/artifacts"));
     }
 
     #[test]
@@ -1020,6 +1048,30 @@ mod tests {
         )
         .unwrap_err()
         .contains("stale"));
+    }
+
+    #[test]
+    fn walkthrough_artifact_directory_uses_canonical_cloud_agent_fallback_and_normalizes_override() {
+        assert_eq!(
+            resolve_android_prompt_artifacts_dir(None),
+            CLOUD_AGENT_ARTIFACTS_DIR
+        );
+        assert_eq!(
+            resolve_android_prompt_artifacts_dir(Some(" /tmp/walkthroughs ")),
+            "/tmp/walkthroughs/"
+        );
+        assert_eq!(
+            resolve_android_prompt_artifacts_dir(Some("C:\\walkthroughs")),
+            "C:\\walkthroughs\\"
+        );
+    }
+
+    #[test]
+    fn walkthrough_artifact_prompt_is_deduped_and_does_not_grant_capability() {
+        let prompt = build_android_root_system_instructions("", None);
+        assert_eq!(prompt.matches("## Walkthrough artifacts").count(), 1);
+        assert!(prompt.contains("/opt/cursor/artifacts"));
+        assert!(prompt.contains("does not grant filesystem, computer-use, recording, or upload capability"));
     }
 
 }
