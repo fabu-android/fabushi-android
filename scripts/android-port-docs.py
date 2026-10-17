@@ -56,6 +56,7 @@ OWNER_PLACEHOLDER_VALUES = frozenset({
 })
 DEFAULT_RESPONSIBILITY_ARTIFACT = '12072277149'
 DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
+ANDROID_REPOSITORY = 'fabu-android/fabushi-android'
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -245,6 +246,50 @@ def _has_real_owner(value: object) -> bool:
     )
 
 
+def _package_action_job_passed(
+    entry: dict,
+    *,
+    android_head: str,
+    tracked_android_paths: set[str],
+    action_job_cache: dict[tuple[int, int, str], bool],
+) -> bool:
+    """Count evidence only when a tracked Android file is backed by successful exact-head CI."""
+    run_id = entry.get('workflow_run_id')
+    job_id = entry.get('workflow_job_id')
+    evidence_ref = entry.get('evidence_ref')
+    if (
+        not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0
+        or not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0
+        or not isinstance(evidence_ref, str) or not evidence_ref.strip()
+    ):
+        return False
+    evidence_path = evidence_ref.split('#', 1)[0]
+    if evidence_path not in tracked_android_paths:
+        return False
+    key = (run_id, job_id, android_head)
+    if key not in action_job_cache:
+        try:
+            run = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}')
+            if (
+                run.get('name') != 'Android Parity Full CI'
+                or (run.get('repository') or {}).get('full_name') != ANDROID_REPOSITORY
+                or run.get('head_sha') != android_head
+                or run.get('status') != 'completed'
+                or run.get('conclusion') != 'success'
+            ):
+                action_job_cache[key] = False
+            else:
+                jobs = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}/jobs?per_page=100')
+                action_job_cache[key] = any(
+                    job.get('id') == job_id and job.get('status') == 'completed'
+                    and job.get('conclusion') == 'success'
+                    for job in jobs.get('jobs', [])
+                )
+        except (RuntimeError, KeyError, TypeError, ValueError, OSError):
+            action_job_cache[key] = False
+    return action_job_cache[key]
+
+
 def _has_package_evidence(
     entries: object,
     *,
@@ -252,8 +297,10 @@ def _has_package_evidence(
     source_commit: str,
     android_head: str,
     required_kinds: frozenset[str],
+    tracked_android_paths: set[str],
+    action_job_cache: dict[tuple[int, int, str], bool],
 ) -> bool:
-    """Require path-scoped exact-checkout evidence; prose and mapping provenance are insufficient."""
+    """Require source-scoped evidence plus a successful exact-head Android CI job."""
     if not isinstance(entries, list):
         return False
     for entry in entries:
@@ -263,16 +310,18 @@ def _has_package_evidence(
         if not isinstance(paths, list):
             paths = [entry.get('source_path')]
         if (
-            source_path in paths
-            and entry.get('kind') in required_kinds
+            source_path in paths and entry.get('kind') in required_kinds
             and entry.get('source_commit') == source_commit
             and entry.get('desktop_commit') == source_commit
             and entry.get('android_pr_head_sha') == android_head
             and entry.get('android_tested_checkout_sha') == android_head
             and entry.get('workflow_sha') == android_head
-            and isinstance(entry.get('evidence_ref'), str)
-            and bool(entry.get('evidence_ref').strip())
             and entry.get('result') == 'passed'
+            and _package_action_job_passed(
+                entry, android_head=android_head,
+                tracked_android_paths=tracked_android_paths,
+                action_job_cache=action_job_cache,
+            )
         ):
             return True
     return False
@@ -299,6 +348,7 @@ def _package_semantic_coverage(
     android_owner_rows = 0
     target_rows = 0
     disposition_rows = 0
+    action_job_cache: dict[tuple[int, int, str], bool] = {}
 
     for row in package_rows:
         path = row.get('source_path') or '<missing-source-path>'
@@ -341,6 +391,8 @@ def _package_semantic_coverage(
                 source_commit=expected_source_commit,
                 android_head=expected_head,
                 required_kinds=frozenset({'production-wiring'}),
+                tracked_android_paths=tracked_android_paths,
+                action_job_cache=action_job_cache,
             )
             for item in linked
         )
@@ -357,6 +409,8 @@ def _package_semantic_coverage(
                     'focused-unit-test', 'contract-test', 'integration-test',
                     'packaged-test', 'device-test',
                 }),
+                tracked_android_paths=tracked_android_paths,
+                action_job_cache=action_job_cache,
             )
             for item in linked
         )
