@@ -708,6 +708,12 @@ def _ensure_agent_kv_semantic_mapping(
     desktop_commit: str,
 ) -> None:
     """Attach seven current-main Agent KV sources to the existing canonical Agent lifecycle owner."""
+    # Generic fixtures without agent-kv sources must not require a domain responsibility.
+    # A real Desktop inventory containing any agent-kv source must map all seven source files.
+    if not any(path.startswith('source/packages/agent-kv/') for path in new_by_path):
+        return
+    missing = sorted(set(AGENT_KV_SOURCE_SPECS) - set(new_by_path))
+    require(not missing, 'current Desktop agent-kv inventory is incomplete: ' + ', '.join(missing))
     matches = [
         item for item in responsibilities
         if item.get('responsibility_id') == AGENT_KV_RESPONSIBILITY_ID
@@ -1149,7 +1155,8 @@ def merge_responsibility_mapping(
             'responsibility mapping authority Desktop tree does not match current Desktop main')
 
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
-    _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
+    if any(path.startswith('source/packages/agent-kv/') for path in new_by_path):
+        _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
         require(len(responsibilities) == expected_responsibility_count,
                 f'expected {expected_responsibility_count} responsibility definitions, got {len(responsibilities)}')
@@ -1888,16 +1895,125 @@ def bundle() -> None:
     print('Documentation bundle:', len(paths), 'files; SHA-256:', digest)
 
 
+def audit_receipt() -> None:
+    """Create an independent receipt in RUNNER_TEMP; never persist it into the repository."""
+    runner_temp = os.environ.get('RUNNER_TEMP')
+    require(bool(runner_temp), 'RUNNER_TEMP is required')
+    token = os.environ.get('GH_TOKEN')
+    require(bool(token), 'GH_TOKEN is required to download the predecessor artifact')
+    artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', DEFAULT_RESPONSIBILITY_ARTIFACT)
+    expected_digest = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST', DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST)
+    req = Request(
+        f'https://api.github.com/repos/{ANDROID_REPOSITORY}/actions/artifacts/{artifact_id}/zip',
+        headers={'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + token,
+                 'User-Agent': 'Fabushi-Android-Audit-Receipt', 'X-GitHub-Api-Version': '2022-11-28'},
+    )
+    try:
+        with urlopen(req, timeout=60) as response:
+            artifact_bytes = response.read()
+    except HTTPError as error:
+        raise RuntimeError('predecessor artifact download failed: HTTP ' + str(error.code)) from None
+    require(artifact_bytes.startswith(b'PK\\x03\\x04'), 'predecessor download is not a ZIP artifact')
+    actual_digest = 'sha256:' + hashlib.sha256(artifact_bytes).hexdigest()
+    require(actual_digest == expected_digest, 'predecessor artifact SHA-256 mismatch: expected '
+            + expected_digest + ', got ' + actual_digest)
+    try:
+        with zipfile.ZipFile(io.BytesIO(artifact_bytes)) as archive:
+            bad_member = archive.testzip()
+            require(bad_member is None, 'predecessor artifact ZIP integrity failure: ' + str(bad_member))
+            artifact_entries = archive.namelist()
+            require(bool(artifact_entries), 'predecessor artifact is empty')
+    except zipfile.BadZipFile as error:
+        raise RuntimeError('predecessor artifact ZIP invalid: ' + str(error)) from None
+
+    inputs = {
+        'baseline': DOC / 'authority/baseline.json',
+        'source_inventory_manifest': DOC / 'authority/source-inventory-manifest.json',
+        'source_inventory_ledger': DOC / 'authority/source-inventory-ledger.jsonl',
+        'responsibility_ledger': DOC / 'authority/responsibility-ledger.json',
+        'package_semantic_coverage': OUT / 'packages-semantic-coverage.json',
+    }
+    digests, docs = {}, {}
+    for name, path in inputs.items():
+        require(path.is_file(), 'missing receipt input: ' + str(path.relative_to(ROOT)))
+        raw = path.read_bytes()
+        digests[name] = hashlib.sha256(raw).hexdigest()
+        if path.suffix == '.json':
+            docs[name] = json.loads(raw.decode('utf-8'))
+    baseline, manifest = docs['baseline'], docs['source_inventory_manifest']
+    responsibility = docs['responsibility_ledger']
+    coverage = docs['package_semantic_coverage']
+    source_rows = [json.loads(line) for line in inputs['source_inventory_ledger'].read_text(encoding='utf-8').splitlines() if line.strip()]
+    responsibility_rows = responsibility.get('responsibilities', [])
+    source_paths = [row.get('source_path') for row in source_rows]
+    responsibility_ids = [row.get('responsibility_id') for row in responsibility_rows]
+    require(len(source_paths) == len(set(source_paths)) == 8258, 'receipt requires 8258 unique source_path values')
+    require(len(responsibility_ids) == len(set(responsibility_ids)) == 306, 'receipt requires 306 unique responsibility IDs')
+    rejected_path = OUT / 'rejected-android-targets.json'
+    require(rejected_path.is_file(), 'rejected target diagnostics missing')
+    rejected = json.loads(rejected_path.read_text(encoding='utf-8'))
+    tracked = _current_android_tracked_files()
+    target_rows = []
+    for item in responsibility_rows:
+        raw_targets = item.get('android_target', item.get('android_targets', []))
+        accepted, invalid = _filter_android_targets(raw_targets, tracked)
+        target_rows.append({
+            'responsibility_id': item.get('responsibility_id'),
+            'source_owner': item.get('source_owner'),
+            'android_owner': item.get('android_owner'),
+            'tracked_targets': accepted,
+            'rejected_targets': invalid,
+            'disposition': item.get('android_disposition', item.get('disposition')),
+            'implementation_status': item.get('implementation_status', 'unreviewed'),
+            'verification_status': item.get('verification_status', 'not-verified'),
+        })
+    provenance = current_android_provenance()
+    receipt_doc = {
+        'schema': 'MAHAYANA_ANDROID_AUDIT_RECEIPT_V1',
+        'status': 'audit-only-not-product-acceptance',
+        'predecessor_artifact': {'artifact_id': int(artifact_id), 'downloaded_bytes_sha256': actual_digest,
+                                 'expected_sha256': expected_digest, 'zip_integrity_verified': True,
+                                 'entry_count': len(artifact_entries)},
+        'authority_input_sha256': digests,
+        'provenance': provenance,
+        'desktop_authority': {'repository': baseline.get('desktop_repository'),
+                              'commit': manifest.get('desktop_commit'),
+                              'tree': manifest.get('desktop_root_tree'),
+                              'tree_entries': manifest.get('tree_entries'),
+                              'tracked_non_tree_entries': manifest.get('tracked_non_tree_entries')},
+        'android_three_sha': {'pr_head_sha': provenance['android_pr_head_sha'],
+                              'checkout_sha': provenance['android_checkout_sha'],
+                              'workflow_sha': provenance['workflow_sha']},
+        'inventory': {'unique_source_path_count': len(set(source_paths)),
+                      'unique_responsibility_id_count': len(set(responsibility_ids)),
+                      'source_status_counts': {s: sum(r.get('implementation_status') == s for r in source_rows)
+                                               for s in ('unreviewed','mapped','implemented','verified','not-applicable')},
+                      'all_source_rows_unreviewed': all(r.get('implementation_status') == 'unreviewed' for r in source_rows),
+                      'responsibility_unreviewed_count': sum(r.get('implementation_status') == 'unreviewed' for r in responsibility_rows),
+                      'responsibility_not_verified_count': sum(r.get('verification_status') == 'not-verified' for r in responsibility_rows)},
+        'package_semantic_coverage': {k:v for k,v in coverage.items() if k != 'gaps'},
+        'rejected_android_targets': rejected,
+        'responsibility_target_disposition_audit': target_rows,
+    }
+    output = Path(runner_temp) / 'android-port-audit-receipt.json'
+    output.write_text(json.dumps(receipt_doc, ensure_ascii=False, sort_keys=True, indent=2) + '\\n', encoding='utf-8')
+    print(json.dumps({'receipt_path': str(output), 'predecessor_artifact_sha256': actual_digest,
+                      'authority_inputs': digests, 'unique_source_paths': len(set(source_paths)),
+                      'unique_responsibility_ids': len(set(responsibility_ids)),
+                      'strict_incomplete_rows': coverage.get('strict_incomplete_rows'),
+                      'status': receipt_doc['status']}, sort_keys=True))
+
+
 def main() -> int:
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         print('Run this validation only in GitHub Actions.', file=sys.stderr)
         return 2
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=('rebaseline', 'inventory', 'validate', 'bundle'))
+    parser.add_argument('command', choices=('rebaseline', 'inventory', 'validate', 'bundle', 'receipt'))
     args = parser.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     try:
-        {'rebaseline': rebaseline, 'inventory': inventory, 'validate': validate, 'bundle': bundle}[args.command]()
+        {'rebaseline': rebaseline, 'inventory': inventory, 'validate': validate, 'bundle': bundle, 'receipt': audit_receipt}[args.command]()
         return 0
     except (ValueError, RuntimeError, OSError) as error:
         print(type(error).__name__ + ': ' + str(error), file=sys.stderr)

@@ -86,6 +86,26 @@ def padded_responsibilities(primary):
 
 
 class AndroidPortDocsGeneratorTest(unittest.TestCase):
+    def test_agent_kv_semantic_mapping_is_optional_for_generic_inventory_fixtures(self):
+        module = load_generator()
+        responsibilities = padded_responsibilities({"responsibility_id": "RESP-001", "desktop_sources": []})
+        module._ensure_agent_kv_semantic_mapping(
+            responsibilities,
+            {"source/generated.rs": {"sha": "1" * 40, "mode": "100644", "type": "blob"}},
+            CURRENT_DESKTOP_COMMIT,
+        )
+        self.assertNotIn("AGENT-RUN-LIFECYCLE-001", [r["responsibility_id"] for r in responsibilities])
+
+    def test_agent_kv_inventory_requires_all_seven_current_desktop_sources(self):
+        module = load_generator()
+        responsibilities = padded_responsibilities({"responsibility_id": "AGENT-RUN-LIFECYCLE-001", "desktop_sources": []})
+        with self.assertRaisesRegex(ValueError, "inventory is incomplete"):
+            module._ensure_agent_kv_semantic_mapping(
+                responsibilities,
+                {"source/packages/agent-kv/agent-store.ts": {"sha": "1" * 40, "mode": "100644", "type": "blob"}},
+                CURRENT_DESKTOP_COMMIT,
+            )
+
     def test_legacy_top_level_fallback_is_not_a_semantic_anchor(self):
         module = load_generator()
         fallback = {

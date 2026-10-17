@@ -195,6 +195,24 @@ jobs:
             'rejected_android_target_count':rejected['count'],
           }, sort_keys=True))
           PY
+      - name: Generate independent audit receipt in RUNNER_TEMP
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
+        run: python3 scripts/android-port-docs.py receipt
+      - name: Upload independent audit receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-audit-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/android-port-audit-receipt.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Package documentation and source evidence
         if: always()
         run: python3 scripts/android-port-docs.py bundle
