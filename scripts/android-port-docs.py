@@ -147,6 +147,27 @@ AGENT_KV_SOURCE_SPECS = {
 }
 AGENT_KV_SOURCE_SPEC_BY_PATH = AGENT_KV_SOURCE_SPECS
 
+COMPOSER_CONSTANT_SOURCE_PATH = 'source/packages/constants/composer.ts'
+COMPOSER_CONSTANT_RESPONSIBILITY_ID = 'COMPOSER-DRAFT-ANDROID-001'
+COMPOSER_CONSTANT_PRODUCTION_STEP = 'Verify exact-HEAD constants composer production owner'
+COMPOSER_CONSTANT_TEST_STEP = 'Test exact-HEAD constants composer production owner'
+COMPOSER_CONSTANT_SOURCE_SPEC = {
+    'symbols': ['MAX_TEXT_SIZE'],
+    'source_owner': 'Desktop source/packages/constants/composer.ts owns the canonical 8 MiB Composer text-size contract',
+    'android_owner': 'Rust fabushi-constants composer contract enforced by Host DurableComposerDraftOwner',
+    'android_targets': [
+        'source/packages/constants/src/composer.rs',
+        'source/host/src/composer_draft.rs',
+    ],
+    'production_target': 'source/host/src/composer_draft.rs',
+    'test_target': 'source/host/src/composer_draft.rs',
+    'focused_tests': [
+        'source/packages/constants/src/composer.rs::tests::text_limit_is_inclusive',
+        'source/host/src/composer_draft.rs::tests::prompt_size_limit_matches_desktop_composer_contract',
+    ],
+    'disposition': 'android-adapted',
+}
+
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -337,8 +358,14 @@ def _has_real_owner(value: object) -> bool:
 
 
 
-def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
-    """Wait for the dedicated exact-head Agent KV workflow to pass completely."""
+def _latest_exact_head_android_ci_evidence(
+    android_head: str,
+    *,
+    production_step_name: str = AGENT_KV_PRODUCTION_STEP,
+    test_step_name: str = AGENT_KV_TEST_STEP,
+    evidence_label: str = 'Agent KV',
+) -> dict | None:
+    """Wait for a dedicated exact-head workflow/job and the requested evidence steps to pass."""
     if not os.environ.get('GH_TOKEN'):
         print('WARNING: GH_TOKEN is unavailable; agent-kv CI evidence remains incomplete', file=sys.stderr)
         return None
@@ -404,8 +431,8 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                     for value in job.get('steps', [])
                     if isinstance(value, dict) and isinstance(value.get('name'), str)
                 }
-                production_step = steps.get(AGENT_KV_PRODUCTION_STEP)
-                test_step = steps.get(AGENT_KV_TEST_STEP)
+                production_step = steps.get(production_step_name)
+                test_step = steps.get(test_step_name)
                 if not all(
                     step
                     and step.get('status') == 'completed'
@@ -445,8 +472,8 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
             pass
         if time.monotonic() >= deadline:
             print(
-                'WARNING: timed out waiting for a successful exact-head Agent KV evidence workflow; '
-                'agent-kv evidence remains incomplete',
+                f'WARNING: timed out waiting for successful exact-head {evidence_label} evidence; '
+                f'{evidence_label} remains incomplete',
                 file=sys.stderr,
             )
             return None
@@ -1582,6 +1609,75 @@ def load_predecessor_responsibility_mapping(responsibility_path: Path) -> tuple[
     return _merge_responsibility_sources(candidate,predecessor),source_rows,'current-responsibility-ledger+pin-predecessor-coverage',provenance
 
 
+def _ensure_constants_composer_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach the Desktop Composer text-size contract to the canonical Android draft owner."""
+    source_object = new_by_path.get(COMPOSER_CONSTANT_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop Composer constant has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == COMPOSER_CONSTANT_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'Composer constant semantic mapping requires exactly one '
+        + COMPOSER_CONSTANT_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(COMPOSER_CONSTANT_SOURCE_PATH, {})
+    source.update({
+        'path': COMPOSER_CONSTANT_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(COMPOSER_CONSTANT_SOURCE_SPEC['symbols']),
+        'focused_tests': list(COMPOSER_CONSTANT_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(COMPOSER_CONSTANT_SOURCE_SPEC['android_targets']),
+        'source_owner': COMPOSER_CONSTANT_SOURCE_SPEC['source_owner'],
+        'android_owner': COMPOSER_CONSTANT_SOURCE_SPEC['android_owner'],
+    })
+    existing_sources[COMPOSER_CONSTANT_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda value: value.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in COMPOSER_CONSTANT_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Desktop MAX_TEXT_SIZE is semantically mapped to the Rust constants crate and enforced by '
+        'Host DurableComposerDraftOwner. Same-head production/test evidence is required before this '
+        'source row can satisfy package semantic coverage.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
 def merge_responsibility_mapping(
     responsibility_path: Path,
     ledger_rows: list[dict],
@@ -1602,6 +1698,8 @@ def merge_responsibility_mapping(
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
     if any(path.startswith('source/packages/agent-kv/') for path in new_by_path):
         _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
+    if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
+        _ensure_constants_composer_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
         require(len(responsibilities) == expected_responsibility_count,
                 f'expected {expected_responsibility_count} responsibility definitions, got {len(responsibilities)}')
@@ -1784,6 +1882,79 @@ def merge_responsibility_mapping(
                 file=sys.stderr,
             )
 
+    if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
+        composer_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == COMPOSER_CONSTANT_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = composer_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            composer_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if COMPOSER_CONSTANT_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        composer_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=COMPOSER_CONSTANT_PRODUCTION_STEP,
+            test_step_name=COMPOSER_CONSTANT_TEST_STEP,
+            evidence_label='constants composer',
+        )
+        if composer_evidence is not None:
+            production_target = COMPOSER_CONSTANT_SOURCE_SPEC['production_target']
+            test_target = COMPOSER_CONSTANT_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'Composer constant evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [COMPOSER_CONSTANT_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': composer_evidence['workflow_name'],
+                'workflow_id': composer_evidence['workflow_id'],
+                'workflow_path': composer_evidence['workflow_path'],
+                'workflow_event': composer_evidence['workflow_event'],
+                'workflow_repository': composer_evidence['workflow_repository'],
+                'workflow_run_id': composer_evidence['workflow_run_id'],
+                'workflow_job_name': composer_evidence['workflow_job_name'],
+                'workflow_job_id': composer_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': composer_evidence['workflow_job_run_attempt'],
+                'run_attempt': composer_evidence['run_attempt'],
+                'run_conclusion': composer_evidence['run_conclusion'],
+                'result': 'passed',
+            }
+            composer_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': composer_evidence['production_step_name'],
+                'workflow_step_number': composer_evidence['production_step_number'],
+                'evidence_ref': production_target + '#composer-max-text-size-production-owner',
+            })
+            composer_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': composer_evidence['test_step_name'],
+                'workflow_step_number': composer_evidence['test_step_number'],
+                'evidence_ref': test_target + '#composer-max-text-size-focused-tests',
+                'focused_tests': list(COMPOSER_CONSTANT_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head constants composer evidence; '
+                'Composer constant package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
     ids = {item.get('responsibility_id') for item in responsibilities}
 
     unmapped_paths = []
@@ -1868,6 +2039,8 @@ def merge_responsibility_mapping(
         agent_kv_spec = AGENT_KV_SOURCE_SPEC_BY_PATH.get(path)
         if agent_kv_spec is not None:
             row['disposition'] = agent_kv_spec['disposition']
+        elif path == COMPOSER_CONSTANT_SOURCE_PATH:
+            row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
         else:
             predecessor_row = predecessor_source_rows.get(path)
             inherited = predecessor_row.get('disposition') if predecessor_row else None

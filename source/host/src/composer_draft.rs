@@ -1,4 +1,5 @@
 use crate::agent_attachment::{AgentAttachment, COMPOSER_ATTACHMENT_LIMIT};
+use fabushi_constants::composer::text_size_allowed;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -7,7 +8,6 @@ use std::{
 };
 
 const SCHEMA_VERSION: u8 = 1;
-const MAX_PROMPT_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -86,9 +86,7 @@ impl DurableComposerDraftOwner {
         now_ms: u64,
     ) -> Result<ComposerDraftRecord, String> {
         validate_scope(account_slot, account_fence, agent_id)?;
-        if prompt.len() > MAX_PROMPT_BYTES {
-            return Err("composer draft prompt is too large".into());
-        }
+        validate_prompt(prompt)?;
         let key = scope_key(account_slot, account_fence, agent_id)?;
         let existing_attachments = self
             .state
@@ -229,6 +227,13 @@ impl DurableComposerDraftOwner {
     }
 }
 
+fn validate_prompt(prompt: &str) -> Result<(), String> {
+    if !text_size_allowed(prompt) {
+        return Err("composer draft prompt is too large".into());
+    }
+    Ok(())
+}
+
 fn scope_key(
     account_slot: Option<&str>,
     account_fence: &str,
@@ -260,4 +265,23 @@ fn validate_identity(value: &str, label: &str) -> Result<(), String> {
 fn quarantine_corrupt(path: &Path, now_ms: u64) -> Result<(), String> {
     let corrupt = path.with_extension(format!("corrupt-{now_ms}.json"));
     fs::rename(path, corrupt).map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fabushi_constants::composer::MAX_TEXT_SIZE;
+
+    #[test]
+    fn prompt_size_limit_matches_desktop_composer_contract() {
+        let at_limit = "x".repeat(MAX_TEXT_SIZE);
+        assert!(validate_prompt(&at_limit).is_ok());
+        drop(at_limit);
+
+        let over_limit = "x".repeat(MAX_TEXT_SIZE + 1);
+        assert_eq!(
+            validate_prompt(&over_limit).unwrap_err(),
+            "composer draft prompt is too large"
+        );
+    }
 }

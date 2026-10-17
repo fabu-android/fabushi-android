@@ -1326,6 +1326,84 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             self.assertIn(source_spec["test_target"], source["android_targets"])
             self.assertTrue(all(target.startswith("source/") for target in source["android_targets"]))
 
+    def test_constants_composer_mapping_uses_desktop_limit_and_real_host_owner(self):
+        module = load_generator()
+        source_path = module.COMPOSER_CONSTANT_SOURCE_PATH
+        primary = {
+            "responsibility_id": module.COMPOSER_CONSTANT_RESPONSIBILITY_ID,
+            "desktop_sources": [],
+            "source_owner": "Canonical draft owner",
+            "android_owner": "Host DurableComposerDraftOwner",
+            "android_target": ["source/host/src/composer_draft.rs"],
+        }
+        responsibilities = padded_responsibilities(primary)
+        source_object = {"sha": "d" * 40, "mode": "100644", "type": "blob"}
+        module._ensure_constants_composer_semantic_mapping(
+            responsibilities,
+            {source_path: source_object},
+            CURRENT_DESKTOP_COMMIT,
+        )
+        owner = next(
+            item for item in responsibilities
+            if item["responsibility_id"] == module.COMPOSER_CONSTANT_RESPONSIBILITY_ID
+        )
+        source = next(item for item in owner["desktop_sources"] if item["path"] == source_path)
+        self.assertEqual(source["blob_sha"], source_object["sha"])
+        self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+        self.assertEqual(source["source_mode"], "100644")
+        self.assertEqual(source["source_type"], "blob")
+        self.assertEqual(source["mapping_quality"], "semantic")
+        self.assertEqual(source["symbols"], ["MAX_TEXT_SIZE"])
+        self.assertIn("source/packages/constants/src/composer.rs", source["android_targets"])
+        self.assertIn("source/host/src/composer_draft.rs", source["android_targets"])
+        self.assertTrue(source["focused_tests"])
+        self.assertIn("8 MiB", source["source_owner"])
+        self.assertIn("DurableComposerDraftOwner", source["android_owner"])
+
+    def test_constants_composer_contract_is_enforced_by_host_and_exact_head_workflow(self):
+        host = (ROOT / "source" / "host" / "src" / "composer_draft.rs").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "grok-android-architecture.yml").read_text(encoding="utf-8")
+        self.assertIn("use fabushi_constants::composer::text_size_allowed;", host)
+        self.assertIn("validate_prompt(prompt)?;", host)
+        self.assertNotIn("const MAX_PROMPT_BYTES: usize = 2 * 1024 * 1024;", host)
+        self.assertIn("prompt_size_limit_matches_desktop_composer_contract", host)
+        self.assertIn("Verify exact-HEAD constants composer production owner", workflow)
+        self.assertIn("Test exact-HEAD constants composer production owner", workflow)
+        self.assertIn("cargo test -p fabushi-constants composer::tests::text_limit_is_inclusive -- --exact", workflow)
+        self.assertIn("cargo test -p fabushi-mahayana-host composer_draft::tests::prompt_size_limit_matches_desktop_composer_contract -- --exact", workflow)
+
+    def test_exact_head_ci_discovery_supports_constants_composer_evidence_steps(self):
+        module = load_generator()
+        android_head = "a" * 40
+        run = {
+            "id": 456, "name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "head_sha": android_head, "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "event": "pull_request", "repository": {"full_name": module.ANDROID_REPOSITORY},
+            "status": "completed", "conclusion": "success", "run_number": 12, "run_attempt": 1,
+        }
+        job = {
+            "id": 789, "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME, "run_attempt": 1,
+            "status": "completed", "conclusion": "success",
+            "steps": [
+                {"name": module.COMPOSER_CONSTANT_PRODUCTION_STEP, "number": 9,
+                 "status": "completed", "conclusion": "success"},
+                {"name": module.COMPOSER_CONSTANT_TEST_STEP, "number": 10,
+                 "status": "completed", "conclusion": "success"},
+            ],
+        }
+        with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}), \
+             patch.object(module, "get", side_effect=[{"workflow_runs": [run]}, {"jobs": [job]}]):
+            evidence = module._latest_exact_head_android_ci_evidence(
+                android_head,
+                production_step_name=module.COMPOSER_CONSTANT_PRODUCTION_STEP,
+                test_step_name=module.COMPOSER_CONSTANT_TEST_STEP,
+                evidence_label="constants composer",
+            )
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["production_step_name"], module.COMPOSER_CONSTANT_PRODUCTION_STEP)
+        self.assertEqual(evidence["test_step_name"], module.COMPOSER_CONSTANT_TEST_STEP)
+
     def test_current_android_provenance_prefers_android_workflow_sha_and_rejects_stale_fallback(self):
         module = load_generator()
         head = "a" * 40

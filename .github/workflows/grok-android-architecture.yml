@@ -60,6 +60,17 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p fabushi-android-agent-kv --all-targets
+      - name: Verify exact-HEAD constants composer production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::composer::text_size_allowed' source/host/src/composer_draft.rs
+          grep -Fq 'validate_prompt(prompt)?;' source/host/src/composer_draft.rs
+      - name: Test exact-HEAD constants composer production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants composer::tests::text_limit_is_inclusive -- --exact
+          cargo test -p fabushi-mahayana-host composer_draft::tests::prompt_size_limit_matches_desktop_composer_contract -- --exact
 
   parity-ledger:
     runs-on: ubuntu-latest
