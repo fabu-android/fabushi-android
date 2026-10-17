@@ -1216,120 +1216,122 @@ def merge_responsibility_mapping(
         item['desktop_sources'] = cleaned
 
     tracked_android_paths = _current_android_tracked_files()
+    has_agent_kv_inventory = any(path in new_by_path for path in AGENT_KV_SOURCE_SPECS)
     rejected_android_targets = []
     source_targets_by_path: dict[str, list[str]] = {}
-    for path, spec in AGENT_KV_SOURCE_SPECS.items():
-        missing_targets = [target for target in spec['android_targets'] if target not in tracked_android_paths]
-        require(not missing_targets,
-                'agent-kv Android target is not tracked at exact HEAD for ' + path + ': ' + ', '.join(missing_targets))
-    for path, raw_targets in source_targets_raw_by_path.items():
-        accepted_targets, rejected_targets = _filter_android_targets(raw_targets, tracked_android_paths)
-        source_targets_by_path[path] = accepted_targets
-        for rejected in rejected_targets:
-            rejected_android_targets.append({
-                'responsibility_id': AGENT_KV_RESPONSIBILITY_ID,
-                'source_path': path,
-                'target': rejected['target'],
-                'reason': rejected['reason'],
-            })
-    ids = {item.get('responsibility_id') for item in responsibilities}
-    require(len(ids) == len(responsibilities),
-            'responsibility mapping contains duplicate responsibility IDs')
-    for item in responsibilities:
-        rid = item['responsibility_id']
-        raw_targets = item.get('android_target')
-        filtered_targets, rejected = _filter_android_targets(raw_targets, tracked_android_paths)
-        if raw_targets is not None and raw_targets != filtered_targets:
-            item['android_target'] = filtered_targets
-        if rejected:
-            item['android_target_rejections'] = rejected
-            rejected_android_targets.extend({
-                'responsibility_id': rid,
-                'target': entry['target'],
-                'reason': entry['reason'],
-            } for entry in rejected)
-            note = (
-                'Rejected Android target labels or paths absent from the current tracked Android file tree; '
-                'see generated/rejected-android-targets.json. Rejections are diagnostic and are not parity evidence.'
-            )
-            notes = item.get('notes')
-            if isinstance(notes, str):
-                if note not in notes:
-                    item['notes'] = notes + ' ' + note
-            elif isinstance(notes, list):
-                if note not in notes:
-                    notes.append(note)
-            else:
-                item['notes'] = note
-        else:
-            item.pop('android_target_rejections', None)
-    targets_by_rid = {
-        item['responsibility_id']: _real_android_targets(
-            item.get('android_target'), tracked_android_paths
-        )
-        for item in responsibilities
-    }
-
-    ci_evidence = _latest_exact_head_android_ci_evidence(android['android_pr_head_sha'])
-    agent_kv_responsibility = next(
-        item for item in responsibilities
-        if item.get('responsibility_id') == AGENT_KV_RESPONSIBILITY_ID
-    )
-    agent_kv_paths = set(AGENT_KV_SOURCE_SPECS)
-    for evidence_key in ('production_evidence', 'test_evidence'):
-        existing_evidence = agent_kv_responsibility.get(evidence_key)
-        if not isinstance(existing_evidence, list):
-            existing_evidence = []
-        agent_kv_responsibility[evidence_key] = [
-            evidence for evidence in existing_evidence
-            if not any(path in agent_kv_paths for path in (
-                evidence.get('source_paths') if isinstance(evidence.get('source_paths'), list)
-                else [evidence.get('source_path')]
-            ))
-        ]
-    if ci_evidence is not None:
+    if has_agent_kv_inventory:
         for path, spec in AGENT_KV_SOURCE_SPECS.items():
-            production_target = spec['production_target']
-            test_target = spec['test_target']
-            require(production_target in tracked_android_paths and test_target in tracked_android_paths,
-                    'agent-kv evidence target is not tracked at exact HEAD: ' + path)
-            common = {
-                'source_paths': [path],
-                'source_commit': current,
-                'desktop_commit': current,
-                'desktop_root_tree': tree_sha,
-                'android_pr_head_sha': android['android_pr_head_sha'],
-                'android_tested_checkout_sha': android['android_checkout_sha'],
-                'workflow_sha': android['workflow_sha'],
-                'workflow_name': ci_evidence['workflow_name'],
-                'workflow_run_id': ci_evidence['workflow_run_id'],
-                'workflow_job_name': ci_evidence['workflow_job_name'],
-                'workflow_job_id': ci_evidence['workflow_job_id'],
-                'run_attempt': ci_evidence['run_attempt'],
-                'run_conclusion': ci_evidence['run_conclusion'],
-                'result': 'passed',
-            }
-            agent_kv_responsibility['production_evidence'].append({
-                **common,
-                'kind': 'production-wiring',
-                'workflow_step_name': ci_evidence['production_step_name'],
-                'workflow_step_number': ci_evidence['production_step_number'],
-                'evidence_ref': production_target,
-            })
-            agent_kv_responsibility['test_evidence'].append({
-                **common,
-                'kind': 'focused-unit-test',
-                'workflow_step_name': ci_evidence['test_step_name'],
-                'workflow_step_number': ci_evidence['test_step_number'],
-                'evidence_ref': test_target,
-                'focused_tests': list(spec['focused_tests']),
-            })
-    else:
-        print(
-            'WARNING: no successful same-exact-head Android build/unit-test job and step evidence; '
-            'agent-kv coverage remains incomplete',
-            file=sys.stderr,
+            missing_targets = [target for target in spec['android_targets'] if target not in tracked_android_paths]
+            require(not missing_targets,
+                    'agent-kv Android target is not tracked at exact HEAD for ' + path + ': ' + ', '.join(missing_targets))
+        for path, raw_targets in source_targets_raw_by_path.items():
+            accepted_targets, rejected_targets = _filter_android_targets(raw_targets, tracked_android_paths)
+            source_targets_by_path[path] = accepted_targets
+            for rejected in rejected_targets:
+                rejected_android_targets.append({
+                    'responsibility_id': AGENT_KV_RESPONSIBILITY_ID,
+                    'source_path': path,
+                    'target': rejected['target'],
+                    'reason': rejected['reason'],
+                })
+        ids = {item.get('responsibility_id') for item in responsibilities}
+        require(len(ids) == len(responsibilities),
+                'responsibility mapping contains duplicate responsibility IDs')
+        for item in responsibilities:
+            rid = item['responsibility_id']
+            raw_targets = item.get('android_target')
+            filtered_targets, rejected = _filter_android_targets(raw_targets, tracked_android_paths)
+            if raw_targets is not None and raw_targets != filtered_targets:
+                item['android_target'] = filtered_targets
+            if rejected:
+                item['android_target_rejections'] = rejected
+                rejected_android_targets.extend({
+                    'responsibility_id': rid,
+                    'target': entry['target'],
+                    'reason': entry['reason'],
+                } for entry in rejected)
+                note = (
+                    'Rejected Android target labels or paths absent from the current tracked Android file tree; '
+                    'see generated/rejected-android-targets.json. Rejections are diagnostic and are not parity evidence.'
+                )
+                notes = item.get('notes')
+                if isinstance(notes, str):
+                    if note not in notes:
+                        item['notes'] = notes + ' ' + note
+                elif isinstance(notes, list):
+                    if note not in notes:
+                        notes.append(note)
+                else:
+                    item['notes'] = note
+            else:
+                item.pop('android_target_rejections', None)
+        targets_by_rid = {
+            item['responsibility_id']: _real_android_targets(
+                item.get('android_target'), tracked_android_paths
+            )
+            for item in responsibilities
+        }
+
+        ci_evidence = _latest_exact_head_android_ci_evidence(android['android_pr_head_sha'])
+        agent_kv_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == AGENT_KV_RESPONSIBILITY_ID
         )
+        agent_kv_paths = set(AGENT_KV_SOURCE_SPECS)
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = agent_kv_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            agent_kv_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if not any(path in agent_kv_paths for path in (
+                    evidence.get('source_paths') if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                ))
+            ]
+        if ci_evidence is not None:
+            for path, spec in AGENT_KV_SOURCE_SPECS.items():
+                production_target = spec['production_target']
+                test_target = spec['test_target']
+                require(production_target in tracked_android_paths and test_target in tracked_android_paths,
+                        'agent-kv evidence target is not tracked at exact HEAD: ' + path)
+                common = {
+                    'source_paths': [path],
+                    'source_commit': current,
+                    'desktop_commit': current,
+                    'desktop_root_tree': tree_sha,
+                    'android_pr_head_sha': android['android_pr_head_sha'],
+                    'android_tested_checkout_sha': android['android_checkout_sha'],
+                    'workflow_sha': android['workflow_sha'],
+                    'workflow_name': ci_evidence['workflow_name'],
+                    'workflow_run_id': ci_evidence['workflow_run_id'],
+                    'workflow_job_name': ci_evidence['workflow_job_name'],
+                    'workflow_job_id': ci_evidence['workflow_job_id'],
+                    'run_attempt': ci_evidence['run_attempt'],
+                    'run_conclusion': ci_evidence['run_conclusion'],
+                    'result': 'passed',
+                }
+                agent_kv_responsibility['production_evidence'].append({
+                    **common,
+                    'kind': 'production-wiring',
+                    'workflow_step_name': ci_evidence['production_step_name'],
+                    'workflow_step_number': ci_evidence['production_step_number'],
+                    'evidence_ref': production_target,
+                })
+                agent_kv_responsibility['test_evidence'].append({
+                    **common,
+                    'kind': 'focused-unit-test',
+                    'workflow_step_name': ci_evidence['test_step_name'],
+                    'workflow_step_number': ci_evidence['test_step_number'],
+                    'evidence_ref': test_target,
+                    'focused_tests': list(spec['focused_tests']),
+                })
+        else:
+            print(
+                'WARNING: no successful same-exact-head Android build/unit-test job and step evidence; '
+                'agent-kv coverage remains incomplete',
+                file=sys.stderr,
+            )
 
     unmapped_paths = []
     coverage_only_paths = []

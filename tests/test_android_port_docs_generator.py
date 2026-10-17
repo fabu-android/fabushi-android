@@ -96,6 +96,72 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         )
         self.assertNotIn("AGENT-RUN-LIFECYCLE-001", [r["responsibility_id"] for r in responsibilities])
 
+    def test_merge_without_agent_kv_inventory_does_not_require_agent_kv_responsibility(self):
+        module = load_generator()
+        with tempfile.TemporaryDirectory() as temp:
+            module.OUT = Path(temp)
+            predecessor = {
+                "authority": {"desktop_commit": CURRENT_DESKTOP_COMMIT, "desktop_root_tree": CURRENT_DESKTOP_TREE},
+                "responsibilities": padded_responsibilities({
+                    "responsibility_id": "RESP-001",
+                    "source_owner": "canonical Host owner",
+                    "android_owner": "Rust Host",
+                    "android_target": ["source/host/src/lib.rs"],
+                    "desktop_sources": [{
+                        "path": "source/host/src/lib.rs",
+                        "blob_sha": "old",
+                        "symbols": ["Host::dispatch"],
+                        "source_mode": "100644",
+                        "source_type": "blob",
+                    }],
+                }),
+            }
+            android_head = "a" * 40
+            provenance = {
+                "android_repository": "fabu-android/fabushi-android",
+                "android_pr": 3,
+                "android_pr_head_sha": android_head,
+                "android_pr_head_ref": "spec/grok-bot-018-android-parity-20260922",
+                "android_pr_base_sha": "b" * 40,
+                "android_pr_base_ref": "main",
+                "android_checkout_sha": android_head,
+                "workflow_event": "push",
+                "workflow_run_id": 456,
+                "run_attempt": 1,
+                "workflow_sha": android_head,
+                "workflow_ref": "ref",
+                "run_url": "https://example.invalid/run/456",
+                "generated_at_utc": "2026-10-17T00:00:00Z",
+            }
+            source_path = "source/host/src/lib.rs"
+            blob = "1" * 40
+            rows = [{
+                "source_path": source_path,
+                "source_commit": CURRENT_DESKTOP_COMMIT,
+                "source_blob_sha": blob,
+                "source_type": "blob",
+                "source_mode": "100644",
+                "disposition": "direct-port",
+                "implementation_status": "unreviewed",
+                "evidence": [],
+            }]
+            inventory = {source_path: {"path": source_path, "sha": blob, "type": "blob", "mode": "100644"}}
+            with patch.object(
+                module, "load_predecessor_responsibility_mapping",
+                return_value=(predecessor, {}, "validated-fixture", {
+                    "artifact_id": None, "artifact_digest": None,
+                    "source_manifest_run_id": 456, "source_manifest_android_head": android_head,
+                }),
+            ), patch.object(module, "current_android_provenance", return_value=provenance):
+                result = module.merge_responsibility_mapping(
+                    Path("responsibility-ledger.json"), rows, inventory,
+                    CURRENT_DESKTOP_COMMIT, CURRENT_DESKTOP_TREE,
+                )
+            self.assertEqual(result["authority"]["responsibility_count"], 306)
+            self.assertEqual(rows[0]["responsibilities"], ["RESP-001"])
+            self.assertEqual(rows[0]["implementation_status"], "unreviewed")
+            self.assertEqual(rows[0]["evidence"][0]["status"], "provenance-only")
+
     def test_agent_kv_inventory_requires_all_seven_current_desktop_sources(self):
         module = load_generator()
         responsibilities = padded_responsibilities({"responsibility_id": "AGENT-RUN-LIFECYCLE-001", "desktop_sources": []})
