@@ -229,6 +229,121 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 CURRENT_DESKTOP_COMMIT,
             )
 
+    def test_automation_schedule_current_source_maps_without_inheriting_verification(self):
+        module = load_generator()
+        responsibility = {
+            "responsibility_id": module.AUTOMATION_SCHEDULE_RESPONSIBILITY_ID,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [{
+                "path": module.AUTOMATION_SCHEDULE_SOURCE_PATH,
+                "blob_sha": "0" * 40,
+                "source_commit": "0" * 40,
+            }],
+            "android_target": [],
+        }
+        responsibilities = padded_responsibilities(responsibility)
+        inventory = {
+            module.AUTOMATION_SCHEDULE_SOURCE_PATH: {
+                "sha": module.AUTOMATION_SCHEDULE_DESKTOP_BLOB,
+                "mode": "100644",
+                "type": "blob",
+            }
+        }
+        module._ensure_automation_schedule_semantic_mapping(
+            responsibilities, inventory, CURRENT_DESKTOP_COMMIT
+        )
+        item = next(
+            value for value in responsibilities
+            if value["responsibility_id"] == module.AUTOMATION_SCHEDULE_RESPONSIBILITY_ID
+        )
+        source = next(
+            value for value in item["desktop_sources"]
+            if value["path"] == module.AUTOMATION_SCHEDULE_SOURCE_PATH
+        )
+        self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+        self.assertEqual(source["blob_sha"], module.AUTOMATION_SCHEDULE_DESKTOP_BLOB)
+        self.assertEqual(source["mapping_quality"], "semantic")
+        self.assertEqual(
+            source["android_targets"], module.AUTOMATION_SCHEDULE_SOURCE_SPEC["android_targets"]
+        )
+        self.assertEqual(item["implementation_status"], "unreviewed")
+        self.assertEqual(item["verification_status"], "not-verified")
+
+    def test_automation_schedule_attaches_fresh_exact_head_evidence_without_promoting_status(self):
+        module = load_generator()
+        responsibility = {
+            "responsibility_id": module.AUTOMATION_SCHEDULE_RESPONSIBILITY_ID,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [],
+            "production_evidence": [{
+                "source_paths": [module.AUTOMATION_SCHEDULE_SOURCE_PATH],
+                "android_pr_head_sha": "0" * 40,
+                "result": "passed",
+            }],
+            "test_evidence": [],
+        }
+        android_head = "a" * 40
+        android = {
+            "android_pr_head_sha": android_head,
+            "android_checkout_sha": android_head,
+            "workflow_sha": android_head,
+        }
+        spec = module.AUTOMATION_SCHEDULE_SOURCE_SPEC
+        tracked = set(spec["android_targets"])
+        module._latest_exact_head_android_ci_evidence = lambda *args, **kwargs: {
+            "workflow_name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "workflow_path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "workflow_event": "pull_request",
+            "workflow_repository": module.ANDROID_REPOSITORY,
+            "workflow_run_id": 39045053681,
+            "workflow_job_name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+            "workflow_job_id": 117432007563,
+            "workflow_job_run_attempt": 1,
+            "run_attempt": 1,
+            "run_conclusion": "success",
+            "production_step_name": module.AUTOMATION_SCHEDULE_PRODUCTION_STEP,
+            "production_step_number": 15,
+            "test_step_name": module.AUTOMATION_SCHEDULE_TEST_STEP,
+            "test_step_number": 16,
+        }
+        module._attach_automation_schedule_exact_head_evidence(
+            [responsibility],
+            {module.AUTOMATION_SCHEDULE_SOURCE_PATH: {
+                "sha": module.AUTOMATION_SCHEDULE_DESKTOP_BLOB,
+                "mode": "100644",
+                "type": "blob",
+            }},
+            tracked,
+            CURRENT_DESKTOP_COMMIT,
+            CURRENT_DESKTOP_TREE,
+            android,
+        )
+        self.assertEqual(responsibility["implementation_status"], "unreviewed")
+        self.assertEqual(responsibility["verification_status"], "not-verified")
+        self.assertEqual(len(responsibility["production_evidence"]), 1)
+        self.assertEqual(
+            responsibility["production_evidence"][0]["android_pr_head_sha"], android_head
+        )
+        self.assertEqual(
+            responsibility["production_evidence"][0]["source_blob_sha"],
+            module.AUTOMATION_SCHEDULE_DESKTOP_BLOB,
+        )
+        self.assertEqual(
+            responsibility["production_evidence"][0]["workflow_step_name"],
+            module.AUTOMATION_SCHEDULE_PRODUCTION_STEP,
+        )
+        self.assertEqual(
+            len(responsibility["test_evidence"]), len(spec["test_targets"])
+        )
+        for evidence in responsibility["test_evidence"]:
+            self.assertEqual(evidence["source_paths"], [module.AUTOMATION_SCHEDULE_SOURCE_PATH])
+            self.assertEqual(evidence["android_tested_checkout_sha"], android_head)
+            self.assertEqual(evidence["workflow_step_name"], module.AUTOMATION_SCHEDULE_TEST_STEP)
+            self.assertTrue(evidence["focused_tests"])
+
     def test_official_device_registration_sources_map_without_claiming_verification(self):
         module = load_generator()
         responsibilities = [

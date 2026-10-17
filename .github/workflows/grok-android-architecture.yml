@@ -103,6 +103,7 @@ jobs:
         run: |
           set -euo pipefail
           test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          cmp source/host/src/automation_schedule.rs source/host/src/automations/automation_schedule.rs
           grep -Fq 'use crate::automation_schedule::{compute_next_run_at, normalize_schedule};' source/host/src/automation_runtime.rs
           grep -Fq 'compute_next_run_at(&spec.schedule, anchor as f64, fallback_time_zone)' source/host/src/automation_runtime.rs
           grep -Fq 'use super::automation_schedule::{compute_next_run_at,normalize_schedule};' source/host/src/automations/automation_store.rs
@@ -123,6 +124,28 @@ jobs:
           set -euo pipefail
           cargo test -p fabushi-android-mcp-core config::mcp_tool_call_timeout::tests::desktop_default_and_legacy_timeouts_are_one_hour -- --exact
           cargo test -p fabushi-mahayana-host runner::mcp_meta_routed_tools::tests::long_timeout_tier_uses_desktop_mcp_default_contract -- --exact
+
+      - name: Verify exact-HEAD client-side tool v2 relay production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'use crate::client_side_tool_v2_relay::{ClientSideToolV2Relay, RendererToolEvent};' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'client_side_tool_v2: ClientSideToolV2Relay' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn accept_client_side_tool_v2_wire' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn replay_client_side_tool_v2' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn retire_client_side_tool_v2_for_account_switch' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq '"coordinator.clientSideToolV2.accept"' source/android-host-jni/src/lib.rs
+          grep -Fq 'self.coordinator.accept_client_side_tool_v2_wire(event.clone())' source/android-host-jni/src/lib.rs
+          grep -Fq '"coordinator.clientSideToolV2.replay"' source/android-host-jni/src/lib.rs
+          grep -Fq 'self.coordinator.replay_client_side_tool_v2()' source/android-host-jni/src/lib.rs
+      - name: Test exact-HEAD client-side tool v2 relay production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::malformed_wire_version_account_base64_type_and_identity_fail_closed -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::duplicate_out_of_order_inconsistent_result_and_stale_epoch_are_rejected -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::reset_account_switch_and_serialized_reopen_replay_are_fenced -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator main::tests::client_side_tool_v2_replay_survives_process_reopen_and_account_retirement_is_durable -- --exact
+          cargo test -p fabushi-android-host-jni tests::client_side_tool_v2_wire_ingress_is_reachable_only_through_rust_coordinator -- --exact
 
   parity-ledger:
     runs-on: ubuntu-latest

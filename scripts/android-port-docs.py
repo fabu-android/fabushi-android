@@ -235,6 +235,47 @@ MCP_TOOL_TIMEOUT_SOURCE_SPEC = {
 }
 
 
+AUTOMATION_SCHEDULE_SOURCE_PATH = 'source/host/src/automations/automation_schedule.rs'
+AUTOMATION_SCHEDULE_DESKTOP_BLOB = '156e0483699813d1c98cdec187ed4b3b477a7489'
+AUTOMATION_SCHEDULE_RESPONSIBILITY_ID = 'AUTOMATION-SCHEDULE-ANDROID-001'
+AUTOMATION_SCHEDULE_PRODUCTION_STEP = 'Verify exact-HEAD automation schedule production owner'
+AUTOMATION_SCHEDULE_TEST_STEP = 'Test exact-HEAD automation schedule production owner'
+AUTOMATION_SCHEDULE_SOURCE_SPEC = {
+    'symbols': [
+        'normalize_schedule',
+        'parse_every_interval_ms',
+        'compile_cron_matcher',
+        'compute_next_run_at',
+        'summarize_schedule_next_7_days',
+    ],
+    'source_owner': (
+        'Desktop Rust Host automation schedule runtime owns schedule normalization, @every/cron aliases, '
+        'explicit/fallback time zones and deterministic next-run derivation'
+    ),
+    'android_owner': (
+        'Byte-identical Rust Host automation schedule direct port consumed by AutomationRuntime and '
+        'FileAutomationStore; presentation owns no canonical next-run truth'
+    ),
+    'android_targets': [
+        'source/host/src/automation_schedule.rs',
+        'source/host/src/automations/automation_schedule.rs',
+        'source/host/src/automation_runtime.rs',
+        'source/host/src/automations/automation_store.rs',
+        'source/host/tests/automation_schedule_contract.rs',
+    ],
+    'production_target': 'source/host/src/automation_runtime.rs',
+    'test_targets': {
+        'source/host/tests/automation_schedule_contract.rs': [
+            'source/host/tests/automation_schedule_contract.rs::frozen_next_run_contract_supports_every_alias_timezone_and_explicit_cron_timezone',
+        ],
+        'source/host/src/automation_runtime.rs': [
+            'source/host/src/automation_runtime.rs::automation_runtime::tests::schedule_is_normalized_and_next_run_is_host_owned',
+        ],
+    },
+    'disposition': 'direct-port',
+}
+
+
 OFFICIAL_DEVICE_SOURCE_SPECS = {
     'source/electron-main/account/auth-service-contract.ts': {
         'responsibility_id': 'ACCOUNT-SESSION-001',
@@ -2001,6 +2042,177 @@ def _ensure_mcp_tool_timeout_semantic_mapping(
 
 
 
+def _ensure_automation_schedule_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Refresh the current Desktop schedule source semantically without inheriting verification."""
+    path = AUTOMATION_SCHEDULE_SOURCE_PATH
+    if path not in new_by_path:
+        return
+    source_object = new_by_path[path]
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'automation schedule Desktop source has invalid blob/mode/type',
+    )
+    require(
+        source_object.get('sha') == AUTOMATION_SCHEDULE_DESKTOP_BLOB,
+        'automation schedule Desktop blob does not match the pinned current-main authority',
+    )
+    item = next(
+        (
+            value for value in responsibilities
+            if value.get('responsibility_id') == AUTOMATION_SCHEDULE_RESPONSIBILITY_ID
+        ),
+        None,
+    )
+    require(item is not None, 'automation schedule responsibility is missing')
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(path, {})
+    source.update({
+        'path': path,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(AUTOMATION_SCHEDULE_SOURCE_SPEC['symbols']),
+        'android_targets': list(AUTOMATION_SCHEDULE_SOURCE_SPEC['android_targets']),
+        'source_owner': AUTOMATION_SCHEDULE_SOURCE_SPEC['source_owner'],
+        'android_owner': AUTOMATION_SCHEDULE_SOURCE_SPEC['android_owner'],
+    })
+    existing_sources[path] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda value: value.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in AUTOMATION_SCHEDULE_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Fresh current-main schedule authority is ' + desktop_commit + '/'
+        + AUTOMATION_SCHEDULE_DESKTOP_BLOB
+        + '; Desktop and Android carry the same Rust schedule algorithm and Android production callers '
+        'are AutomationRuntime plus FileAutomationStore. This mapping remains unreviewed/not-verified '
+        'unless the same Android exact HEAD passes the dedicated production and focused test steps; '
+        'predecessor verification is never inherited.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
+def _attach_automation_schedule_exact_head_evidence(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    tracked_android_paths: set[str],
+    current: str,
+    tree_sha: str,
+    android: dict,
+) -> None:
+    """Attach fresh schedule production/test evidence while preserving not-verified acceptance status."""
+    path = AUTOMATION_SCHEDULE_SOURCE_PATH
+    if path not in new_by_path:
+        return
+    responsibility = next(
+        item for item in responsibilities
+        if item.get('responsibility_id') == AUTOMATION_SCHEDULE_RESPONSIBILITY_ID
+    )
+    for evidence_key in ('production_evidence', 'test_evidence'):
+        existing_evidence = responsibility.get(evidence_key)
+        if not isinstance(existing_evidence, list):
+            existing_evidence = []
+        responsibility[evidence_key] = [
+            evidence for evidence in existing_evidence
+            if path not in (
+                evidence.get('source_paths')
+                if isinstance(evidence.get('source_paths'), list)
+                else [evidence.get('source_path')]
+            )
+        ]
+
+    ci_evidence = _latest_exact_head_android_ci_evidence(
+        android['android_pr_head_sha'],
+        production_step_name=AUTOMATION_SCHEDULE_PRODUCTION_STEP,
+        test_step_name=AUTOMATION_SCHEDULE_TEST_STEP,
+        evidence_label='automation schedule',
+    )
+    if ci_evidence is None:
+        print(
+            'WARNING: no successful same-exact-head automation schedule evidence; '
+            'schedule source remains provenance-only',
+            file=sys.stderr,
+        )
+        return
+
+    production_target = AUTOMATION_SCHEDULE_SOURCE_SPEC['production_target']
+    test_targets = AUTOMATION_SCHEDULE_SOURCE_SPEC['test_targets']
+    required_targets = [
+        *AUTOMATION_SCHEDULE_SOURCE_SPEC['android_targets'],
+        production_target,
+        *test_targets.keys(),
+    ]
+    missing_targets = sorted({
+        target for target in required_targets if target not in tracked_android_paths
+    })
+    require(
+        not missing_targets,
+        'automation schedule evidence target is not tracked at exact HEAD: ' + ', '.join(missing_targets),
+    )
+    common = {
+        'source_paths': [path],
+        'source_commit': current,
+        'desktop_commit': current,
+        'desktop_root_tree': tree_sha,
+        'source_blob_sha': new_by_path[path]['sha'],
+        'android_pr_head_sha': android['android_pr_head_sha'],
+        'android_tested_checkout_sha': android['android_checkout_sha'],
+        'workflow_sha': android['workflow_sha'],
+        'workflow_name': ci_evidence['workflow_name'],
+        'workflow_id': ci_evidence['workflow_id'],
+        'workflow_path': ci_evidence['workflow_path'],
+        'workflow_event': ci_evidence['workflow_event'],
+        'workflow_repository': ci_evidence['workflow_repository'],
+        'workflow_run_id': ci_evidence['workflow_run_id'],
+        'workflow_job_name': ci_evidence['workflow_job_name'],
+        'workflow_job_id': ci_evidence['workflow_job_id'],
+        'workflow_job_run_attempt': ci_evidence['workflow_job_run_attempt'],
+        'run_attempt': ci_evidence['run_attempt'],
+        'run_conclusion': ci_evidence['run_conclusion'],
+        'result': 'passed',
+    }
+    responsibility['production_evidence'].append({
+        **common,
+        'kind': 'production-wiring',
+        'workflow_step_name': ci_evidence['production_step_name'],
+        'workflow_step_number': ci_evidence['production_step_number'],
+        'evidence_ref': production_target + '#automation-schedule-production-owner',
+    })
+    for test_target, focused_tests in test_targets.items():
+        responsibility['test_evidence'].append({
+            **common,
+            'kind': 'focused-unit-test',
+            'workflow_step_name': ci_evidence['test_step_name'],
+            'workflow_step_number': ci_evidence['test_step_number'],
+            'evidence_ref': test_target + '#automation-schedule-focused-tests',
+            'focused_tests': list(focused_tests),
+        })
+
+
 def _ensure_official_device_registration_semantic_mapping(
     responsibilities: list[dict],
     new_by_path: dict[str, dict],
@@ -2191,6 +2403,8 @@ def merge_responsibility_mapping(
         _ensure_constants_structured_log_semantic_mapping(responsibilities, new_by_path, current)
     if MCP_TOOL_TIMEOUT_SOURCE_PATH in new_by_path:
         _ensure_mcp_tool_timeout_semantic_mapping(responsibilities, new_by_path, current)
+    if AUTOMATION_SCHEDULE_SOURCE_PATH in new_by_path:
+        _ensure_automation_schedule_semantic_mapping(responsibilities, new_by_path, current)
     if any(path in new_by_path for path in OFFICIAL_DEVICE_SOURCE_SPECS):
         _ensure_official_device_registration_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
@@ -2252,6 +2466,14 @@ def merge_responsibility_mapping(
         item['desktop_sources'] = cleaned
 
     tracked_android_paths = _current_android_tracked_files()
+    _attach_automation_schedule_exact_head_evidence(
+        responsibilities,
+        new_by_path,
+        tracked_android_paths,
+        current,
+        tree_sha,
+        android,
+    )
     _attach_official_device_registration_exact_head_evidence(
         responsibilities,
         new_by_path,
@@ -2693,6 +2915,8 @@ def merge_responsibility_mapping(
             row['disposition'] = STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['disposition']
         elif path == MCP_TOOL_TIMEOUT_SOURCE_PATH:
             row['disposition'] = MCP_TOOL_TIMEOUT_SOURCE_SPEC['disposition']
+        elif path == AUTOMATION_SCHEDULE_SOURCE_PATH:
+            row['disposition'] = AUTOMATION_SCHEDULE_SOURCE_SPEC['disposition']
         elif path in OFFICIAL_DEVICE_SOURCE_SPECS:
             row['disposition'] = OFFICIAL_DEVICE_SOURCE_SPECS[path]['disposition']
         else:
