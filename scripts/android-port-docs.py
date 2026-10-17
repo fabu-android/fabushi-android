@@ -3776,6 +3776,8 @@ def merge_responsibility_mapping(
             row['disposition'] = agent_kv_spec['disposition']
         elif path in BACKGROUND_COMPLETION_SOURCE_SPECS:
             row['disposition'] = BACKGROUND_COMPLETION_SOURCE_SPECS[path]['disposition']
+        elif path == CLOUD_AGENT_CONSTANT_SOURCE_PATH:
+            row['disposition'] = CLOUD_AGENT_CONSTANT_SOURCE_SPEC['disposition']
         elif path == AGENT_STORE_IDS_SOURCE_PATH:
             row['disposition'] = AGENT_STORE_IDS_SOURCE_SPEC['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
