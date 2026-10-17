@@ -73,6 +73,9 @@ PREDECESSOR_DESKTOP_TREE = '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
 AGENT_KV_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
 AGENT_KV_PRODUCTION_STEP = 'Build exact-HEAD agent-kv production owners'
 AGENT_KV_TEST_STEP = 'Test exact-HEAD agent-kv production owners'
+OFFICIAL_DEVICE_PRODUCTION_STEP = 'Verify exact-HEAD official-device registration owner'
+OFFICIAL_DEVICE_TEST_STEP = 'Test exact-HEAD official-device registration owner'
+OFFICIAL_DEVICE_EVIDENCE_SOURCE_PATH = 'source/product/fabushi/fabushi-official-device-registry.ts'
 AGENT_KV_SOURCE_SPECS = {
     'source/packages/agent-kv/agent-store.ts': {
         'symbols': ['AgentMetadata', 'AgentMetadataSerde', 'AgentStore2', 'getDefaultAgentMetadata', 'generateBlobEncryptionKeyHex', 'isValidBlobEncryptionKeyHex'],
@@ -297,6 +300,18 @@ OFFICIAL_DEVICE_SOURCE_SPECS = {
             'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
             'source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt',
         ],
+        'production_target': 'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+        'test_targets': {
+            'mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiAppAgentSurfaceTest.kt': [
+                'FabushiAppAgentSurfaceTest.officialDeviceGatewayMatchesDesktopStatusOnlyRegistrationBoundary',
+                'FabushiAppAgentSurfaceTest.officialDeviceGatewayFencesExpiryIdentityAndReadOnlyPreflight',
+            ],
+            'mobile/android/app/src/test/java/com/ombhrum/fabushi/RemoteCommandJournalTest.kt': [
+                'RemoteCommandJournalTest.duplicateTerminalRequestReplaysButMismatchedSessionFailsClosed',
+                'RemoteCommandJournalTest.processRestartTurnsPendingSideEffectIntoOutcomeUnknown',
+                'RemoteCommandJournalTest.disconnectMarksAllPendingCommandsOutcomeUnknown',
+            ],
+        },
         'disposition': 'android-adapted',
     },
     'source/product/fabushi/fabushi-official-device-registry.contract.test.ts': {
@@ -2059,6 +2074,97 @@ def _ensure_official_device_registration_semantic_mapping(
             item['notes'] = note
 
 
+def _attach_official_device_registration_exact_head_evidence(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    tracked_android_paths: set[str],
+    current: str,
+    tree_sha: str,
+    android: dict,
+) -> None:
+    """Attach path-scoped same-exact-head Action evidence without upgrading acceptance status."""
+    source_path = OFFICIAL_DEVICE_EVIDENCE_SOURCE_PATH
+    if source_path not in new_by_path:
+        return
+    spec = OFFICIAL_DEVICE_SOURCE_SPECS[source_path]
+    responsibility = next(
+        item for item in responsibilities
+        if item.get('responsibility_id') == spec['responsibility_id']
+    )
+    for evidence_key in ('production_evidence', 'test_evidence'):
+        existing_evidence = responsibility.get(evidence_key)
+        if not isinstance(existing_evidence, list):
+            existing_evidence = []
+        responsibility[evidence_key] = [
+            evidence for evidence in existing_evidence
+            if source_path not in (
+                evidence.get('source_paths')
+                if isinstance(evidence.get('source_paths'), list)
+                else [evidence.get('source_path')]
+            )
+        ]
+
+    ci_evidence = _latest_exact_head_android_ci_evidence(
+        android['android_pr_head_sha'],
+        production_step_name=OFFICIAL_DEVICE_PRODUCTION_STEP,
+        test_step_name=OFFICIAL_DEVICE_TEST_STEP,
+        evidence_label='official-device registration',
+    )
+    if ci_evidence is None:
+        print(
+            'WARNING: no successful same-exact-head official-device registration evidence; '
+            'official-device source remains provenance-only',
+            file=sys.stderr,
+        )
+        return
+
+    production_target = spec['production_target']
+    test_targets = spec['test_targets']
+    required_targets = [production_target, *test_targets.keys()]
+    missing_targets = [target for target in required_targets if target not in tracked_android_paths]
+    require(
+        not missing_targets,
+        'official-device evidence target is not tracked at exact HEAD: ' + ', '.join(missing_targets),
+    )
+    common = {
+        'source_paths': [source_path],
+        'source_commit': current,
+        'desktop_commit': current,
+        'desktop_root_tree': tree_sha,
+        'android_pr_head_sha': android['android_pr_head_sha'],
+        'android_tested_checkout_sha': android['android_checkout_sha'],
+        'workflow_sha': android['workflow_sha'],
+        'workflow_name': ci_evidence['workflow_name'],
+        'workflow_id': ci_evidence['workflow_id'],
+        'workflow_path': ci_evidence['workflow_path'],
+        'workflow_event': ci_evidence['workflow_event'],
+        'workflow_repository': ci_evidence['workflow_repository'],
+        'workflow_run_id': ci_evidence['workflow_run_id'],
+        'workflow_job_name': ci_evidence['workflow_job_name'],
+        'workflow_job_id': ci_evidence['workflow_job_id'],
+        'workflow_job_run_attempt': ci_evidence['workflow_job_run_attempt'],
+        'run_attempt': ci_evidence['run_attempt'],
+        'run_conclusion': ci_evidence['run_conclusion'],
+        'result': 'passed',
+    }
+    responsibility['production_evidence'].append({
+        **common,
+        'kind': 'production-wiring',
+        'workflow_step_name': ci_evidence['production_step_name'],
+        'workflow_step_number': ci_evidence['production_step_number'],
+        'evidence_ref': production_target + '#official-device-registration-production-owner',
+    })
+    for test_target, focused_tests in test_targets.items():
+        responsibility['test_evidence'].append({
+            **common,
+            'kind': 'focused-unit-test',
+            'workflow_step_name': ci_evidence['test_step_name'],
+            'workflow_step_number': ci_evidence['test_step_number'],
+            'evidence_ref': test_target + '#official-device-registration-focused-tests',
+            'focused_tests': list(focused_tests),
+        })
+
+
 def merge_responsibility_mapping(
     responsibility_path: Path,
     ledger_rows: list[dict],
@@ -2146,6 +2252,14 @@ def merge_responsibility_mapping(
         item['desktop_sources'] = cleaned
 
     tracked_android_paths = _current_android_tracked_files()
+    _attach_official_device_registration_exact_head_evidence(
+        responsibilities,
+        new_by_path,
+        tracked_android_paths,
+        current,
+        tree_sha,
+        android,
+    )
     has_agent_kv_inventory = any(path in new_by_path for path in AGENT_KV_SOURCE_SPECS)
     rejected_android_targets = []
     source_targets_by_path: dict[str, list[str]] = {}

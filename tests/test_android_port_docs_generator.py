@@ -264,6 +264,66 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             self.assertTrue(source["source_owner"])
             self.assertTrue(source["android_owner"])
 
+    def test_official_device_registration_attaches_path_scoped_exact_head_evidence_without_promoting_status(self):
+        module = load_generator()
+        source_path = module.OFFICIAL_DEVICE_EVIDENCE_SOURCE_PATH
+        spec = module.OFFICIAL_DEVICE_SOURCE_SPECS[source_path]
+        responsibility = {
+            "responsibility_id": spec["responsibility_id"],
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [],
+            "production_evidence": [],
+            "test_evidence": [],
+        }
+        android_head = "a" * 40
+        android = {
+            "android_pr_head_sha": android_head,
+            "android_checkout_sha": android_head,
+            "workflow_sha": android_head,
+        }
+        tracked = {spec["production_target"], *spec["test_targets"].keys()}
+        module._latest_exact_head_android_ci_evidence = lambda *args, **kwargs: {
+            "workflow_name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "workflow_path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "workflow_event": "pull_request",
+            "workflow_repository": module.ANDROID_REPOSITORY,
+            "workflow_run_id": 123,
+            "workflow_job_name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+            "workflow_job_id": 456,
+            "workflow_job_run_attempt": 1,
+            "run_attempt": 1,
+            "run_conclusion": "success",
+            "production_step_name": module.OFFICIAL_DEVICE_PRODUCTION_STEP,
+            "production_step_number": 13,
+            "test_step_name": module.OFFICIAL_DEVICE_TEST_STEP,
+            "test_step_number": 14,
+        }
+        module._attach_official_device_registration_exact_head_evidence(
+            [responsibility],
+            {source_path: {"sha": "1" * 40, "mode": "100644", "type": "blob"}},
+            tracked,
+            CURRENT_DESKTOP_COMMIT,
+            CURRENT_DESKTOP_TREE,
+            android,
+        )
+        self.assertEqual(responsibility["implementation_status"], "unreviewed")
+        self.assertEqual(responsibility["verification_status"], "not-verified")
+        self.assertEqual(len(responsibility["production_evidence"]), 1)
+        self.assertEqual(len(responsibility["test_evidence"]), len(spec["test_targets"]))
+        production = responsibility["production_evidence"][0]
+        self.assertEqual(production["source_paths"], [source_path])
+        self.assertEqual(production["android_pr_head_sha"], android_head)
+        self.assertEqual(production["workflow_step_name"], module.OFFICIAL_DEVICE_PRODUCTION_STEP)
+        self.assertIn(production["evidence_ref"].split("#", 1)[0], tracked)
+        for evidence in responsibility["test_evidence"]:
+            self.assertEqual(evidence["source_paths"], [source_path])
+            self.assertEqual(evidence["android_tested_checkout_sha"], android_head)
+            self.assertEqual(evidence["workflow_step_name"], module.OFFICIAL_DEVICE_TEST_STEP)
+            self.assertIn(evidence["evidence_ref"].split("#", 1)[0], tracked)
+            self.assertTrue(evidence["focused_tests"])
+
     def test_legacy_top_level_fallback_is_not_a_semantic_anchor(self):
         module = load_generator()
         fallback = {
