@@ -99,6 +99,19 @@ jobs:
           set -euo pipefail
           ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.FabushiAppAgentSurfaceTest --tests com.ombhrum.fabushi.RemoteCommandJournalTest
 
+      - name: Verify exact-HEAD automation schedule production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'use crate::automation_schedule::{compute_next_run_at, normalize_schedule};' source/host/src/automation_runtime.rs
+          grep -Fq 'compute_next_run_at(&spec.schedule, anchor as f64, fallback_time_zone)' source/host/src/automation_runtime.rs
+          grep -Fq 'use super::automation_schedule::{compute_next_run_at,normalize_schedule};' source/host/src/automations/automation_store.rs
+      - name: Test exact-HEAD automation schedule production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host --test automation_schedule_contract frozen_next_run_contract_supports_every_alias_timezone_and_explicit_cron_timezone -- --exact
+          cargo test -p fabushi-mahayana-host automation_runtime::tests::schedule_is_normalized_and_next_run_is_host_owned -- --exact
+
       - name: Verify exact-HEAD MCP tool timeout production owner
         run: |
           set -euo pipefail
