@@ -60,6 +60,10 @@ OWNER_PLACEHOLDER_VALUES = frozenset({
 DEFAULT_RESPONSIBILITY_ARTIFACT = '12072277149'
 DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
 ANDROID_REPOSITORY = 'fabu-android/fabushi-android'
+EXPECTED_DESKTOP_COMMIT = 'dc81eac2df50f6c08ae4daf98988076bfdc956d9'
+EXPECTED_DESKTOP_TREE = '04473e188c5088b66a7f984e5e89e6d47e75eafb'
+PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
+PREDECESSOR_DESKTOP_TREE = '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
 
 AGENT_KV_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
 AGENT_KV_PRODUCTION_STEP = 'Build exact-HEAD native Mahayana Coordinator Host'
@@ -155,7 +159,7 @@ def current_android_provenance() -> dict:
     require(SHA.fullmatch(head or '') is not None, 'Invalid Android PR head SHA')
     checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     require(checkout == head, f'Android checkout/head mismatch: checkout={checkout} head={head}')
-    workflow_sha = os.environ.get('GITHUB_WORKFLOW_SHA') or None
+    workflow_sha = os.environ.get('ANDROID_WORKFLOW_SHA') or os.environ.get('GITHUB_WORKFLOW_SHA') or None
     require(workflow_sha == checkout,
             f'Android workflow SHA/checkout mismatch: workflow={workflow_sha} checkout={checkout}')
     run_id = os.environ.get('GITHUB_RUN_ID')
@@ -937,9 +941,9 @@ def _parse_persisted_source_inventory(
         require(manifest.get('source_commit') == desktop_commit,
                 'local source inventory manifest source_commit mismatch')
     require(manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT,
-            'local source authority does not preserve the 8258-entry tracked non-tree inventory')
+            'local source authority does not preserve the 8260-entry current tracked non-tree inventory')
     require(len(source_rows) == EXPECTED_TRACKED_NON_TREE_COUNT,
-            f'local source inventory must contain 8258 unique rows, got {len(source_rows)}')
+            f'local source inventory must contain 8260 unique rows, got {len(source_rows)}')
     if expected_paths is not None:
         require(set(source_rows) == set(expected_paths),
                 'persisted source inventory paths do not match the current Desktop inventory')
@@ -952,6 +956,81 @@ def _parse_persisted_source_inventory(
             require(row.get('source_mode') == item.get('mode'),
                     'persisted source inventory mode does not match current Desktop inventory: ' + path)
     return source_rows
+
+
+def _validate_rebaseline_boundary(
+    baseline: dict,
+    prior_manifest: dict,
+    prior_ledger_text: str,
+    current: str,
+    tree_sha: str,
+    tree_entry_count: int,
+    tracked_non_tree_count: int,
+) -> list[dict]:
+    """Accept only the pinned historical inventory or an already-current inventory."""
+    require(baseline.get('desktop_repository') == 'bhrumom/fabushi-desktop',
+            'rebaseline baseline repository mismatch')
+    require(current == EXPECTED_DESKTOP_COMMIT,
+            'Desktop main commit differs from the pinned current authority')
+    require(tree_sha == EXPECTED_DESKTOP_TREE,
+            'Desktop main tree differs from the pinned current authority')
+    require(baseline.get('desktop_commit') == current,
+            'baseline Desktop commit does not match current main')
+    require(baseline.get('desktop_root_tree') == tree_sha,
+            'baseline Desktop tree does not match current main')
+    require(tree_entry_count == EXPECTED_TREE_ENTRY_COUNT,
+            f'current Desktop tree must contain {EXPECTED_TREE_ENTRY_COUNT} recursive entries, got {tree_entry_count}')
+    require(tracked_non_tree_count == EXPECTED_TRACKED_NON_TREE_COUNT,
+            f'current Desktop tree must contain {EXPECTED_TRACKED_NON_TREE_COUNT} non-tree entries, got {tracked_non_tree_count}')
+    require(prior_manifest.get('authority_current') is True,
+            'persisted source manifest is not a validated authority snapshot')
+    prior_commit = prior_manifest.get('desktop_commit')
+    prior_tree = prior_manifest.get('desktop_root_tree')
+    if (prior_commit, prior_tree) == (PREDECESSOR_DESKTOP_COMMIT, PREDECESSOR_DESKTOP_TREE):
+        prior_rows_expected = PREDECESSOR_TRACKED_NON_TREE_COUNT
+        prior_tree_expected = PREDECESSOR_TREE_ENTRY_COUNT
+    elif (prior_commit, prior_tree) == (current, tree_sha):
+        prior_rows_expected = EXPECTED_TRACKED_NON_TREE_COUNT
+        prior_tree_expected = EXPECTED_TREE_ENTRY_COUNT
+    else:
+        raise ValueError('persisted source manifest is neither the pinned historical 8258/9412 predecessor nor the current 8260/9415 authority')
+    require(prior_manifest.get('source_commit') == prior_commit,
+            'persisted source manifest source_commit does not match its Desktop commit')
+    require(prior_manifest.get('tree_entries') == prior_tree_expected,
+            f'persisted source manifest tree count does not match its authority boundary ({prior_tree_expected})')
+    require(prior_manifest.get('tracked_non_tree_entries') == prior_rows_expected,
+            f'persisted source manifest non-tree count does not match its authority boundary ({prior_rows_expected})')
+    require(prior_manifest.get('authority_ledger_rows') == prior_rows_expected,
+            f'persisted source manifest ledger count does not match its authority boundary ({prior_rows_expected})')
+    actual_digest = hashlib.sha256(prior_ledger_text.encode('utf-8')).hexdigest()
+    require(actual_digest == prior_manifest.get('ledger_sha256'),
+            'persisted source ledger digest does not match its source manifest')
+    rows, paths = [], []
+    for line_number, line in enumerate(prior_ledger_text.splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise ValueError(f'persisted source ledger has invalid JSON at line {line_number}') from error
+        require(isinstance(row, dict), f'persisted source ledger row {line_number} is not an object')
+        path = row.get('source_path')
+        require(isinstance(path, str) and path, 'persisted source ledger row has no source_path')
+        source_path = PurePosixPath(path)
+        require(not source_path.is_absolute() and '..' not in source_path.parts,
+                'persisted source ledger contains unsafe path: ' + path)
+        require(row.get('source_commit') == prior_commit,
+                'persisted source ledger row has stale source commit: ' + path)
+        require(row.get('source_type') in ALLOWED_SOURCE_TYPES
+                and row.get('source_mode') in ALLOWED_SOURCE_MODES
+                and SHA.fullmatch(str(row.get('source_blob_sha') or '')) is not None,
+                'persisted source ledger row has invalid blob/mode/type: ' + path)
+        paths.append(path)
+        rows.append(row)
+    require(paths == sorted(paths), 'persisted source ledger is not in canonical sorted path order')
+    require(len(paths) == len(set(paths)) == prior_rows_expected,
+            f'persisted source ledger expected {prior_rows_expected} unique rows, got {len(paths)}')
+    return rows
 
 
 def validate_exact_head_provenance(
@@ -1518,13 +1597,36 @@ def rebaseline() -> None:
     entries, fallback = complete_tree(repo, tree_sha)
     files = [item for item in entries if item['type'] != 'tree']
     require(files, 'Empty source inventory during rebaseline')
-
-    old_rows = []
-    if ledger_path.is_file():
-        for line in ledger_path.read_text(encoding='utf-8').splitlines():
-            if line.strip():
-                old_rows.append(json.loads(line))
-    old_by_path = {row.get('source_path'): row for row in old_rows if row.get('source_path')}
+    require(current == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
+            'Desktop authority changed from the pinned dc81eac2/04473e18 current-main lock')
+    require(len(entries) == EXPECTED_TREE_ENTRY_COUNT,
+            f'current Desktop recursive tree count mismatch: expected {EXPECTED_TREE_ENTRY_COUNT}, got {len(entries)}')
+    require(len(files) == EXPECTED_TRACKED_NON_TREE_COUNT,
+            f'current Desktop non-tree count mismatch: expected {EXPECTED_TRACKED_NON_TREE_COUNT}, got {len(files)}')
+    require(manifest_path.is_file() and ledger_path.is_file(),
+            'persisted source manifest and ledger are required for a guarded rebaseline')
+    prior_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    prior_ledger_text = ledger_path.read_text(encoding='utf-8')
+    old_rows = _validate_rebaseline_boundary(
+        baseline, prior_manifest, prior_ledger_text, current, tree_sha, len(entries), len(files)
+    )
+    old_by_path = {row['source_path']: row for row in old_rows}
+    require(responsibility_path.is_file(), 'Persistent responsibility ledger is missing')
+    prior_responsibility_doc = json.loads(responsibility_path.read_text(encoding='utf-8'))
+    prior_authority = prior_responsibility_doc.get('authority') or {}
+    require(prior_responsibility_doc.get('source_commit') == prior_manifest.get('desktop_commit'),
+            'persisted responsibility ledger source_commit differs from source manifest')
+    require(prior_authority.get('desktop_commit') == prior_manifest.get('desktop_commit')
+            and prior_authority.get('desktop_root_tree') == prior_manifest.get('desktop_root_tree'),
+            'persisted responsibility ledger authority differs from source manifest')
+    prior_responsibilities = prior_responsibility_doc.get('responsibilities')
+    require(isinstance(prior_responsibilities, list)
+            and len(prior_responsibilities) == EXPECTED_RESPONSIBILITY_COUNT,
+            f'persisted responsibility ledger must retain {EXPECTED_RESPONSIBILITY_COUNT} definitions')
+    prior_ids = [item.get('responsibility_id') for item in prior_responsibilities]
+    require(all(isinstance(item, str) and item for item in prior_ids)
+            and len(set(prior_ids)) == EXPECTED_RESPONSIBILITY_COUNT,
+            'persisted responsibility ledger must retain 306 unique responsibility IDs')
     new_by_path = {item['path']: item for item in files}
 
     preserved = 0
@@ -1553,8 +1655,6 @@ def rebaseline() -> None:
     deleted_paths = sorted(set(old_by_path) - set(new_by_path))
     changed_paths.update(deleted_paths)
     ledger_text = serialize_source_inventory_ledger(new_rows)
-    ledger_path.write_text(ledger_text, encoding='utf-8')
-
     top_counts = {}
     for item in files:
         top = item['path'].split('/')[0]
@@ -1594,12 +1694,10 @@ def rebaseline() -> None:
         'closure_review': f'incremental-rebaseline-preserved-{preserved}-reset-{reset}-deleted-{len(deleted_paths)}',
         'product_acceptance': 'not-claimed',
     }
-    save(manifest_path, manifest)
-
     baseline['observed_date'] = time.strftime('%Y-%m-%d', time.gmtime())
     baseline['desktop_commit'] = current
     baseline['desktop_root_tree'] = tree_sha
-    save(baseline_path, baseline)
+    require(responsibility_path.is_file(), 'Persistent responsibility ledger is missing')
 
     touched_responsibilities = 0
     deleted_anchor_count = 0
@@ -1627,9 +1725,13 @@ def rebaseline() -> None:
                         deleted_anchor_count += 1
                     continue
                 refreshed = dict(source)
-                if refreshed.get('blob_sha') != item['sha']:
+                expected_source_fields = {
+                    'source_commit': current, 'blob_sha': item['sha'],
+                    'source_mode': item['mode'], 'source_type': item['type'],
+                }
+                if any(refreshed.get(field) != value for field, value in expected_source_fields.items()):
                     touched = True
-                    refreshed['blob_sha'] = item['sha']
+                refreshed.update(expected_source_fields)
                 refreshed_sources.append(refreshed)
             if touched:
                 responsibility['desktop_sources'] = refreshed_sources
@@ -1663,7 +1765,6 @@ def rebaseline() -> None:
             if linked:
                 row['responsibilities'] = sorted(set(row.get('responsibilities') or []) | linked)
         ledger_text = serialize_source_inventory_ledger(new_rows)
-        ledger_path.write_text(ledger_text, encoding='utf-8')
         manifest['ledger_sha256'] = hashlib.sha256(ledger_text.encode('utf-8')).hexdigest()
         mapping_authority = responsibility_doc.get('authority', {})
         manifest['responsibility_mapping_status'] = mapping_authority.get('status')
@@ -1682,17 +1783,23 @@ def rebaseline() -> None:
         responsibility_doc['android_pr_head_sha'] = android['android_pr_head_sha']
         responsibility_doc['android_tested_checkout_sha'] = android['android_checkout_sha']
         responsibility_doc['workflow_sha'] = android['workflow_sha']
-        save(responsibility_path, responsibility_doc)
-        save(manifest_path, manifest)
-        persisted_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-        persisted_responsibilities = json.loads(responsibility_path.read_text(encoding='utf-8'))
+        manifest['authority_ledger_rows'] = len(new_rows)
+        manifest['tree_entries'] = len(entries)
+        manifest['tracked_non_tree_entries'] = len(files)
         persisted_rows = _parse_persisted_source_inventory(
-            ledger_path.read_text(encoding='utf-8'), persisted_manifest
+            ledger_text, manifest, expected_paths=new_by_path
         )
         validate_exact_head_provenance(
-            persisted_manifest, list(persisted_rows.values()), persisted_responsibilities,
+            manifest, list(persisted_rows.values()), responsibility_doc,
             android['android_checkout_sha'],
         )
+        latest_desktop_main = get(f'/repos/{repo}/branches/main')['commit']['sha']
+        require(latest_desktop_main == current,
+                'Desktop main moved during rebaseline; authority files were not persisted')
+        ledger_path.write_text(ledger_text, encoding='utf-8')
+        save(responsibility_path, responsibility_doc)
+        save(manifest_path, manifest)
+        save(baseline_path, baseline)
 
     summary = {
         'desktop_commit': current,
@@ -1713,7 +1820,10 @@ def inventory() -> None:
     repo, sha, tree_sha = (baseline[name] for name in ('desktop_repository', 'desktop_commit', 'desktop_root_tree'))
     require(repo == 'bhrumom/fabushi-desktop', 'Unexpected source repository')
     require(SHA.fullmatch(sha) is not None and SHA.fullmatch(tree_sha) is not None, 'Invalid source lock')
+    require(sha == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
+            'baseline does not match the pinned current Desktop main authority')
     before = get(f'/repos/{repo}/branches/main')['commit']['sha']
+    require(before == sha, 'Desktop main moved beyond the pinned baseline; rebaseline required')
     commit = get(f'/repos/{repo}/git/commits/{sha}')
     require(commit.get('sha') == sha and commit['tree']['sha'] == tree_sha, 'Commit-to-tree lock mismatch')
     root = get(f'/repos/{repo}/git/trees/{tree_sha}')
@@ -1759,9 +1869,9 @@ def inventory() -> None:
     require(authority_manifest.get('desktop_root_tree') == tree_sha,
             'Persistent source inventory manifest Desktop tree mismatch')
     require(authority_manifest.get('tree_entries') == EXPECTED_TREE_ENTRY_COUNT == len(entries),
-            'Persistent source inventory manifest must preserve all 9412 recursive tree entries')
+            'Persistent source inventory manifest must preserve all 9415 recursive tree entries')
     require(authority_manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT == len(files),
-            'Persistent source inventory manifest must preserve all 8258 tracked non-tree entries')
+            'Persistent source inventory manifest must preserve all 8260 tracked non-tree entries')
     require(authority_manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
             'Persistent source inventory manifest row count mismatch')
     authority_rows = _parse_persisted_source_inventory(
@@ -1840,11 +1950,6 @@ def audit_receipt() -> None:
     require(bool(token), 'GH_TOKEN is required to download the predecessor artifact')
     artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', DEFAULT_RESPONSIBILITY_ARTIFACT)
     expected_digest = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST', DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST)
-    req = Request(
-        f'https://api.github.com/repos/{ANDROID_REPOSITORY}/actions/artifacts/{artifact_id}/zip',
-        headers={'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + token,
-                 'User-Agent': 'Fabushi-Android-Audit-Receipt', 'X-GitHub-Api-Version': '2022-11-28'},
-    )
     artifact_bytes = _download_predecessor_bytes(artifact_id, token)
     require(artifact_bytes.startswith(b'PK\x03\x04'), 'predecessor download is not a ZIP artifact')
     actual_digest = 'sha256:' + hashlib.sha256(artifact_bytes).hexdigest()
@@ -1876,12 +1981,68 @@ def audit_receipt() -> None:
     baseline, manifest = docs['baseline'], docs['source_inventory_manifest']
     responsibility = docs['responsibility_ledger']
     coverage = docs['package_semantic_coverage']
-    source_rows = [json.loads(line) for line in inputs['source_inventory_ledger'].read_text(encoding='utf-8').splitlines() if line.strip()]
+    require(baseline.get('desktop_repository') == 'bhrumom/fabushi-desktop'
+            and baseline.get('desktop_commit') == EXPECTED_DESKTOP_COMMIT
+            and baseline.get('desktop_root_tree') == EXPECTED_DESKTOP_TREE,
+            'receipt baseline does not match the pinned current Desktop authority')
+    require(manifest.get('authority_current') is True
+            and manifest.get('desktop_commit') == baseline.get('desktop_commit')
+            and manifest.get('source_commit') == manifest.get('desktop_commit')
+            and manifest.get('desktop_root_tree') == baseline.get('desktop_root_tree'),
+            'receipt source manifest and baseline authority disagree')
+    require(manifest.get('tree_entries') == EXPECTED_TREE_ENTRY_COUNT
+            and manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT
+            and manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
+            'receipt manifest does not preserve the current 8260/9415 authority boundary')
+    tree_path = OUT / 'desktop-complete-tree.json'
+    require(tree_path.is_file(), 'current Desktop complete-tree evidence is missing')
+    tree_doc = json.loads(tree_path.read_text(encoding='utf-8'))
+    require(tree_doc.get('sha') == manifest.get('desktop_root_tree'),
+            'receipt complete-tree evidence does not match the current Desktop root tree')
+    tree_entries = tree_doc.get('tree')
+    require(isinstance(tree_entries, list) and len(tree_entries) == EXPECTED_TREE_ENTRY_COUNT,
+            'receipt complete-tree evidence has the wrong recursive entry count')
+    tree_paths = [item.get('path') for item in tree_entries]
+    require(all(isinstance(path, str) and path for path in tree_paths)
+            and len(tree_paths) == len(set(tree_paths)),
+            'receipt complete-tree evidence contains missing or duplicate paths')
+    expected_paths = {item['path']: item for item in tree_entries if item.get('type') != 'tree'}
+    require(len(expected_paths) == EXPECTED_TRACKED_NON_TREE_COUNT,
+            'receipt complete-tree evidence has the wrong non-tree entry count')
+    source_ledger_text = inputs['source_inventory_ledger'].read_text(encoding='utf-8')
+    source_rows_by_path = _parse_persisted_source_inventory(
+        source_ledger_text, manifest, expected_paths=expected_paths
+    )
+    source_rows = list(source_rows_by_path.values())
     responsibility_rows = responsibility.get('responsibilities', [])
     source_paths = [row.get('source_path') for row in source_rows]
     responsibility_ids = [row.get('responsibility_id') for row in responsibility_rows]
-    require(len(source_paths) == len(set(source_paths)) == EXPECTED_TRACKED_NON_TREE_COUNT, 'receipt requires 8260 unique current source_path values')
-    require(len(responsibility_ids) == len(set(responsibility_ids)) == 306, 'receipt requires 306 unique responsibility IDs')
+    require(len(source_paths) == len(set(source_paths)) == EXPECTED_TRACKED_NON_TREE_COUNT,
+            'receipt requires 8260 unique current source_path values')
+    require(len(responsibility_ids) == len(set(responsibility_ids)) == EXPECTED_RESPONSIBILITY_COUNT,
+            'receipt requires 306 unique responsibility IDs')
+    provenance = current_android_provenance()
+    validate_exact_head_provenance(
+        manifest, source_rows, responsibility, provenance['android_checkout_sha']
+    )
+    package_rows = [row for row in source_rows if row['source_path'].startswith('source/packages/')]
+    require(len(package_rows) == EXPECTED_PACKAGES_SOURCE_COUNT,
+            'receipt package inventory does not preserve all 852 source/packages rows')
+    require(coverage.get('expected_source_rows') == EXPECTED_PACKAGES_SOURCE_COUNT
+            and coverage.get('observed_source_rows') == EXPECTED_PACKAGES_SOURCE_COUNT,
+            'receipt package coverage has an incorrect expected/observed denominator')
+    require(coverage.get('complete_rows', 0) + coverage.get('strict_incomplete_rows', 0)
+            == EXPECTED_PACKAGES_SOURCE_COUNT,
+            'receipt package coverage does not account for all source/packages rows')
+    require(coverage.get('strict_incomplete_rows') == sum(
+        row.get('package_semantic_coverage_status') == 'incomplete' for row in package_rows
+    ), 'receipt strict-incomplete count disagrees with source ledger rows')
+    require(coverage.get('complete_rows') == sum(
+        row.get('package_semantic_coverage_status') == 'complete' for row in package_rows
+    ), 'receipt complete count disagrees with source ledger rows')
+    require(coverage.get('status') == (
+        'passed' if coverage.get('strict_incomplete_rows') == 0 else 'incomplete'
+    ), 'receipt package coverage status disagrees with strict closure counts')
     rejected_path = OUT / 'rejected-android-targets.json'
     require(rejected_path.is_file(), 'rejected target diagnostics missing')
     rejected = json.loads(rejected_path.read_text(encoding='utf-8'))
@@ -1900,7 +2061,6 @@ def audit_receipt() -> None:
             'implementation_status': item.get('implementation_status', 'unreviewed'),
             'verification_status': item.get('verification_status', 'not-verified'),
         })
-    provenance = current_android_provenance()
     receipt_doc = {
         'schema': 'MAHAYANA_ANDROID_AUDIT_RECEIPT_V1',
         'status': 'audit-only-not-product-acceptance',

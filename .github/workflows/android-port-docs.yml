@@ -21,26 +21,50 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle'
       - 'settings.gradle.kts'
+  pull_request:
+    branches:
+      - 'main'
+    paths:
+      - 'source/**'
+      - 'native/**'
+      - 'frontend/**'
+      - 'contracts/**'
+      - 'projects/**'
+      - 'desktop/**'
+      - 'tests/**'
+      - 'scripts/android-port-docs.py'
+      - 'scripts/check_grok_android_parity.py'
+      - 'scripts/test-android-port-*.py'
+      - '.github/workflows/android-port-docs.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.gradle'
+      - 'build.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
   workflow_dispatch:
 permissions:
   contents: read
   actions: read
+  pull-requests: read
 concurrency:
-  group: android-port-docs-${{ github.ref_name }}
+  group: android-port-docs-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: false
 jobs:
   source-inventory:
     name: Pinned Desktop complete source inventory
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 3
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Assert exact Android checkout provenance
         env:
-          ANDROID_PR_HEAD_SHA: ${{ github.sha }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$ANDROID_PR_HEAD_SHA"
@@ -49,11 +73,12 @@ jobs:
       - name: Rebaseline persistent source authority in Actions worktree
         env:
           GH_TOKEN: ${{ github.token }}
-          ANDROID_PR_HEAD_SHA: ${{ github.sha }}
-          ANDROID_PR_HEAD_REF: ${{ github.ref_name }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           ANDROID_PR_NUMBER: '3'
           ANDROID_CI_EVIDENCE_WAIT_SECONDS: '1200'
-          ANDROID_PR_BASE_SHA: ''
+          ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           ANDROID_PR_BASE_REF: 'main'
           ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
           ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
@@ -61,11 +86,12 @@ jobs:
       - name: Enumerate source and verify authority
         env:
           GH_TOKEN: ${{ github.token }}
-          ANDROID_PR_HEAD_SHA: ${{ github.sha }}
-          ANDROID_PR_HEAD_REF: ${{ github.ref_name }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           ANDROID_PR_NUMBER: '3'
           ANDROID_CI_EVIDENCE_WAIT_SECONDS: '1200'
-          ANDROID_PR_BASE_SHA: ''
+          ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py inventory
       - name: Verify generated exact authority bookkeeping
@@ -199,8 +225,9 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-          ANDROID_PR_HEAD_SHA: ${{ github.sha }}
-          ANDROID_PR_HEAD_REF: ${{ github.ref_name }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           ANDROID_PR_NUMBER: '3'
           ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
           ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
@@ -233,6 +260,7 @@ jobs:
           retention-days: 30
   documentation-contract:
     name: Documentation completeness and links
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 3
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -240,7 +268,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Validate documentation completeness
         run: python3 scripts/android-port-docs.py validate

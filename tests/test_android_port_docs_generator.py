@@ -1,10 +1,14 @@
 import hashlib
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
+import zipfile
+from email.message import Message
 from pathlib import Path
-from unittest.mock import patch
+from urllib.error import HTTPError
+from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,8 +17,6 @@ CURRENT_DESKTOP_COMMIT = "dc81eac2df50f6c08ae4daf98988076bfdc956d9"
 CURRENT_DESKTOP_TREE = "04473e188c5088b66a7f984e5e89e6d47e75eafb"
 
 
-
-def load_generator()
 def load_generator():
     spec = importlib.util.spec_from_file_location("android_port_docs", SCRIPT)
     module = importlib.util.module_from_spec(spec)
@@ -28,6 +30,13 @@ def padded_responsibilities(primary):
         {"responsibility_id": f"RESP-{index:03d}", "desktop_sources": []}
         for index in range(2, 307)
     ]
+
+
+def valid_zip_bytes():
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("predecessor.json", "{}")
+    return output.getvalue()
 
 
 class AndroidPortDocsGeneratorTest(unittest.TestCase):
@@ -500,9 +509,237 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             with patch.dict("os.environ",{"GH_TOKEN":"token"}),patch.object(module,"_download_predecessor_bytes",side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12072277149 (HTTP 404)")):
                 with self.assertRaisesRegex(RuntimeError,"HTTP 404"):
                     module.load_predecessor_responsibility_mapping(path)
-            with patch.dict("os.environ",{"GH_TOKEN":"token","ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST":"sha256:"+"0"*64}),patch.object(module,"_download_predecessor_bytes",return_value=b"PK\\x03\\x04invalid"):
+            with patch.dict("os.environ",{"GH_TOKEN":"token","ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST":"sha256:"+"0"*64}),patch.object(module,"_download_predecessor_bytes",return_value=b"PK\x03\x04invalid"):
                 with self.assertRaisesRegex(ValueError,"digest mismatch"):
                     module.load_predecessor_responsibility_mapping(path)
+
+
+    def test_rebaseline_boundary_distinguishes_historical_and_current_counts(self):
+        module = load_generator()
+        self.assertEqual(
+            (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
+             module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
+            (8258, 9412, 8260, 9415),
+        )
+        current_commit, current_tree = "d" * 40, "e" * 40
+        predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
+        with patch.object(module, "EXPECTED_DESKTOP_COMMIT", current_commit), \
+             patch.object(module, "EXPECTED_DESKTOP_TREE", current_tree), \
+             patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", predecessor_commit), \
+             patch.object(module, "PREDECESSOR_DESKTOP_TREE", predecessor_tree), \
+             patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \
+             patch.object(module, "EXPECTED_TREE_ENTRY_COUNT", 3), \
+             patch.object(module, "PREDECESSOR_TRACKED_NON_TREE_COUNT", 1), \
+             patch.object(module, "PREDECESSOR_TREE_ENTRY_COUNT", 2):
+            baseline = {
+                "desktop_repository": "bhrumom/fabushi-desktop",
+                "desktop_commit": current_commit,
+                "desktop_root_tree": current_tree,
+            }
+            old_row = {
+                "source_path": "old/path.rs", "source_commit": predecessor_commit,
+                "source_blob_sha": "1" * 40, "source_type": "blob", "source_mode": "100644",
+            }
+            old_text = json.dumps(old_row, sort_keys=True) + "\n"
+            old_manifest = {
+                "authority_current": True, "desktop_commit": predecessor_commit,
+                "source_commit": predecessor_commit, "desktop_root_tree": predecessor_tree,
+                "tree_entries": 2, "tracked_non_tree_entries": 1, "authority_ledger_rows": 1,
+                "ledger_sha256": hashlib.sha256(old_text.encode("utf-8")).hexdigest(),
+            }
+            old_rows = module._validate_rebaseline_boundary(
+                baseline, old_manifest, old_text, current_commit, current_tree, 3, 2
+            )
+            self.assertEqual(old_rows[0]["source_path"], "old/path.rs")
+
+            current_rows = [
+                {"source_path": "AGENTS.md", "source_commit": current_commit,
+                 "source_blob_sha": "2" * 40, "source_type": "blob", "source_mode": "100644"},
+                {"source_path": "source/file.rs", "source_commit": current_commit,
+                 "source_blob_sha": "3" * 40, "source_type": "blob", "source_mode": "100755"},
+            ]
+            current_text = "".join(json.dumps(row, sort_keys=True) + "\n" for row in current_rows)
+            current_manifest = {
+                "authority_current": True, "desktop_commit": current_commit,
+                "source_commit": current_commit, "desktop_root_tree": current_tree,
+                "tree_entries": 3, "tracked_non_tree_entries": 2, "authority_ledger_rows": 2,
+                "ledger_sha256": hashlib.sha256(current_text.encode("utf-8")).hexdigest(),
+            }
+            accepted = module._validate_rebaseline_boundary(
+                baseline, current_manifest, current_text, current_commit, current_tree, 3, 2
+            )
+            self.assertEqual(len(accepted), 2)
+
+            bad_manifest = dict(current_manifest)
+            bad_manifest["tree_entries"] = 9412
+            with self.assertRaisesRegex(ValueError, "tree count does not match its authority boundary"):
+                module._validate_rebaseline_boundary(
+                    baseline, bad_manifest, current_text, current_commit, current_tree, 3, 2
+                )
+            with self.assertRaisesRegex(ValueError, "digest does not match"):
+                module._validate_rebaseline_boundary(
+                    baseline, current_manifest, current_text + " ", current_commit, current_tree, 3, 2
+                )
+
+    def test_predecessor_redirect_does_not_forward_bearer_and_uses_real_zip_magic(self):
+        module = load_generator()
+        endpoint = "https://api.github.com/repos/fabu-android/fabushi-android/actions/artifacts/123/zip"
+        signed_url = "https://artifact-storage.example.test/signed.zip"
+        headers = Message()
+        headers["Location"] = signed_url
+        redirect_error = HTTPError(endpoint, 302, "Found", headers, None)
+        opener = Mock()
+        opener.open.side_effect = redirect_error
+        payload = valid_zip_bytes()
+        with patch.object(module.urllib.request, "build_opener", return_value=opener) as build_opener, \
+             patch.object(module, "urlopen", return_value=io.BytesIO(payload)) as signed_download:
+            downloaded = module._download_predecessor_bytes("123", "sensitive-token")
+        self.assertEqual(downloaded, payload)
+        self.assertTrue(downloaded.startswith(b"PK\x03\x04"))
+        initial_request = opener.open.call_args.args[0]
+        self.assertEqual(initial_request.get_header("Authorization"), "Bearer sensitive-token")
+        redirected_request = signed_download.call_args.args[0]
+        self.assertEqual(redirected_request.full_url, signed_url)
+        self.assertIsNone(redirected_request.get_header("Authorization"))
+        self.assertIsInstance(build_opener.call_args.args[0], module._NoRedirect)
+
+    def test_predecessor_download_http_401_fails_closed(self):
+        module = load_generator()
+        endpoint = "https://api.github.com/repos/fabu-android/fabushi-android/actions/artifacts/123/zip"
+        opener = Mock()
+        opener.open.side_effect = HTTPError(endpoint, 401, "Unauthorized", Message(), None)
+        with patch.object(module.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(RuntimeError, "HTTP 401"):
+                module._download_predecessor_bytes("123", "invalid-token")
+
+    def test_predecessor_download_rejects_invalid_zip_magic(self):
+        module = load_generator()
+        opener = Mock()
+        opener.open.return_value = io.BytesIO(b"not-a-zip")
+        with patch.object(module.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(ValueError, "not a ZIP local-file header"):
+                module._download_predecessor_bytes("123", "token")
+
+    def test_audit_receipt_is_written_to_runner_temp_with_real_json_newline(self):
+        module = load_generator()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            doc = root / "docs" / "android-port"
+            authority = doc / "authority"
+            out = doc / "generated"
+            runner_temp = root / "runner-temp"
+            authority.mkdir(parents=True)
+            out.mkdir(parents=True)
+            runner_temp.mkdir(parents=True)
+            desktop_commit, desktop_tree, android_head = "d" * 40, "e" * 40, "a" * 40
+            tree_entries = [
+                {"path": "AGENTS.md", "sha": "1" * 40, "type": "blob", "mode": "100644"},
+                {"path": "source", "sha": "2" * 40, "type": "tree", "mode": "040000"},
+                {"path": "source/host.rs", "sha": "3" * 40, "type": "blob", "mode": "100644"},
+            ]
+            (out / "desktop-complete-tree.json").write_text(
+                json.dumps({"sha": desktop_tree, "truncated": False, "tree": tree_entries}),
+                encoding="utf-8",
+            )
+            source_rows = []
+            responsibility_rows = []
+            for index, (path, blob_sha) in enumerate(
+                [("AGENTS.md", "1" * 40), ("source/host.rs", "3" * 40)], start=1
+            ):
+                responsibility_id = f"RESP-{index:03d}"
+                evidence = {
+                    "source_path": path, "source_blob_sha": blob_sha,
+                    "desktop_commit": desktop_commit, "desktop_root_tree": desktop_tree,
+                    "source_commit": desktop_commit, "android_head": android_head,
+                    "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
+                    "workflow_sha": android_head, "workflow_run_id": 456,
+                }
+                source_rows.append({
+                    "source_repository": "bhrumom/fabushi-desktop",
+                    "source_commit": desktop_commit, "source_path": path,
+                    "source_blob_sha": blob_sha, "source_type": "blob", "source_mode": "100644",
+                    "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
+                    "workflow_sha": android_head,
+                    "responsibilities": [responsibility_id], "android_targets": ["source/host.rs"],
+                    "disposition": "android-adapted", "implementation_status": "unreviewed",
+                    "verification_status": "not-verified", "evidence": [evidence],
+                })
+                responsibility_rows.append({
+                    "responsibility_id": responsibility_id, "source_commit": desktop_commit,
+                    "android_head_at_update": android_head, "implementation_status": "unreviewed",
+                    "verification_status": "not-verified", "android_target": ["source/host.rs"],
+                    "desktop_sources": [{
+                        "path": path, "source_commit": desktop_commit, "blob_sha": blob_sha,
+                        "source_mode": "100644", "source_type": "blob",
+                    }],
+                })
+            ledger_text = "".join(json.dumps(row, sort_keys=True) + "\n" for row in source_rows)
+            manifest = {
+                "authority_current": True, "desktop_commit": desktop_commit,
+                "source_commit": desktop_commit, "desktop_root_tree": desktop_tree,
+                "tree_entries": 3, "tracked_non_tree_entries": 2, "authority_ledger_rows": 2,
+                "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
+                "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
+                "workflow_sha": android_head, "workflow_run_id": 456,
+            }
+            baseline = {
+                "desktop_repository": "bhrumom/fabushi-desktop",
+                "desktop_commit": desktop_commit, "desktop_root_tree": desktop_tree,
+            }
+            responsibility = {
+                "source_commit": desktop_commit, "android_pr_head_sha": android_head,
+                "android_tested_checkout_sha": android_head, "workflow_sha": android_head,
+                "authority": {"desktop_commit": desktop_commit, "desktop_root_tree": desktop_tree},
+                "responsibilities": responsibility_rows,
+            }
+            coverage = {
+                "status": "passed", "expected_source_rows": 0, "observed_source_rows": 0,
+                "complete_rows": 0, "strict_incomplete_rows": 0, "gaps": [],
+            }
+            (authority / "baseline.json").write_text(json.dumps(baseline), encoding="utf-8")
+            (authority / "source-inventory-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            (authority / "source-inventory-ledger.jsonl").write_text(ledger_text, encoding="utf-8")
+            (authority / "responsibility-ledger.json").write_text(json.dumps(responsibility), encoding="utf-8")
+            (out / "packages-semantic-coverage.json").write_text(json.dumps(coverage), encoding="utf-8")
+            (out / "rejected-android-targets.json").write_text(
+                json.dumps({"status": "passed", "count": 0, "rejected_targets": []}), encoding="utf-8"
+            )
+            payload = valid_zip_bytes()
+            provenance = {
+                "android_repository": "fabu-android/fabushi-android", "android_pr": 3,
+                "android_pr_head_sha": android_head, "android_pr_head_ref": "branch",
+                "android_pr_base_sha": "b" * 40, "android_pr_base_ref": "main",
+                "android_checkout_sha": android_head, "workflow_event": "pull_request",
+                "workflow_run_id": 456, "run_attempt": 1, "workflow_sha": android_head,
+                "workflow_ref": "ref", "run_url": "https://example.invalid/run/456",
+                "generated_at_utc": "2026-10-17T00:00:00Z",
+            }
+            digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+            with patch.object(module, "ROOT", root), patch.object(module, "DOC", doc), \
+                 patch.object(module, "OUT", out), \
+                 patch.object(module, "EXPECTED_DESKTOP_COMMIT", desktop_commit), \
+                 patch.object(module, "EXPECTED_DESKTOP_TREE", desktop_tree), \
+                 patch.object(module, "EXPECTED_TREE_ENTRY_COUNT", 3), \
+                 patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \
+                 patch.object(module, "EXPECTED_RESPONSIBILITY_COUNT", 2), \
+                 patch.object(module, "EXPECTED_PACKAGES_SOURCE_COUNT", 0), \
+                 patch.object(module, "_download_predecessor_bytes", return_value=payload), \
+                 patch.object(module, "_current_android_tracked_files", return_value={"source/host.rs"}), \
+                 patch.object(module, "current_android_provenance", return_value=provenance), \
+                 patch.dict("os.environ", {
+                     "RUNNER_TEMP": str(runner_temp), "GH_TOKEN": "token",
+                     "ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT": "123",
+                     "ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST": digest,
+                 }):
+                module.audit_receipt()
+            receipt_path = runner_temp / "android-port-audit-receipt.json"
+            raw_receipt = receipt_path.read_bytes()
+            self.assertTrue(raw_receipt.endswith(b"\n"))
+            self.assertFalse((out / "android-port-audit-receipt.json").exists())
+            receipt = json.loads(raw_receipt.decode("utf-8"))
+            self.assertEqual(receipt["predecessor_artifact"]["downloaded_bytes_sha256"], digest)
+            self.assertEqual(receipt["inventory"]["unique_source_path_count"], 2)
+            self.assertEqual(receipt["inventory"]["unique_responsibility_id_count"], 2)
 
     def test_inventory_serializer_is_canonical_and_digestable(self):
         module = load_generator()
@@ -752,7 +989,10 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("assert coverage['complete_rows'] + coverage['strict_incomplete_rows'] == 852", workflow)
         push_trigger = workflow.split('  workflow_dispatch:', 1)[0]
         self.assertIn('  push:', push_trigger)
+        self.assertIn('  pull_request:', push_trigger)
         self.assertIn("'spec/grok-bot-018-android-parity-20260922'", push_trigger)
+        self.assertIn('github.event.pull_request.head.sha || github.sha', workflow)
+        self.assertIn('pull-requests: read', workflow)
         self.assertIn('      - \'source/**\'', push_trigger)
         self.assertIn('      - \'native/**\'', push_trigger)
         self.assertIn('      - \'tests/**\'', push_trigger)
