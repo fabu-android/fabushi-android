@@ -213,7 +213,7 @@ jobs:
                 and evidence.get('workflow_sha') == expected
                 and evidence.get('desktop_commit') == m['desktop_commit']
                 and evidence.get('source_commit') == m['desktop_commit']
-                and evidence.get('evidence_ref') in row['android_targets']
+                and (evidence.get('evidence_ref') or '').split('#', 1)[0] in row['android_targets']
                 for evidence in candidates
               ), (path, evidence_key, step_name)
           print(json.dumps({
