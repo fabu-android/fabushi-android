@@ -639,83 +639,98 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
     def test_packages_semantic_coverage_preserves_852_rows_and_requires_all_closure_fields(self):
         module = load_generator()
         target = "source/host/src/lib.rs"
+        test_target = "tests/HostContractTest.kt"
         paths = [f"source/packages/package-{index:03d}/lib.rs" for index in range(852)]
         rows = [{
-            "source_path": path,
-            "responsibilities": [],
-            "mapping_status": "unmapped",
-            "android_targets": [],
-            "disposition": None,
+            "source_path": path, "responsibilities": [], "mapping_status": "unmapped",
+            "android_targets": [], "disposition": None,
         } for path in paths]
-        empty_responsibilities = padded_responsibilities({"responsibility_id": "PKG-RESP-001"})
-        incomplete = module._package_semantic_coverage(rows, empty_responsibilities, {target})
+        owner = padded_responsibilities({"responsibility_id": "PKG-RESP-001"})
+        incomplete = module._package_semantic_coverage(rows, owner, {target, test_target})
         self.assertEqual(incomplete["expected_source_rows"], 852)
         self.assertEqual(incomplete["observed_source_rows"], 852)
         self.assertEqual(incomplete["strict_incomplete_rows"], 852)
         self.assertEqual(incomplete["semantic_responsibility_rows"], 0)
-        self.assertTrue(all(row["package_semantic_coverage_status"] == "incomplete" for row in rows))
 
+        android_head = "a" * 40
         semantic_sources = [
             {"path": path, "mapping_quality": "semantic", "source_mode": "100644", "source_type": "blob"}
             for path in paths
         ]
-        android_head = "a" * 40
         production_evidence = [{
             "kind": "production-wiring", "source_path": path,
             "source_commit": CURRENT_DESKTOP_COMMIT, "desktop_commit": CURRENT_DESKTOP_COMMIT,
             "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
-            "workflow_sha": android_head, "evidence_ref": "source/host/src/lib.rs#production-owner",
-            "result": "passed",
+            "workflow_sha": android_head, "evidence_ref": target + "#production",
+            "workflow_run_id": 456, "workflow_job_id": 789, "result": "passed",
         } for path in paths]
         test_evidence = [{
             "kind": "contract-test", "source_path": path,
             "source_commit": CURRENT_DESKTOP_COMMIT, "desktop_commit": CURRENT_DESKTOP_COMMIT,
             "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
-            "workflow_sha": android_head, "evidence_ref": "tests/HostContractTest.kt#test",
-            "result": "passed",
+            "workflow_sha": android_head, "evidence_ref": test_target + "#test",
+            "workflow_run_id": 456, "workflow_job_id": 790, "result": "passed",
         } for path in paths]
-        owner = {
+        responsibility = {
             "responsibility_id": "PKG-RESP-001",
             "source_owner": "Desktop package source owner",
             "android_owner": "Android Mahayana package runtime owner",
-            "android_target": [target],
-            "desktop_sources": semantic_sources,
-            "production_evidence": production_evidence,
-            "test_evidence": test_evidence,
+            "android_target": [target], "desktop_sources": semantic_sources,
+            "production_evidence": production_evidence, "test_evidence": test_evidence,
         }
         complete_rows = [{
-            "source_path": path,
-            "source_commit": CURRENT_DESKTOP_COMMIT,
-            "android_pr_head_sha": android_head,
-            "android_tested_checkout_sha": android_head,
-            "workflow_sha": android_head,
-            "responsibilities": ["PKG-RESP-001"],
-            "mapping_status": "semantic",
-            "android_targets": [target],
-            "disposition": "direct-port",
+            "source_path": path, "source_commit": CURRENT_DESKTOP_COMMIT,
+            "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head, "responsibilities": ["PKG-RESP-001"],
+            "mapping_status": "semantic", "android_targets": [target], "disposition": "direct-port",
         } for path in paths]
-        complete = module._package_semantic_coverage(
-            complete_rows, padded_responsibilities(owner), {target}
-        )
+
+        def github_api(run_conclusion, production_conclusion, test_conclusion):
+            def get_ci(endpoint):
+                if endpoint == "/repos/fabu-android/fabushi-android/actions/runs/456":
+                    return {"name": "Android Parity Full CI",
+                            "repository": {"full_name": "fabu-android/fabushi-android"},
+                            "head_sha": android_head, "status": "completed", "conclusion": run_conclusion}
+                if endpoint == "/repos/fabu-android/fabushi-android/actions/runs/456/jobs?per_page=100":
+                    return {"jobs": [
+                        {"id": 789, "status": "completed", "conclusion": production_conclusion},
+                        {"id": 790, "status": "completed", "conclusion": test_conclusion},
+                    ]}
+                raise AssertionError("Unexpected GitHub API endpoint: " + endpoint)
+            return get_ci
+
+        tracked = {target, test_target}
+        with patch.object(module, "get", side_effect=github_api("success", "success", "success")):
+            complete = module._package_semantic_coverage(
+                complete_rows, padded_responsibilities(responsibility), tracked
+            )
         self.assertEqual(complete["status"], "passed")
         self.assertEqual(complete["strict_incomplete_rows"], 0)
         self.assertEqual(complete["complete_rows"], 852)
 
-        coverage_only_owner = {
-            **owner,
-            "desktop_sources": [
-                {**source, "mapping_quality": "coverage-only"} for source in semantic_sources
-            ],
-        }
+        with patch.object(module, "get", side_effect=github_api("failure", "success", "success")):
+            failed_run = module._package_semantic_coverage(
+                json.loads(json.dumps(complete_rows)), padded_responsibilities(responsibility), tracked
+            )
+        self.assertEqual(failed_run["strict_incomplete_rows"], 852)
+        self.assertIn("missing-exact-head-production-evidence", failed_run["gaps"][0]["reasons"])
+        with patch.object(module, "get", side_effect=github_api("success", "failure", "cancelled")):
+            failed_jobs = module._package_semantic_coverage(
+                json.loads(json.dumps(complete_rows)), padded_responsibilities(responsibility), tracked
+            )
+        self.assertEqual(failed_jobs["strict_incomplete_rows"], 852)
+        self.assertIn("missing-exact-head-test-evidence", failed_jobs["gaps"][0]["reasons"])
+
+        coverage_only_owner = {**responsibility, "desktop_sources": [
+            {**source, "mapping_quality": "coverage-only"} for source in semantic_sources
+        ]}
         coverage_only_rows = [{
-            "source_path": path,
-            "responsibilities": ["PKG-RESP-001"],
-            "mapping_status": "coverage-only",
-            "android_targets": [target],
+            "source_path": path, "responsibilities": ["PKG-RESP-001"],
+            "mapping_status": "coverage-only", "android_targets": [target],
             "disposition": "direct-port",
         } for path in paths]
         coverage_only = module._package_semantic_coverage(
-            coverage_only_rows, padded_responsibilities(coverage_only_owner), {target}
+            coverage_only_rows, padded_responsibilities(coverage_only_owner), tracked
         )
         self.assertEqual(coverage_only["semantic_responsibility_rows"], 0)
         self.assertGreater(coverage_only["strict_incomplete_rows"], 0)
@@ -816,6 +831,11 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn('docs/android-port/generated/packages-semantic-coverage.json', workflow)
         self.assertIn('docs/android-port/generated/rejected-android-targets.json', workflow)
         self.assertIn("assert coverage['complete_rows'] + coverage['strict_incomplete_rows'] == 852", workflow)
+        push_trigger = workflow.split('  workflow_dispatch:', 1)[0]
+        self.assertIn('  push:', push_trigger)
+        self.assertIn("'spec/grok-bot-018-android-parity-20260922'", push_trigger)
+        self.assertNotIn('    paths:', push_trigger,
+                         'exact-head provenance must refresh on every branch push, including Android code-only changes')
 
 
     def test_persistence_dispatches_docs_on_persisted_head_without_push_loop(self):
