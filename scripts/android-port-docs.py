@@ -478,7 +478,7 @@ def _package_action_job_passed(
                 or (run.get('repository') or {}).get('full_name') != ANDROID_REPOSITORY
                 or run.get('head_sha') != android_head
                 or run.get('status') != 'completed'
-                or run.get('conclusion') not in {'success', 'failure'}
+                or run.get('conclusion') != 'success'
                 or run.get('run_attempt') != entry.get('run_attempt')
             ):
                 action_job_cache[key] = False

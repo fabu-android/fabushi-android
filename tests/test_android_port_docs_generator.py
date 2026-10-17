@@ -874,14 +874,16 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             successful_steps_in_failed_run = module._package_semantic_coverage(
                 json.loads(json.dumps(complete_rows)), padded_responsibilities(responsibility), tracked
             )
-        self.assertEqual(successful_steps_in_failed_run["strict_incomplete_rows"], 0)
-        self.assertEqual(successful_steps_in_failed_run["status"], "passed")
+        self.assertEqual(successful_steps_in_failed_run["strict_incomplete_rows"], 852)
+        self.assertEqual(successful_steps_in_failed_run["status"], "incomplete")
+        self.assertIn("missing-exact-head-production-evidence", successful_steps_in_failed_run["gaps"][0]["reasons"])
 
         with patch.object(module, "get", side_effect=github_api("cancelled", "success", "success")):
             cancelled_run = module._package_semantic_coverage(
                 json.loads(json.dumps(complete_rows)), padded_responsibilities(responsibility), tracked
             )
         self.assertEqual(cancelled_run["strict_incomplete_rows"], 852)
+        self.assertEqual(cancelled_run["status"], "incomplete")
         self.assertIn("missing-exact-head-production-evidence", cancelled_run["gaps"][0]["reasons"])
         with patch.object(module, "get", side_effect=github_api("success", "failure", "cancelled")):
             failed_jobs = module._package_semantic_coverage(
