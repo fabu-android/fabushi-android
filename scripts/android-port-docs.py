@@ -169,6 +169,39 @@ COMPOSER_CONSTANT_SOURCE_SPEC = {
 }
 
 
+STRUCTURED_LOG_CONSTANT_SOURCE_PATH = 'source/packages/constants/structured-log.ts'
+STRUCTURED_LOG_CONSTANT_RESPONSIBILITY_ID = 'OBSERVABILITY-STRUCTURED-LOG-001'
+STRUCTURED_LOG_CONSTANT_PRODUCTION_STEP = 'Verify exact-HEAD constants structured log production owner'
+STRUCTURED_LOG_CONSTANT_TEST_STEP = 'Test exact-HEAD constants structured log production owner'
+STRUCTURED_LOG_CONSTANT_SOURCE_SPEC = {
+    'symbols': [
+        'STRUCTURED_LOG_REPLAY_MAX_AGE_MS',
+        'STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS',
+    ],
+    'source_owner': (
+        'Desktop source/packages/constants/structured-log.ts owns the canonical 17-hour replay '
+        'window and 2-hour future timestamp skew contract'
+    ),
+    'android_owner': (
+        'Rust fabushi-constants structured-log policy consumed by the Host '
+        'AndroidStructuredLogSpill durable telemetry owner'
+    ),
+    'android_targets': [
+        'source/packages/constants/src/structured_log.rs',
+        'source/host/src/android_structured_log_spill.rs',
+    ],
+    'production_target': 'source/host/src/android_structured_log_spill.rs',
+    'test_target': 'source/host/src/android_structured_log_spill.rs',
+    'focused_tests': [
+        'source/packages/constants/src/structured_log.rs::tests::replay_window_rejects_old_and_far_future_entries',
+        'source/host/src/android_structured_log_spill.rs::tests::replay_age_matches_desktop_structured_log_contract',
+        'source/host/src/android_structured_log_spill.rs::tests::spill_rejects_far_future_records_under_desktop_skew_contract',
+    ],
+    'disposition': 'android-adapted',
+}
+
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
@@ -1678,6 +1711,75 @@ def _ensure_constants_composer_semantic_mapping(
         item['notes'] = note
 
 
+def _ensure_constants_structured_log_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach Desktop structured-log replay/skew policy to the durable Android Host spool."""
+    source_object = new_by_path.get(STRUCTURED_LOG_CONSTANT_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop structured-log constant has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == STRUCTURED_LOG_CONSTANT_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'structured-log constant semantic mapping requires exactly one '
+        + STRUCTURED_LOG_CONSTANT_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(STRUCTURED_LOG_CONSTANT_SOURCE_PATH, {})
+    source.update({
+        'path': STRUCTURED_LOG_CONSTANT_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['symbols']),
+        'focused_tests': list(STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['android_targets']),
+        'source_owner': STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['source_owner'],
+        'android_owner': STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['android_owner'],
+    })
+    existing_sources[STRUCTURED_LOG_CONSTANT_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda value: value.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Desktop structured-log replay age/future-skew constants are semantically mapped to '
+        'fabushi-constants and enforced by AndroidStructuredLogSpill before recovered telemetry '
+        'can re-enter the shipper. Same-head production/test evidence is required for package closure.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
 def merge_responsibility_mapping(
     responsibility_path: Path,
     ledger_rows: list[dict],
@@ -1700,6 +1802,8 @@ def merge_responsibility_mapping(
         _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_constants_composer_semantic_mapping(responsibilities, new_by_path, current)
+    if STRUCTURED_LOG_CONSTANT_SOURCE_PATH in new_by_path:
+        _ensure_constants_structured_log_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
         require(len(responsibilities) == expected_responsibility_count,
                 f'expected {expected_responsibility_count} responsibility definitions, got {len(responsibilities)}')
@@ -1762,6 +1866,80 @@ def merge_responsibility_mapping(
     has_agent_kv_inventory = any(path in new_by_path for path in AGENT_KV_SOURCE_SPECS)
     rejected_android_targets = []
     source_targets_by_path: dict[str, list[str]] = {}
+
+    if STRUCTURED_LOG_CONSTANT_SOURCE_PATH in new_by_path:
+        structured_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == STRUCTURED_LOG_CONSTANT_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = structured_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            structured_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if STRUCTURED_LOG_CONSTANT_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        structured_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=STRUCTURED_LOG_CONSTANT_PRODUCTION_STEP,
+            test_step_name=STRUCTURED_LOG_CONSTANT_TEST_STEP,
+            evidence_label='constants structured log',
+        )
+        if structured_evidence is not None:
+            production_target = STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['production_target']
+            test_target = STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'structured-log constant evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [STRUCTURED_LOG_CONSTANT_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': structured_evidence['workflow_name'],
+                'workflow_id': structured_evidence['workflow_id'],
+                'workflow_path': structured_evidence['workflow_path'],
+                'workflow_event': structured_evidence['workflow_event'],
+                'workflow_repository': structured_evidence['workflow_repository'],
+                'workflow_run_id': structured_evidence['workflow_run_id'],
+                'workflow_job_name': structured_evidence['workflow_job_name'],
+                'workflow_job_id': structured_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': structured_evidence['workflow_job_run_attempt'],
+                'run_attempt': structured_evidence['run_attempt'],
+                'run_conclusion': structured_evidence['run_conclusion'],
+                'result': 'passed',
+            }
+            structured_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': structured_evidence['production_step_name'],
+                'workflow_step_number': structured_evidence['production_step_number'],
+                'evidence_ref': production_target + '#structured-log-replay-skew-production-owner',
+            })
+            structured_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': structured_evidence['test_step_name'],
+                'workflow_step_number': structured_evidence['test_step_number'],
+                'evidence_ref': test_target + '#structured-log-replay-skew-focused-tests',
+                'focused_tests': list(STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head constants structured-log evidence; '
+                'structured-log constant package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
     ids = {item.get('responsibility_id') for item in responsibilities}
     require(len(ids) == len(responsibilities),
             'responsibility mapping contains duplicate responsibility IDs')
@@ -2041,6 +2219,8 @@ def merge_responsibility_mapping(
             row['disposition'] = agent_kv_spec['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
             row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
+        elif path == STRUCTURED_LOG_CONSTANT_SOURCE_PATH:
+            row['disposition'] = STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['disposition']
         else:
             predecessor_row = predecessor_source_rows.get(path)
             inherited = predecessor_row.get('disposition') if predecessor_row else None

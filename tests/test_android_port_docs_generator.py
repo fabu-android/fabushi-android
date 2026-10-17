@@ -1404,6 +1404,74 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(evidence["production_step_name"], module.COMPOSER_CONSTANT_PRODUCTION_STEP)
         self.assertEqual(evidence["test_step_name"], module.COMPOSER_CONSTANT_TEST_STEP)
 
+    def test_constants_structured_log_mapping_uses_desktop_policy_and_real_host_owner(self):
+        module = load_generator()
+        source_path = module.STRUCTURED_LOG_CONSTANT_SOURCE_PATH
+        primary = {
+            "responsibility_id": module.STRUCTURED_LOG_CONSTANT_RESPONSIBILITY_ID,
+            "desktop_sources": [],
+            "source_owner": "Desktop structured telemetry owner",
+            "android_owner": "Host structured telemetry owner",
+            "android_target": ["source/host/src/android_structured_log_spill.rs"],
+        }
+        responsibilities = padded_responsibilities(primary)
+        source_object = {"sha": "e" * 40, "mode": "100644", "type": "blob"}
+        module._ensure_constants_structured_log_semantic_mapping(
+            responsibilities,
+            {source_path: source_object},
+            CURRENT_DESKTOP_COMMIT,
+        )
+        owner = next(
+            item for item in responsibilities
+            if item["responsibility_id"] == module.STRUCTURED_LOG_CONSTANT_RESPONSIBILITY_ID
+        )
+        source = next(item for item in owner["desktop_sources"] if item["path"] == source_path)
+        self.assertEqual(source["blob_sha"], source_object["sha"])
+        self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+        self.assertEqual(source["source_mode"], "100644")
+        self.assertEqual(source["source_type"], "blob")
+        self.assertEqual(source["mapping_quality"], "semantic")
+        self.assertEqual(
+            source["symbols"],
+            ["STRUCTURED_LOG_REPLAY_MAX_AGE_MS", "STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS"],
+        )
+        self.assertIn("source/packages/constants/src/structured_log.rs", source["android_targets"])
+        self.assertIn("source/host/src/android_structured_log_spill.rs", source["android_targets"])
+        self.assertTrue(source["focused_tests"])
+        self.assertIn("17-hour", source["source_owner"])
+        self.assertIn("AndroidStructuredLogSpill", source["android_owner"])
+
+    def test_constants_structured_log_contract_is_enforced_by_host_and_exact_head_workflow(self):
+        host = (ROOT / "source" / "host" / "src" / "android_structured_log_spill.rs").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "grok-android-architecture.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "fabushi_constants::structured_log::STRUCTURED_LOG_REPLAY_MAX_AGE_MS",
+            host,
+        )
+        self.assertIn(
+            "fabushi_constants::structured_log::STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS",
+            host,
+        )
+        self.assertIn(
+            "fabushi_constants::structured_log::structured_log_timestamp_allowed",
+            host,
+        )
+        self.assertNotIn(
+            "pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS: u64 = 17 * 60 * 60 * 1_000;",
+            host,
+        )
+        self.assertIn("spill_rejects_far_future_records_under_desktop_skew_contract", host)
+        self.assertIn("Verify exact-HEAD constants structured log production owner", workflow)
+        self.assertIn("Test exact-HEAD constants structured log production owner", workflow)
+        self.assertIn(
+            "cargo test -p fabushi-constants structured_log::tests::replay_window_rejects_old_and_far_future_entries -- --exact",
+            workflow,
+        )
+        self.assertIn(
+            "cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::spill_rejects_far_future_records_under_desktop_skew_contract -- --exact",
+            workflow,
+        )
+
     def test_current_android_provenance_prefers_android_workflow_sha_and_rejects_stale_fallback(self):
         module = load_generator()
         head = "a" * 40

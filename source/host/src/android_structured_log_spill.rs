@@ -7,8 +7,11 @@ use std::{
 };
 
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_BYTES: usize = 1024 * 1024;
-// Preserve Desktop STRUCTURED_LOG_REPLAY_MAX_AGE: recovered telemetry older than 17h is stale.
-pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS: u64 = 17 * 60 * 60 * 1_000;
+// Preserve the Desktop structured-log replay/skew contract through the shared constants owner.
+pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS: u64 =
+    fabushi_constants::structured_log::STRUCTURED_LOG_REPLAY_MAX_AGE_MS;
+pub const ANDROID_STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS: u64 =
+    fabushi_constants::structured_log::STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS;
 pub const ANDROID_STRUCTURED_LOG_SPILL_MAX_ENTRIES: usize = 1_000;
 pub const ANDROID_STRUCTURED_LOG_BATCH_SIZE: usize = 128;
 pub const ANDROID_STRUCTURED_LOG_RECOVERY_ID_CAP: usize = 256;
@@ -174,7 +177,10 @@ impl AndroidStructuredLogSpillState {
             if !ALLOWED_EVENTS.contains(&record.message.as_str()) {
                 continue;
             }
-            if now_ms.saturating_sub(record.timestamp) > ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS {
+            if !fabushi_constants::structured_log::structured_log_timestamp_allowed(
+                now_ms,
+                record.timestamp,
+            ) {
                 self.increment(TelemetryDropReason::ReplayExpired, 1);
                 continue;
             }
@@ -920,6 +926,26 @@ mod tests {
     #[test]
     fn replay_age_matches_desktop_structured_log_contract() {
         assert_eq!(ANDROID_STRUCTURED_LOG_SPILL_MAX_AGE_MS, 17 * 60 * 60 * 1_000);
+        assert_eq!(
+            ANDROID_STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS,
+            2 * 60 * 60 * 1_000
+        );
+    }
+
+    #[test]
+    fn spill_rejects_far_future_records_under_desktop_skew_contract() {
+        let now = 24 * 60 * 60 * 1_000;
+        let mut state = AndroidStructuredLogSpillState::empty("account-a", "counter-a");
+        state.checkpoint.records.push(record(
+            now + ANDROID_STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS + 1,
+            "sand.send",
+        ));
+        let normalized = state.normalize(now);
+        assert!(normalized.checkpoint.records.is_empty());
+        assert_eq!(
+            normalized.checkpoint.counters[&TelemetryDropReason::ReplayExpired].observed,
+            1
+        );
     }
 
     #[test]
