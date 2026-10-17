@@ -1,5 +1,5 @@
 use chrono::DateTime;
-use mahayana_host_runtime::automations::automation_schedule::{
+use fabushi_mahayana_host::automations::automation_schedule::{
     compile_cron_matcher, compute_next_run_at, parse_every_interval_ms,
 };
 
