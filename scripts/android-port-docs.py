@@ -26,7 +26,7 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / 'docs/android-port'
 OUT = DOC / 'generated'
-SHA = re.compile(r'^[0-9a-f]{40}')
+SHA = re.compile(r'^[0-9a-f]{40}$')
 
 ALLOWED_SOURCE_MODES = frozenset({'100644', '100755', '120000', '160000'})
 ALLOWED_SOURCE_TYPES = frozenset({'blob', 'commit'})
@@ -941,8 +941,9 @@ def _download_predecessor_bytes(artifact_id: str, token: str) -> bytes:
             location = error.headers.get('Location')
             require(bool(location), 'GitHub artifact redirect omitted Location')
             parsed = urlparse(location)
-            require(parsed.scheme == 'https' and bool(parsed.netloc),
-                    'GitHub artifact redirect is not an absolute HTTPS URL')
+            require(parsed.scheme == 'https' and bool(parsed.netloc)
+                    and parsed.username is None and parsed.password is None and not parsed.fragment,
+                    'GitHub artifact redirect is not a safe absolute HTTPS URL')
             redirected = Request(location, headers={
                 'User-Agent': 'Fabushi-Android-Docs',
                 'Accept': 'application/octet-stream',
@@ -998,12 +999,18 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
                     continue
                 member = PurePosixPath(raw_name)
                 require(
-                    not member.is_absolute() and '..' not in member.parts and '\x00' not in raw_name,
+                    not member.is_absolute() and '..' not in member.parts and '\x00' not in raw_name
+                    and not raw_name.startswith(('/', '\\')) and '\\' not in raw_name
+                    and re.match(r'^[A-Za-z]:', raw_name) is None,
                     'predecessor artifact ZIP contains an unsafe member path: ' + info.filename,
                 )
                 unix_type = (info.external_attr >> 16) & 0o170000
                 require(unix_type != 0o120000,
                         'predecessor artifact ZIP contains a symbolic-link member: ' + info.filename)
+                require(not (info.flag_bits & 0x1),
+                        'predecessor artifact ZIP contains an encrypted member: ' + info.filename)
+                require(info.file_size <= 24 * 1024 * 1024,
+                        'predecessor artifact ZIP member exceeds size limit: ' + info.filename)
 
             def one_member(suffixes: tuple[str, ...], label: str) -> str:
                 matches = [
@@ -1231,24 +1238,31 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
         f'predecessor responsibility ledger must contain {EXPECTED_RESPONSIBILITY_COUNT} unique IDs',
     )
     semantic_anchor_count = 0
+    semantic_anchor_paths: set[str] = set()
+    reverse_links: dict[str, set[str]] = {}
     for item in responsibilities:
         rid = item['responsibility_id']
         sources = item.get('desktop_sources') or []
         require(isinstance(sources, list),
                 'predecessor responsibility desktop_sources is not a list: ' + rid)
+        local_paths: set[str] = set()
         for source in sources:
             require(isinstance(source, dict),
                     'predecessor responsibility source anchor is not an object: ' + rid)
-            if not _is_semantic_source_anchor(rid, source):
-                continue
-            semantic_anchor_count += 1
+            require(_is_semantic_source_anchor(rid, source),
+                    'predecessor responsibility contains a non-semantic source anchor: ' + rid)
             path = source.get('path')
             require(isinstance(path, str) and path in source_rows,
                     'predecessor semantic source anchor is absent from source ledger: ' + str(path))
+            require(path not in local_paths,
+                    'predecessor responsibility contains duplicate source anchor: ' + rid + ' ' + path)
+            local_paths.add(path)
+            semantic_anchor_count += 1
+            semantic_anchor_paths.add(path)
+            reverse_links.setdefault(path, set()).add(rid)
             row = source_rows[path]
-            if source.get('source_commit') is not None:
-                require(source.get('source_commit') == PREDECESSOR_DESKTOP_COMMIT,
-                        'predecessor semantic source anchor has stale source_commit: ' + path)
+            require(source.get('source_commit') == PREDECESSOR_DESKTOP_COMMIT,
+                    'predecessor semantic source anchor has stale source_commit: ' + path)
             require(
                 source.get('blob_sha') == row.get('source_blob_sha')
                 and source.get('source_mode') == row.get('source_mode')
@@ -1262,6 +1276,14 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
     if manifest.get('semantic_source_anchor_entries') is not None:
         require(manifest.get('semantic_source_anchor_entries') == semantic_anchor_count,
                 'predecessor manifest semantic source-anchor count disagrees with responsibility ledger')
+    if manifest.get('semantic_source_anchor_unique_paths') is not None:
+        require(manifest.get('semantic_source_anchor_unique_paths') == len(semantic_anchor_paths),
+                'predecessor manifest semantic source-anchor unique-path count disagrees with responsibility ledger')
+    for path, row in source_rows.items():
+        linked = row.get('responsibilities') or []
+        require(isinstance(linked, list) and len(linked) == len(set(linked))
+                and set(linked) == reverse_links.get(path, set()),
+                'predecessor source ledger responsibility links disagree with source anchors: ' + path)
 
     return candidate, source_rows, {
         'artifact_id': int(artifact_id),
@@ -1567,6 +1589,7 @@ def merge_responsibility_mapping(
     current: str,
     tree_sha: str,
     expected_responsibility_count: int | None = None,
+    persist_outputs: bool = True,
 ) -> dict:
     predecessor, predecessor_source_rows, mapping_origin, mapping_provenance = load_predecessor_responsibility_mapping(responsibility_path)
     android = current_android_provenance()
@@ -1887,51 +1910,52 @@ def merge_responsibility_mapping(
     package_coverage_summary = {
         key: value for key, value in package_coverage.items() if key != 'gaps'
     }
-    save(OUT / 'packages-semantic-coverage.json', package_coverage)
-    save(OUT / 'rejected-android-targets.json', {
-        'status': 'incomplete' if rejected_android_targets else 'passed',
-        'count': len(rejected_android_targets),
-        'rejected_targets': sorted(
-            rejected_android_targets,
-            key=lambda item: (item['responsibility_id'], item['target'], item['reason']),
-        ),
-        'policy': 'Rejected targets are retained for diagnosis and never count as Android parity evidence.',
-    })
-    save(OUT / 'unmapped-source-rows.json', {
-        'status': 'incomplete' if unmapped_paths else 'passed',
-        'count': len(unmapped_paths),
-        'paths': unmapped_paths,
-        'mapping_policy': 'semantic responsibility anchors only; legacy fallback anchors are retained as coverage-only metadata and never promoted; no directory or filename fallback is used',
-        'desktop_commit': current,
-        'desktop_root_tree': tree_sha,
-        'android_provenance': android,
-        'coverage_only_count': len(coverage_only_paths),
-        'coverage_only_paths': coverage_only_paths,
-        'mapping_provenance': mapping_provenance,
-    })
-    save(OUT / 'responsibility-mapping-summary.json', {
-        'status': 'incomplete' if (
-            unmapped_paths or missing_dispositions or missing_targets
-            or package_coverage_summary['strict_incomplete_rows']
-        ) else 'passed',
-        'responsibility_count': len(responsibilities),
-        'semantic_source_anchor_entries': semantic_anchor_entries,
-        'semantic_source_anchor_unique_paths': len(semantic_anchor_paths),
-        'coverage_only_source_anchor_entries': coverage_anchor_entries,
-        'coverage_only_source_anchor_unique_paths': len(coverage_anchor_paths),
-        'mapped_source_rows': len(ledger_rows) - len(unmapped_paths),
-        'unmapped_source_rows': len(unmapped_paths),
-        'coverage_only_source_rows': len(coverage_only_paths),
-        'missing_disposition_rows': missing_dispositions,
-        'missing_target_rows': missing_targets,
-        'packages_semantic_coverage': package_coverage_summary,
-        'rejected_android_target_count': len(rejected_android_targets),
-        'mapping_origin': mapping_origin,
-        'mapping_provenance': mapping_provenance,
-        'desktop_commit': current,
-        'desktop_root_tree': tree_sha,
-        'android_provenance': android,
-    })
+    if persist_outputs:
+        save(OUT / 'packages-semantic-coverage.json', package_coverage)
+        save(OUT / 'rejected-android-targets.json', {
+            'status': 'incomplete' if rejected_android_targets else 'passed',
+            'count': len(rejected_android_targets),
+            'rejected_targets': sorted(
+                rejected_android_targets,
+                key=lambda item: (item['responsibility_id'], item['target'], item['reason']),
+            ),
+            'policy': 'Rejected targets are retained for diagnosis and never count as Android parity evidence.',
+        })
+        save(OUT / 'unmapped-source-rows.json', {
+            'status': 'incomplete' if unmapped_paths else 'passed',
+            'count': len(unmapped_paths),
+            'paths': unmapped_paths,
+            'mapping_policy': 'semantic responsibility anchors only; legacy fallback anchors are retained as coverage-only metadata and never promoted; no directory or filename fallback is used',
+            'desktop_commit': current,
+            'desktop_root_tree': tree_sha,
+            'android_provenance': android,
+            'coverage_only_count': len(coverage_only_paths),
+            'coverage_only_paths': coverage_only_paths,
+            'mapping_provenance': mapping_provenance,
+        })
+        save(OUT / 'responsibility-mapping-summary.json', {
+            'status': 'incomplete' if (
+                unmapped_paths or missing_dispositions or missing_targets
+                or package_coverage_summary['strict_incomplete_rows']
+            ) else 'passed',
+            'responsibility_count': len(responsibilities),
+            'semantic_source_anchor_entries': semantic_anchor_entries,
+            'semantic_source_anchor_unique_paths': len(semantic_anchor_paths),
+            'coverage_only_source_anchor_entries': coverage_anchor_entries,
+            'coverage_only_source_anchor_unique_paths': len(coverage_anchor_paths),
+            'mapped_source_rows': len(ledger_rows) - len(unmapped_paths),
+            'unmapped_source_rows': len(unmapped_paths),
+            'coverage_only_source_rows': len(coverage_only_paths),
+            'missing_disposition_rows': missing_dispositions,
+            'missing_target_rows': missing_targets,
+            'packages_semantic_coverage': package_coverage_summary,
+            'rejected_android_target_count': len(rejected_android_targets),
+            'mapping_origin': mapping_origin,
+            'mapping_provenance': mapping_provenance,
+            'desktop_commit': current,
+            'desktop_root_tree': tree_sha,
+            'android_provenance': android,
+        })
 
     for item in responsibilities:
         item['source_commit'] = current
@@ -2049,6 +2073,31 @@ def rebaseline() -> None:
     require(all(isinstance(item, str) and item for item in prior_ids)
             and len(set(prior_ids)) == EXPECTED_RESPONSIBILITY_COUNT,
             'persisted responsibility ledger must retain 306 unique responsibility IDs')
+    prior_reverse_links: dict[str, set[str]] = {}
+    prior_anchor_count = 0
+    for responsibility in prior_responsibilities:
+        rid = responsibility['responsibility_id']
+        for source in responsibility.get('desktop_sources') or []:
+            if not _is_semantic_source_anchor(rid, source):
+                continue
+            path = source.get('path')
+            require(path in old_by_path,
+                    'persisted responsibility source anchor is absent from persisted source ledger: ' + str(path))
+            row = old_by_path[path]
+            require(source.get('blob_sha') == row.get('source_blob_sha')
+                    and source.get('source_mode') == row.get('source_mode')
+                    and source.get('source_type') == row.get('source_type')
+                    and source.get('source_commit') == prior_manifest.get('desktop_commit'),
+                    'persisted responsibility source anchor object differs from persisted source ledger: ' + str(path))
+            prior_reverse_links.setdefault(path, set()).add(rid)
+            prior_anchor_count += 1
+    if prior_manifest.get('semantic_source_anchor_entries') is not None:
+        require(prior_anchor_count == prior_manifest.get('semantic_source_anchor_entries'),
+                'persisted responsibility source-anchor count differs from source manifest')
+    for path, row in old_by_path.items():
+        linked = row.get('responsibilities') or []
+        require(set(linked) == prior_reverse_links.get(path, set()),
+                'persisted source ledger responsibility links disagree with responsibility source anchors: ' + path)
     new_by_path = {item['path']: item for item in files}
 
     preserved = 0
@@ -2133,6 +2182,7 @@ def rebaseline() -> None:
             current,
             tree_sha,
             expected_responsibility_count=EXPECTED_RESPONSIBILITY_COUNT,
+            persist_outputs=False,
         )
         authority = responsibility_doc.setdefault('authority', {})
         authority['desktop_commit'] = current

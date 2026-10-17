@@ -69,6 +69,7 @@ def pinned_predecessor_zip_bytes(module, responsibilities=2, anchors=1):
         "source_blob_sha": source_sha,
         "source_mode": "100644",
         "source_type": "blob",
+        "responsibilities": ["RESP-001"] if anchors else [],
     }
     ledger_text = json.dumps(row, sort_keys=True) + "\n"
     manifest = {
@@ -83,6 +84,7 @@ def pinned_predecessor_zip_bytes(module, responsibilities=2, anchors=1):
         "authority_ledger_rows": 1,
         "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
         "semantic_source_anchor_entries": anchors,
+        "semantic_source_anchor_unique_paths": 1 if anchors else 0,
         "workflow_run_id": 9,
         "android_pr_head_sha": "a" * 40,
     }
@@ -1218,6 +1220,33 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         stale_doc["android_tested_checkout_sha"] = "b" * 40
         with self.assertRaisesRegex(ValueError, "responsibility ledger mismatch for android_tested_checkout_sha"):
             module.validate_exact_head_provenance(manifest, [row], stale_doc, android_head)
+
+    def test_rebaseline_defers_generated_mapping_writes_until_after_validation(self):
+        generator = SCRIPT.read_text(encoding="utf-8")
+        merge_start = generator.index("def merge_responsibility_mapping(")
+        rebaseline_start = generator.index("def rebaseline()")
+        merge_body = generator[merge_start:rebaseline_start]
+        rebaseline_body = generator[rebaseline_start:generator.index("\ndef inventory()", rebaseline_start)]
+        self.assertIn("persist_outputs: bool = True", merge_body)
+        self.assertIn("if persist_outputs:", merge_body)
+        self.assertIn("persist_outputs=False", rebaseline_body)
+        self.assertLess(rebaseline_body.index("validate_exact_head_provenance("),
+                        rebaseline_body.index("ledger_path.write_text("))
+        self.assertLess(rebaseline_body.index("latest_desktop_main ="),
+                        rebaseline_body.index("ledger_path.write_text("))
+
+    def test_predecessor_fixture_records_reverse_links_for_every_anchor(self):
+        module = load_generator()
+        payload, _ = pinned_predecessor_zip_bytes(module)
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            row = json.loads(archive.read(
+                "docs/android-port/authority/source-inventory-ledger.jsonl"
+            ))
+            responsibility = json.loads(archive.read(
+                "docs/android-port/authority/responsibility-ledger.json"
+            ))
+        self.assertEqual(row["responsibilities"], ["RESP-001"])
+        self.assertEqual(responsibility["responsibilities"][0]["responsibility_id"], "RESP-001")
 
     def test_workflow_persists_generated_package_coverage_and_diagnostics(self):
         workflow = (ROOT / '.github' / 'workflows' / 'android-port-docs.yml').read_text(encoding='utf-8')
