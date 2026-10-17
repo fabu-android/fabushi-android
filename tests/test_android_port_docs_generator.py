@@ -834,8 +834,11 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         push_trigger = workflow.split('  workflow_dispatch:', 1)[0]
         self.assertIn('  push:', push_trigger)
         self.assertIn("'spec/grok-bot-018-android-parity-20260922'", push_trigger)
-        self.assertNotIn('    paths:', push_trigger,
-                         'exact-head provenance must refresh on every branch push, including Android code-only changes')
+        self.assertIn('      - \'source/**\'', push_trigger)
+        self.assertIn('      - \'native/**\'', push_trigger)
+        self.assertIn('      - \'tests/**\'', push_trigger)
+        self.assertNotIn('      - \'docs/android-port/**\'', push_trigger,
+                         'the generated-doc commit must not trigger an endless persistence loop')
 
 
     def test_persistence_dispatches_docs_on_persisted_head_without_push_loop(self):
