@@ -2591,8 +2591,19 @@ def merge_responsibility_mapping(
     predecessor, predecessor_source_rows, mapping_origin, mapping_provenance = load_predecessor_responsibility_mapping(responsibility_path)
     android = current_android_provenance()
     predecessor_authority = predecessor.get('authority') or {}
-    require(predecessor_authority.get('desktop_commit') == mapping_provenance.get('source_manifest_desktop_commit'), 'pinned mapping and predecessor manifest Desktop commit disagree')
-    require(predecessor_authority.get('desktop_root_tree') == mapping_provenance.get('source_manifest_desktop_root_tree'), 'pinned mapping and predecessor manifest tree disagree')
+    pinned_pair = (
+        mapping_provenance.get('source_manifest_desktop_commit'),
+        mapping_provenance.get('source_manifest_desktop_root_tree'),
+    )
+    authority_pair = (
+        predecessor_authority.get('desktop_commit'),
+        predecessor_authority.get('desktop_root_tree'),
+    )
+    current_pair = (current, tree_sha)
+    require(
+        authority_pair in {pinned_pair, current_pair},
+        'responsibility mapping authority is neither the digest-pinned predecessor nor the current persisted Desktop authority',
+    )
     require(mapping_provenance.get('artifact_id') is not None and mapping_provenance.get('artifact_digest'), 'mapping must originate from a verified predecessor artifact')
 
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))

@@ -1550,6 +1550,15 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "responsibility ledger mismatch for android_tested_checkout_sha"):
             module.validate_exact_head_provenance(manifest, [row], stale_doc, android_head)
 
+    def test_merge_lineage_allows_persisted_current_authority_with_historical_pin(self):
+        generator = SCRIPT.read_text(encoding="utf-8")
+        merge_start = generator.index("def merge_responsibility_mapping(")
+        rebaseline_start = generator.index("def rebaseline()")
+        merge_body = generator[merge_start:rebaseline_start]
+        self.assertIn("authority_pair in {pinned_pair, current_pair}", merge_body)
+        self.assertNotIn("predecessor_authority.get('desktop_commit') == mapping_provenance.get('source_manifest_desktop_commit')", merge_body)
+        self.assertIn("mapping must originate from a verified predecessor artifact", merge_body)
+
     def test_rebaseline_defers_generated_mapping_writes_until_after_validation(self):
         generator = SCRIPT.read_text(encoding="utf-8")
         merge_start = generator.index("def merge_responsibility_mapping(")
