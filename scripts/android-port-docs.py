@@ -60,6 +60,7 @@ OWNER_PLACEHOLDER_VALUES = frozenset({
 DEFAULT_RESPONSIBILITY_ARTIFACT = '12072277149'
 DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
 ANDROID_REPOSITORY = 'fabu-android/fabushi-android'
+ANDROID_PARITY_FULL_CI_WORKFLOW_ID = 364063299
 EXPECTED_DESKTOP_COMMIT = 'dc81eac2df50f6c08ae4daf98988076bfdc956d9'
 EXPECTED_DESKTOP_TREE = '04473e188c5088b66a7f984e5e89e6d47e75eafb'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
@@ -333,26 +334,39 @@ def _has_real_owner(value: object) -> bool:
 
 
 def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
-    """Wait for terminal exact-head Android Parity Full CI and return only successful job/step evidence."""
+    """Wait for a real exact-head Android Parity Full CI attempt and named successful steps."""
     if not os.environ.get('GH_TOKEN'):
         print('WARNING: GH_TOKEN is unavailable; agent-kv CI evidence remains incomplete', file=sys.stderr)
         return None
     try:
-        wait_seconds = max(0, int(os.environ.get('ANDROID_CI_EVIDENCE_WAIT_SECONDS', '1200')))
+        wait_seconds = max(0, int(os.environ.get('ANDROID_CI_EVIDENCE_WAIT_SECONDS', '3600')))
     except ValueError:
-        wait_seconds = 1200
+        wait_seconds = 3600
     deadline = time.monotonic() + wait_seconds
     while True:
         try:
-            response = get(
-                f'/repos/{ANDROID_REPOSITORY}/actions/runs?head_sha={android_head}&per_page=100'
-            )
-            runs = [
-                run for run in response.get('workflow_runs', [])
-                if run.get('name') == 'Android Parity Full CI'
-                and run.get('head_sha') == android_head
-            ]
-            active = [run for run in runs if run.get('status') != 'completed']
+            # Runs can be delayed in the API and a prior terminal run can be returned
+            # before the current synchronize run appears. Walk pages and keep polling
+            # until the deadline instead of treating that first stale snapshot as final.
+            runs_by_id = {}
+            for page in range(1, 21):
+                response = get(
+                    f'/repos/{ANDROID_REPOSITORY}/actions/runs?head_sha={android_head}&per_page=100&page={page}'
+                )
+                batch = response.get('workflow_runs', [])
+                for run in batch:
+                    if (
+                        run.get('name') == 'Android Parity Full CI'
+                        and run.get('workflow_id') == ANDROID_PARITY_FULL_CI_WORKFLOW_ID
+                        and run.get('path') == '.github/workflows/android-parity-full-ci.yml'
+                        and run.get('event') == 'pull_request'
+                        and run.get('head_sha') == android_head
+                        and (run.get('repository') or {}).get('full_name') == ANDROID_REPOSITORY
+                    ):
+                        runs_by_id[run.get('id')] = run
+                if len(batch) < 100:
+                    break
+            runs = list(runs_by_id.values())
             terminal = [
                 run for run in runs
                 if run.get('status') == 'completed'
@@ -363,14 +377,24 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                 key=lambda value: (value.get('run_number') or 0, value.get('run_attempt') or 0),
                 reverse=True,
             ):
-                jobs_response = get(
-                    f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run["id"]}/jobs?per_page=100'
-                )
+                jobs_by_id = {}
+                for page in range(1, 21):
+                    jobs_response = get(
+                        f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run["id"]}/jobs?filter=latest&per_page=100&page={page}'
+                    )
+                    batch = jobs_response.get('jobs', [])
+                    for value in batch:
+                        jobs_by_id[value.get('id')] = value
+                    if len(batch) < 100:
+                        break
                 job = next((
-                    value for value in jobs_response.get('jobs', [])
+                    value for value in jobs_by_id.values()
                     if value.get('name') == 'android-build-unit-lint'
+                    and value.get('status') == 'completed'
+                    and value.get('conclusion') == 'success'
+                    and value.get('run_attempt', run.get('run_attempt')) == run.get('run_attempt')
                 ), None)
-                if not job or job.get('status') != 'completed' or job.get('conclusion') != 'success':
+                if not job:
                     continue
                 steps = {
                     value.get('name'): value
@@ -386,6 +410,9 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                     continue
                 return {
                     'workflow_name': run['name'],
+                    'workflow_id': run['workflow_id'],
+                    'workflow_path': run['path'],
+                    'workflow_event': run['event'],
                     'workflow_run_id': run['id'],
                     'run_attempt': run.get('run_attempt'),
                     'run_conclusion': run.get('conclusion'),
@@ -397,14 +424,6 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                     'test_step_number': test_step.get('number'),
                     'android_head': android_head,
                 }
-            if runs and not active:
-                print(
-                    'WARNING: terminal exact-head Android Parity Full CI has no successful '
-                    'android-build-unit-lint job with both required successful steps; '
-                    'agent-kv CI evidence remains incomplete',
-                    file=sys.stderr,
-                )
-                return None
         except (RuntimeError, KeyError, TypeError, ValueError) as error:
             print(
                 'WARNING: unable to read exact-head Android Parity Full CI evidence: '
@@ -413,13 +432,15 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
             )
             return None
         except OSError:
-            if time.monotonic() >= deadline:
-                return None
+            pass
         if time.monotonic() >= deadline:
-            print('WARNING: timed out waiting for exact-head Android Parity Full CI evidence', file=sys.stderr)
+            print(
+                'WARNING: timed out waiting for terminal exact-head Android Parity Full CI '
+                'with successful required job steps; agent-kv evidence remains incomplete',
+                file=sys.stderr,
+            )
             return None
         time.sleep(15)
-
 
 def _package_action_job_passed(
     entry: dict,
@@ -451,14 +472,18 @@ def _package_action_job_passed(
             run = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}')
             if (
                 run.get('name') != 'Android Parity Full CI'
+                or run.get('workflow_id') != ANDROID_PARITY_FULL_CI_WORKFLOW_ID
+                or run.get('path') != '.github/workflows/android-parity-full-ci.yml'
+                or run.get('event') != 'pull_request'
                 or (run.get('repository') or {}).get('full_name') != ANDROID_REPOSITORY
                 or run.get('head_sha') != android_head
                 or run.get('status') != 'completed'
                 or run.get('conclusion') not in {'success', 'failure'}
+                or run.get('run_attempt') != entry.get('run_attempt')
             ):
                 action_job_cache[key] = False
             else:
-                jobs = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}/jobs?per_page=100')
+                jobs = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page=1')
                 job = next((
                     value for value in jobs.get('jobs', [])
                     if value.get('id') == job_id
@@ -467,6 +492,7 @@ def _package_action_job_passed(
                     not job or job.get('name') != job_name
                     or job.get('status') != 'completed'
                     or job.get('conclusion') != 'success'
+                    or job.get('run_attempt', run.get('run_attempt')) != run.get('run_attempt')
                 ):
                     action_job_cache[key] = False
                 else:

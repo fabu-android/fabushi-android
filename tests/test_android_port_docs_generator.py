@@ -1066,8 +1066,12 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         target = "source/packages/agent-kv/src/serde.rs"
         run = {
             "name": "Android Parity Full CI",
+            "workflow_id": 364063299,
+            "path": ".github/workflows/android-parity-full-ci.yml",
+            "event": "pull_request",
             "repository": {"full_name": "fabu-android/fabushi-android"},
             "head_sha": android_head,
+            "run_attempt": 1,
             "status": "completed",
             "conclusion": "failure",
         }
@@ -1087,6 +1091,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "workflow_run_id": 456,
             "workflow_job_id": 789,
             "workflow_job_name": "android-build-unit-lint",
+            "run_attempt": 1,
             "workflow_step_name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
             "evidence_ref": target,
         }
@@ -1114,6 +1119,8 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         android_head = "a" * 40
         run = {
             "id": 456, "name": "Android Parity Full CI", "head_sha": android_head,
+            "workflow_id": 364063299, "path": ".github/workflows/android-parity-full-ci.yml",
+            "event": "pull_request", "repository": {"full_name": "fabu-android/fabushi-android"},
             "status": "completed", "conclusion": "failure", "run_number": 12, "run_attempt": 1,
         }
         job = {
@@ -1142,6 +1149,39 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}):
             with patch.object(module, "get", return_value={"workflow_runs": [cancelled]}):
                 self.assertIsNone(module._latest_exact_head_android_ci_evidence(android_head))
+
+
+    def test_exact_head_ci_discovery_retries_after_stale_terminal_snapshot(self):
+        module = load_generator()
+        android_head = "a" * 40
+        run = {
+            "id": 456, "name": "Android Parity Full CI", "head_sha": android_head,
+            "workflow_id": 364063299, "path": ".github/workflows/android-parity-full-ci.yml",
+            "event": "pull_request", "repository": {"full_name": "fabu-android/fabushi-android"},
+            "status": "completed", "conclusion": "failure", "run_number": 12, "run_attempt": 1,
+        }
+        job = {
+            "id": 789, "name": "android-build-unit-lint", "run_attempt": 1,
+            "status": "completed", "conclusion": "success",
+            "steps": [
+                {"name": "Build exact-HEAD native Mahayana Coordinator Host",
+                 "number": 9, "status": "completed", "conclusion": "success"},
+                {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
+                 "number": 10, "status": "completed", "conclusion": "success"},
+            ],
+        }
+        with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "60"}):
+            with patch.object(module, "get", side_effect=[
+                {"workflow_runs": [run]}, {"jobs": []},
+                {"workflow_runs": [run]}, {"jobs": [job]},
+            ]), patch.object(module.time, "monotonic", side_effect=[0, 0, 1]):
+                with patch.object(module.time, "sleep"):
+                    evidence = module._latest_exact_head_android_ci_evidence(android_head)
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["workflow_run_id"], 456)
+        self.assertEqual(evidence["production_step_number"], 9)
+        self.assertEqual(evidence["test_step_number"], 10)
+        self.assertEqual(evidence["workflow_id"], 364063299)
 
 if __name__ == "__main__":
     unittest.main()
