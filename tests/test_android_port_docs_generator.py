@@ -103,8 +103,10 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             with patch.object(
                 module, "load_predecessor_responsibility_mapping",
                 return_value=(predecessor, {}, "validated-fixture", {
-                    "artifact_id": None, "artifact_digest": None,
+                    "artifact_id": 12072277149, "artifact_digest": "sha256:" + "f" * 64,
                     "source_manifest_run_id": 456, "source_manifest_android_head": android_head,
+                    "source_manifest_desktop_commit": CURRENT_DESKTOP_COMMIT,
+                    "source_manifest_desktop_root_tree": CURRENT_DESKTOP_TREE,
                 }),
             ), patch.object(module, "current_android_provenance", return_value=provenance):
                 result = module.merge_responsibility_mapping(
@@ -304,8 +306,10 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             with patch.object(
                 module, "load_predecessor_responsibility_mapping",
                 return_value=(predecessor, {}, "current-responsibility-ledger+validated-local-coverage",
-                              {"artifact_id": None, "artifact_digest": None,
-                               "source_manifest_run_id": 456, "source_manifest_android_head": android_head}),
+                              {"artifact_id": 12072277149, "artifact_digest": "sha256:" + "f" * 64,
+                               "source_manifest_run_id": 456, "source_manifest_android_head": android_head,
+                               "source_manifest_desktop_commit": CURRENT_DESKTOP_COMMIT,
+                               "source_manifest_desktop_root_tree": CURRENT_DESKTOP_TREE}),
             ), patch.object(module, "current_android_provenance", return_value=provenance):
                 result = module.merge_responsibility_mapping(
                     Path("responsibility-ledger.json"), rows, inventory,
@@ -407,7 +411,9 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             with patch.object(module, "load_predecessor_responsibility_mapping",
                               return_value=(predecessor, source_rows, "pinned-predecessor-artifact",
                                             {"artifact_id": 12053467058, "artifact_digest": "sha256:test",
-                                             "source_manifest_run_id": 1, "source_manifest_android_head": "h" * 40})),                  patch.object(module, "current_android_provenance", return_value=provenance):
+                                             "source_manifest_run_id": 1, "source_manifest_android_head": "h" * 40,
+                                             "source_manifest_desktop_commit": "d" * 40,
+                                             "source_manifest_desktop_root_tree": "t" * 40})),                  patch.object(module, "current_android_provenance", return_value=provenance):
                 result = module.merge_responsibility_mapping(
                     Path("responsibility-ledger.json"),
                     ledger_rows,
@@ -483,8 +489,10 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             }
             with patch.object(module, "load_predecessor_responsibility_mapping",
                               return_value=(predecessor, {}, "current-responsibility-ledger",
-                                            {"artifact_id": None, "artifact_digest": None,
-                                             "source_manifest_run_id": None, "source_manifest_android_head": None})),                  patch.object(module, "current_android_provenance", return_value=provenance):
+                                            {"artifact_id": 12072277149, "artifact_digest": "sha256:" + "f" * 64,
+                                             "source_manifest_run_id": 1, "source_manifest_android_head": "h" * 40,
+                                             "source_manifest_desktop_commit": "d" * 40,
+                                             "source_manifest_desktop_root_tree": "t" * 40})),                  patch.object(module, "current_android_provenance", return_value=provenance):
                 result = module.merge_responsibility_mapping(
                     Path("responsibility-ledger.json"),
                     rows,
@@ -1002,7 +1010,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
 
     def test_artifact_only_docs_run_does_not_create_persistence_loop(self):
         workflow = (ROOT / ".github" / "workflows" / "android-port-docs.yml").read_text(encoding="utf-8")
-        self.assertIn("group: android-port-docs-${{ github.ref_name }}", workflow)
+        self.assertIn("group: android-port-docs-${{ github.event.pull_request.head.ref || github.ref_name }}", workflow)
         self.assertIn("Upload source inventory and documentation", workflow)
         self.assertNotIn("gh workflow run android-port-docs.yml", workflow)
         self.assertNotIn("chore(android): persist exact Desktop main authority evidence", workflow)
