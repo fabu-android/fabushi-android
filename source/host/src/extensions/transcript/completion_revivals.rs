@@ -18,7 +18,7 @@ static USER_QUERY_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
 pub fn neutralize_background_task_detail_close_tags(detail: &str) -> String {
     let detail = BACKGROUND_TASK_CLOSE_TAG_RE.replace_all(detail, "&lt;/$1>");
     USER_QUERY_TAG_RE
-        .replace_all(detail.as_ref(), "&lt;$1user_query>")
+        .replace_all(detail.as_ref(), "&lt;${1}user_query>")
         .into_owned()
 }
 
