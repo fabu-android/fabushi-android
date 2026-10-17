@@ -1,9 +1,9 @@
 {
-  "desktop_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
-  "desktop_root_tree": "72fc5f777012f6e7bf5f5f471b6f121fd3612bb2",
-  "tracked_non_tree_entries": 8258,
-  "preserved_rows": 8258,
-  "reset_rows": 0,
+  "desktop_commit": "b6146c9d3d8da83030798334695b27c9e4884f46",
+  "desktop_root_tree": "2355aa184197641c6edc465d03e87a2156d626ad",
+  "tracked_non_tree_entries": 8272,
+  "preserved_rows": 8230,
+  "reset_rows": 42,
   "deleted_rows": 0,
   "touched_responsibilities": 0,
   "deleted_responsibility_anchors": 0

@@ -2,13 +2,13 @@
   "status": "incomplete",
   "expected_source_rows": 852,
   "observed_source_rows": 852,
-  "semantic_responsibility_rows": 0,
-  "real_source_owner_rows": 0,
-  "real_android_owner_rows": 0,
-  "valid_android_target_rows": 0,
-  "valid_disposition_rows": 0,
-  "complete_rows": 0,
-  "strict_incomplete_rows": 852,
+  "semantic_responsibility_rows": 10,
+  "real_source_owner_rows": 10,
+  "real_android_owner_rows": 10,
+  "valid_android_target_rows": 10,
+  "valid_disposition_rows": 10,
+  "complete_rows": 10,
+  "strict_incomplete_rows": 842,
   "gaps": [
     {
       "source_path": "source/packages/agent-analytics/commit-scoring/git-repo-utils.ts",
@@ -1000,97 +1000,6 @@
     },
     {
       "source_path": "source/packages/agent-exec/write.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/agent-kv/agent-store.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/agent-kv/blob-not-found-error.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/agent-kv/blob-store.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/agent-kv/reference.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/agent-kv/serde.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/agent-kv/subagent-states.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/agent-kv/typed-blob-store.ts",
       "responsibilities": [],
       "reasons": [
         "missing-semantic-responsibility",
@@ -5237,19 +5146,6 @@
       ]
     },
     {
-      "source_path": "source/packages/constants/composer.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
       "source_path": "source/packages/constants/environment-setup.ts",
       "responsibilities": [],
       "reasons": [
@@ -5381,19 +5277,6 @@
     },
     {
       "source_path": "source/packages/constants/smart-mode-classifier.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/constants/structured-log.ts",
       "responsibilities": [],
       "reasons": [
         "missing-semantic-responsibility",
@@ -7045,19 +6928,6 @@
     },
     {
       "source_path": "source/packages/mcp-core/config/mcp-inline-reconnect-cooldown.ts",
-      "responsibilities": [],
-      "reasons": [
-        "missing-semantic-responsibility",
-        "missing-real-source-owner",
-        "missing-real-android-owner",
-        "missing-exact-head-production-evidence",
-        "missing-exact-head-test-evidence",
-        "missing-valid-tracked-android-target",
-        "missing-or-invalid-disposition"
-      ]
-    },
-    {
-      "source_path": "source/packages/mcp-core/config/mcp-tool-call-timeout.ts",
       "responsibilities": [],
       "reasons": [
         "missing-semantic-responsibility",
@@ -11087,5 +10957,5 @@
       ]
     }
   ],
-  "policy": "Every source/packages row requires an explicit semantic source anchor, real source_owner and android_owner, a tracked Android file target, and one legal disposition. Coverage-only anchors and provenance-only evidence do not satisfy semantic mapping or verification."
+  "policy": "Every source/packages row requires an explicit semantic source anchor, real source_owner and android_owner, a tracked Android file target, and one legal disposition. Coverage-only anchors and provenance-only evidence do not satisfy semantic mapping or verification; agent-kv sources additionally require source-specific tracked targets, focused tests, and successful same-exact-head job/step evidence."
 }
