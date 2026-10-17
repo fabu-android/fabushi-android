@@ -841,15 +841,15 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                          'the generated-doc commit must not trigger an endless persistence loop')
 
 
-    def test_persistence_dispatches_docs_on_persisted_head_without_push_loop(self):
+    def test_artifact_only_docs_run_does_not_create_persistence_loop(self):
         workflow = (ROOT / ".github" / "workflows" / "android-port-docs.yml").read_text(encoding="utf-8")
         self.assertIn("group: android-port-docs-${{ github.ref_name }}", workflow)
-        self.assertIn('gh workflow run android-port-docs.yml --ref "${GITHUB_REF_NAME}"', workflow)
-        self.assertIn('if [[ "$(git log -1 --format=%s)" == "chore(android): persist exact Desktop main authority evidence" ]]; then', workflow)
-        self.assertLess(
-            workflow.index('gh workflow run android-parity-full-ci.yml --ref "${GITHUB_REF_NAME}"'),
-            workflow.index('gh workflow run android-port-docs.yml --ref "${GITHUB_REF_NAME}"'),
-        )
-
+        self.assertIn("Upload source inventory and documentation", workflow)
+        self.assertNotIn("gh workflow run android-port-docs.yml", workflow)
+        self.assertNotIn("chore(android): persist exact Desktop main authority evidence", workflow)
+        push_trigger = workflow.split("  workflow_dispatch:", 1)[0]
+        self.assertIn("'source/**'", push_trigger)
+        self.assertIn("'tests/**'", push_trigger)
+        self.assertNotIn("'docs/android-port/**'", push_trigger)
 if __name__ == "__main__":
     unittest.main()
