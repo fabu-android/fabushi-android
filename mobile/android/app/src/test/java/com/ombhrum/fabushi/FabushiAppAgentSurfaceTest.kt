@@ -8,6 +8,16 @@ import org.junit.Test
 
 class FabushiAppAgentSurfaceTest {
     @Test
+    fun officialDeviceGatewayMatchesDesktopStatusOnlyRegistrationBoundary() {
+        assertEquals(
+            listOf(FabushiAppAgentSurface.StatusTool),
+            FabushiRemoteDeviceGateway.OfficialToolNames,
+        )
+        assertFalse(FabushiRemoteDeviceGateway.OfficialToolNames.contains(FabushiAppAgentSurface.ActionTool))
+        assertFalse(FabushiRemoteDeviceGateway.OfficialToolNames.contains(FabushiAppAgentSurface.SnapshotTool))
+    }
+
+    @Test
     fun semanticSurfaceRejectsStaleAndSensitiveWrites() {
         val surface = FabushiAppAgentSurface()
         var invoked = false

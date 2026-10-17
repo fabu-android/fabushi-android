@@ -83,6 +83,18 @@ jobs:
           cargo test -p fabushi-constants structured_log::tests::replay_window_rejects_old_and_far_future_entries -- --exact
           cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::replay_age_matches_desktop_structured_log_contract -- --exact
           cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::spill_rejects_far_future_records_under_desktop_skew_contract -- --exact
+      - name: Verify exact-HEAD official-device registration owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'internal val OfficialToolNames = listOf(FabushiAppAgentSurface.StatusTool)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq '.put("capabilities", JSONArray(OfficialToolNames))' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'require(toolName in OfficialToolNames)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+      - name: Test exact-HEAD official-device registration owner
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.FabushiAppAgentSurfaceTest --tests com.ombhrum.fabushi.RemoteCommandJournalTest
+
       - name: Verify exact-HEAD MCP tool timeout production owner
         run: |
           set -euo pipefail

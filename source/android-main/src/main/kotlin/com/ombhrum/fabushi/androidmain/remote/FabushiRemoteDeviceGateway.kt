@@ -41,6 +41,12 @@ internal class FabushiRemoteDeviceGateway(
         private const val OfficialGatewayUrl = "wss://fabushi-mcp.ombhrum.com/agent"
         private const val LeaseSeconds = 14_400
         private const val MaxMessageBytes = 32 * 1024 * 1024
+
+        // Canonical Desktop b614 official-device registration exposes only the
+        // bounded read-only status tool. Richer Android semantic tools remain
+        // local product capabilities until the shared authority explicitly
+        // admits them to the official same-account device gateway.
+        internal val OfficialToolNames = listOf(FabushiAppAgentSurface.StatusTool)
     }
 
     private data class AgentSession(
@@ -121,7 +127,7 @@ internal class FabushiRemoteDeviceGateway(
                     .put("deviceId", session.deviceId)
                     .put("name", configuredDeviceName ?: "Fabushi Android ${session.deviceId}".take(200))
                     .put("platform", "android")
-                    .put("capabilities", JSONArray(FabushiAppAgentSurface.ToolNames))
+                    .put("capabilities", JSONArray(OfficialToolNames))
                     .put("tools", toolDescriptors())
                     .put("leaseSeconds", LeaseSeconds)
                     .put("metadata", JSONObject(metadata))
@@ -261,7 +267,7 @@ internal class FabushiRemoteDeviceGateway(
 
     private suspend fun invokeTool(toolName: String, arguments: JSONObject): JSONObject =
         withContext(Dispatchers.Main.immediate) {
-            require(toolName in FabushiAppAgentSurface.ToolNames) { "unknown_fabushi_app_tool" }
+            require(toolName in OfficialToolNames) { "unknown_fabushi_app_tool" }
             when (toolName) {
                 FabushiAppAgentSurface.StatusTool -> statusJson(surface.status())
                 FabushiAppAgentSurface.SnapshotTool -> {
@@ -402,11 +408,6 @@ internal class FabushiRemoteDeviceGateway(
         )
         return JSONArray()
             .put(descriptor(FabushiAppAgentSurface.StatusTool, "Fabushi app agent-surface status", "Report whether the active Fabushi Android application exposes its structured semantic surface.", schema(), true))
-            .put(descriptor(FabushiAppAgentSurface.SnapshotTool, "Read the Fabushi semantic UI", "Return a structured redacted semantic snapshot of the active Fabushi Android UI.", schema("maxElements" to integerSchema(), "includeText" to booleanSchema()), true))
-            .put(descriptor(FabushiAppAgentSurface.FindTool, "Find Fabushi UI elements", "Find semantic elements by stable id, generation-bound ref, role, accessible name, or visible text.", schema("agentId" to stringSchema(), "ref" to stringSchema(), "role" to stringSchema(), "name" to stringSchema(), "text" to stringSchema(), "limit" to integerSchema()), true))
-            .put(descriptor(FabushiAppAgentSurface.ActionTool, "Operate the Fabushi semantic UI", "Perform one allowlisted action against the exact current semantic generation.", schema("generation" to integerSchema(), "ref" to stringSchema(), "agentId" to stringSchema(), "action" to stringSchema("invoke", "focus", "setValue", "pressKey", "scroll", "selectOption", "toggle"), "value" to stringSchema(), required = listOf("generation", "action")), false))
-            .put(descriptor(FabushiAppAgentSurface.WaitTool, "Wait for Fabushi UI state", "Wait for a bounded semantic UI condition.", schema(*(stateProperties + ("timeoutMs" to integerSchema()))), true))
-            .put(descriptor(FabushiAppAgentSurface.AssertTool, "Assert Fabushi UI state", "Evaluate a deterministic semantic UI assertion for CI evidence.", schema(*stateProperties), true))
     }
 
     private fun statusJson(status: FabushiAppAgentSurface.Status) = JSONObject()
