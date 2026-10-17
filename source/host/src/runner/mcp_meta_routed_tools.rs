@@ -4,6 +4,7 @@ use crate::mcp_auth::dashboard_mcp_auth_backend::{
     CursorDashboardMcpAuthBackend, McpMetaServerDescriptor, McpToolExecutionBackendResult,
 };
 use crate::mcp_server_tool_settings::McpServerToolSettings;
+use fabushi_android_mcp_core::config::mcp_tool_call_timeout::DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
@@ -14,7 +15,7 @@ pub const MCP_META_TOOL_PROVIDER: &str = "mahayana-mcp-meta";
 pub const EXTRA_SHORT_TOOL_TIMEOUT_MS: u64 = 5 * 60 * 1_000;
 pub const SHORT_TOOL_TIMEOUT_MS: u64 = 15 * 60 * 1_000;
 pub const MEDIUM_TOOL_TIMEOUT_MS: u64 = 30 * 60 * 1_000;
-pub const LONG_TOOL_TIMEOUT_MS: u64 = 60 * 60 * 1_000;
+pub const LONG_TOOL_TIMEOUT_MS: u64 = DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS;
 pub const EXTRA_LONG_TOOL_TIMEOUT_MS: u64 = 2 * 60 * 60 * 1_000;
 const TIMEOUT_BUFFER_MS: u64 = 60 * 1_000;
 pub const TOOL_CALL_TIMEOUT_TIERS_MS: [u64; 5] = [
@@ -362,6 +363,11 @@ fn unix_time_ms() -> u64 {
 mod tests {
     use super::*;
     use crate::mcp_auth::dashboard_mcp_auth_backend::McpServerToolSummary;
+
+    #[test]
+    fn long_timeout_tier_uses_desktop_mcp_default_contract() {
+        assert_eq!(LONG_TOOL_TIMEOUT_MS, DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS);
+    }
 
     #[test]
     fn timeout_tiers_match_desktop_meta_contract() {

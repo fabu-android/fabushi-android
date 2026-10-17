@@ -1472,6 +1472,94 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             workflow,
         )
 
+    def test_mcp_tool_timeout_mapping_uses_desktop_policy_and_real_host_owner(self):
+        module = load_generator()
+        source_path = module.MCP_TOOL_TIMEOUT_SOURCE_PATH
+        primary = {
+            "responsibility_id": module.MCP_TOOL_TIMEOUT_RESPONSIBILITY_ID,
+            "desktop_sources": [],
+            "source_owner": "Desktop MCP owner",
+            "android_owner": "Host MCP owner",
+            "android_target": ["source/host/src/runner/mcp_meta_routed_tools.rs"],
+        }
+        responsibilities = padded_responsibilities(primary)
+        source_object = {"sha": "f" * 40, "mode": "100644", "type": "blob"}
+        module._ensure_mcp_tool_timeout_semantic_mapping(
+            responsibilities,
+            {source_path: source_object},
+            CURRENT_DESKTOP_COMMIT,
+        )
+        owner = next(
+            item for item in responsibilities
+            if item["responsibility_id"] == module.MCP_TOOL_TIMEOUT_RESPONSIBILITY_ID
+        )
+        source = next(item for item in owner["desktop_sources"] if item["path"] == source_path)
+        self.assertEqual(source["blob_sha"], source_object["sha"])
+        self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+        self.assertEqual(source["mapping_quality"], "semantic")
+        self.assertEqual(
+            source["symbols"],
+            ["DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS", "LEGACY_MCP_TOOL_CALL_TIMEOUT_MS"],
+        )
+        self.assertIn(
+            "source/packages/mcp-core/src/config/mcp_tool_call_timeout.rs",
+            source["android_targets"],
+        )
+        self.assertIn("source/host/src/runner/mcp_meta_routed_tools.rs", source["android_targets"])
+        self.assertIn("one-hour", source["source_owner"])
+        self.assertIn("MCP meta-tool", source["android_owner"])
+
+    def test_mcp_tool_timeout_contract_is_consumed_by_host_and_exact_head_workflow(self):
+        package = (
+            ROOT / "source" / "packages" / "mcp-core" / "src" / "config" /
+            "mcp_tool_call_timeout.rs"
+        ).read_text(encoding="utf-8")
+        host = (
+            ROOT / "source" / "host" / "src" / "runner" / "mcp_meta_routed_tools.rs"
+        ).read_text(encoding="utf-8")
+        workflow = (
+            ROOT / ".github" / "workflows" / "grok-android-architecture.yml"
+        ).read_text(encoding="utf-8")
+        host_cargo = (ROOT / "source" / "host" / "Cargo.toml").read_text(encoding="utf-8")
+        self.assertIn(
+            "pub const DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS: u64 = 60 * 60_000;",
+            package,
+        )
+        self.assertIn(
+            "pub const LEGACY_MCP_TOOL_CALL_TIMEOUT_MS: u64 = "
+            "DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS;",
+            package,
+        )
+        self.assertIn(
+            "fabushi-android-mcp-core = { path = \"../packages/mcp-core\" }",
+            host_cargo,
+        )
+        self.assertIn(
+            "fabushi_android_mcp_core::config::mcp_tool_call_timeout::"
+            "DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS",
+            host,
+        )
+        self.assertIn(
+            "pub const LONG_TOOL_TIMEOUT_MS: u64 = DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS;",
+            host,
+        )
+        self.assertNotIn("pub const LONG_TOOL_TIMEOUT_MS: u64 = 60 * 60 * 1_000;", host)
+        self.assertIn("long_timeout_tier_uses_desktop_mcp_default_contract", host)
+        self.assertIn("Verify exact-HEAD MCP tool timeout production owner", workflow)
+        self.assertIn("Test exact-HEAD MCP tool timeout production owner", workflow)
+        self.assertIn(
+            "cargo test -p fabushi-android-mcp-core "
+            "config::mcp_tool_call_timeout::tests::desktop_default_and_legacy_timeouts_are_one_hour "
+            "-- --exact",
+            workflow,
+        )
+        self.assertIn(
+            "cargo test -p fabushi-mahayana-host "
+            "runner::mcp_meta_routed_tools::tests::long_timeout_tier_uses_desktop_mcp_default_contract "
+            "-- --exact",
+            workflow,
+        )
+
     def test_current_android_provenance_prefers_android_workflow_sha_and_rejects_stale_fallback(self):
         module = load_generator()
         head = "a" * 40

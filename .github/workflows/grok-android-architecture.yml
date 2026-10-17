@@ -83,6 +83,17 @@ jobs:
           cargo test -p fabushi-constants structured_log::tests::replay_window_rejects_old_and_far_future_entries -- --exact
           cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::replay_age_matches_desktop_structured_log_contract -- --exact
           cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::spill_rejects_far_future_records_under_desktop_skew_contract -- --exact
+      - name: Verify exact-HEAD MCP tool timeout production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_android_mcp_core::config::mcp_tool_call_timeout::DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS' source/host/src/runner/mcp_meta_routed_tools.rs
+          grep -Fq 'pub const LONG_TOOL_TIMEOUT_MS: u64 = DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS;' source/host/src/runner/mcp_meta_routed_tools.rs
+      - name: Test exact-HEAD MCP tool timeout production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-mcp-core config::mcp_tool_call_timeout::tests::desktop_default_and_legacy_timeouts_are_one_hour -- --exact
+          cargo test -p fabushi-mahayana-host runner::mcp_meta_routed_tools::tests::long_timeout_tier_uses_desktop_mcp_default_contract -- --exact
 
   parity-ledger:
     runs-on: ubuntu-latest

@@ -201,6 +201,37 @@ STRUCTURED_LOG_CONSTANT_SOURCE_SPEC = {
 }
 
 
+MCP_TOOL_TIMEOUT_SOURCE_PATH = 'source/packages/mcp-core/config/mcp-tool-call-timeout.ts'
+MCP_TOOL_TIMEOUT_RESPONSIBILITY_ID = 'MCP-META-TOOLS-ANDROID-001'
+MCP_TOOL_TIMEOUT_PRODUCTION_STEP = 'Verify exact-HEAD MCP tool timeout production owner'
+MCP_TOOL_TIMEOUT_TEST_STEP = 'Test exact-HEAD MCP tool timeout production owner'
+MCP_TOOL_TIMEOUT_SOURCE_SPEC = {
+    'symbols': [
+        'DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS',
+        'LEGACY_MCP_TOOL_CALL_TIMEOUT_MS',
+    ],
+    'source_owner': (
+        'Desktop source/packages/mcp-core/config/mcp-tool-call-timeout.ts owns the canonical '
+        'one-hour default and legacy MCP tool-call timeout contract'
+    ),
+    'android_owner': (
+        'Rust fabushi-android-mcp-core timeout contract consumed by the shipping Host '
+        'MCP meta-tool execution owner'
+    ),
+    'android_targets': [
+        'source/packages/mcp-core/src/config/mcp_tool_call_timeout.rs',
+        'source/host/src/runner/mcp_meta_routed_tools.rs',
+    ],
+    'production_target': 'source/host/src/runner/mcp_meta_routed_tools.rs',
+    'test_target': 'source/host/src/runner/mcp_meta_routed_tools.rs',
+    'focused_tests': [
+        'source/packages/mcp-core/src/config/mcp_tool_call_timeout.rs::tests::desktop_default_and_legacy_timeouts_are_one_hour',
+        'source/host/src/runner/mcp_meta_routed_tools.rs::tests::long_timeout_tier_uses_desktop_mcp_default_contract',
+    ],
+    'disposition': 'android-adapted',
+}
+
+
 
 def require(condition: bool, message: str) -> None:
     if not condition:
@@ -1780,6 +1811,76 @@ def _ensure_constants_structured_log_semantic_mapping(
         item['notes'] = note
 
 
+def _ensure_mcp_tool_timeout_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach Desktop MCP one-hour timeout policy to the shipping Android Host MCP meta owner."""
+    source_object = new_by_path.get(MCP_TOOL_TIMEOUT_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop MCP tool timeout config has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == MCP_TOOL_TIMEOUT_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'MCP tool timeout semantic mapping requires exactly one '
+        + MCP_TOOL_TIMEOUT_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(MCP_TOOL_TIMEOUT_SOURCE_PATH, {})
+    source.update({
+        'path': MCP_TOOL_TIMEOUT_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(MCP_TOOL_TIMEOUT_SOURCE_SPEC['symbols']),
+        'focused_tests': list(MCP_TOOL_TIMEOUT_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(MCP_TOOL_TIMEOUT_SOURCE_SPEC['android_targets']),
+        'source_owner': MCP_TOOL_TIMEOUT_SOURCE_SPEC['source_owner'],
+        'android_owner': MCP_TOOL_TIMEOUT_SOURCE_SPEC['android_owner'],
+    })
+    existing_sources[MCP_TOOL_TIMEOUT_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda value: value.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in MCP_TOOL_TIMEOUT_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Desktop one-hour MCP tool-call timeout is owned by fabushi-android-mcp-core and consumed '
+        'by the shipping Host MCP meta-tool long timeout tier. Android retains additional bounded '
+        'tiers without changing the Desktop default/legacy one-hour contract. Same-head production/'
+        'test evidence is required for package closure.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
 def merge_responsibility_mapping(
     responsibility_path: Path,
     ledger_rows: list[dict],
@@ -1804,6 +1905,8 @@ def merge_responsibility_mapping(
         _ensure_constants_composer_semantic_mapping(responsibilities, new_by_path, current)
     if STRUCTURED_LOG_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_constants_structured_log_semantic_mapping(responsibilities, new_by_path, current)
+    if MCP_TOOL_TIMEOUT_SOURCE_PATH in new_by_path:
+        _ensure_mcp_tool_timeout_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
         require(len(responsibilities) == expected_responsibility_count,
                 f'expected {expected_responsibility_count} responsibility definitions, got {len(responsibilities)}')
@@ -1937,6 +2040,79 @@ def merge_responsibility_mapping(
             print(
                 'WARNING: no successful same-exact-head constants structured-log evidence; '
                 'structured-log constant package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
+    if MCP_TOOL_TIMEOUT_SOURCE_PATH in new_by_path:
+        mcp_timeout_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == MCP_TOOL_TIMEOUT_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = mcp_timeout_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            mcp_timeout_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if MCP_TOOL_TIMEOUT_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        mcp_timeout_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=MCP_TOOL_TIMEOUT_PRODUCTION_STEP,
+            test_step_name=MCP_TOOL_TIMEOUT_TEST_STEP,
+            evidence_label='MCP tool timeout',
+        )
+        if mcp_timeout_evidence is not None:
+            production_target = MCP_TOOL_TIMEOUT_SOURCE_SPEC['production_target']
+            test_target = MCP_TOOL_TIMEOUT_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'MCP tool timeout evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [MCP_TOOL_TIMEOUT_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': mcp_timeout_evidence['workflow_name'],
+                'workflow_id': mcp_timeout_evidence['workflow_id'],
+                'workflow_path': mcp_timeout_evidence['workflow_path'],
+                'workflow_event': mcp_timeout_evidence['workflow_event'],
+                'workflow_repository': mcp_timeout_evidence['workflow_repository'],
+                'workflow_run_id': mcp_timeout_evidence['workflow_run_id'],
+                'workflow_job_name': mcp_timeout_evidence['workflow_job_name'],
+                'workflow_job_id': mcp_timeout_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': mcp_timeout_evidence['workflow_job_run_attempt'],
+                'run_attempt': mcp_timeout_evidence['run_attempt'],
+                'run_conclusion': mcp_timeout_evidence['run_conclusion'],
+                'result': 'passed',
+            }
+            mcp_timeout_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': mcp_timeout_evidence['production_step_name'],
+                'workflow_step_number': mcp_timeout_evidence['production_step_number'],
+                'evidence_ref': production_target + '#desktop-mcp-one-hour-timeout-production-owner',
+            })
+            mcp_timeout_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': mcp_timeout_evidence['test_step_name'],
+                'workflow_step_number': mcp_timeout_evidence['test_step_number'],
+                'evidence_ref': test_target + '#desktop-mcp-one-hour-timeout-focused-tests',
+                'focused_tests': list(MCP_TOOL_TIMEOUT_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head MCP tool timeout evidence; '
+                'MCP tool timeout package coverage remains incomplete',
                 file=sys.stderr,
             )
 
@@ -2221,6 +2397,8 @@ def merge_responsibility_mapping(
             row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
         elif path == STRUCTURED_LOG_CONSTANT_SOURCE_PATH:
             row['disposition'] = STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['disposition']
+        elif path == MCP_TOOL_TIMEOUT_SOURCE_PATH:
+            row['disposition'] = MCP_TOOL_TIMEOUT_SOURCE_SPEC['disposition']
         else:
             predecessor_row = predecessor_source_rows.get(path)
             inherited = predecessor_row.get('disposition') if predecessor_row else None
