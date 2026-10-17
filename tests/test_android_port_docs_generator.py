@@ -810,6 +810,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
             "workflow_sha": android_head, "evidence_ref": target + "#production",
             "workflow_run_id": 456, "workflow_job_id": 789, "workflow_job_name": "android-build-unit-lint",
+            "run_attempt": 1, "workflow_step_number": 9,
             "workflow_step_name": "Build exact-HEAD native Mahayana Coordinator Host",
             "workflow_name": "Android Parity Full CI", "result": "passed",
         } for path in paths]
@@ -819,6 +820,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
             "workflow_sha": android_head, "evidence_ref": test_target + "#test",
             "workflow_run_id": 456, "workflow_job_id": 789, "workflow_job_name": "android-build-unit-lint",
+            "run_attempt": 1, "workflow_step_number": 10,
             "workflow_step_name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
             "workflow_name": "Android Parity Full CI", "result": "passed",
         } for path in paths]
@@ -839,18 +841,21 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         def github_api(run_conclusion, production_conclusion, test_conclusion):
             def get_ci(endpoint):
                 if endpoint == "/repos/fabu-android/fabushi-android/actions/runs/456":
-                    return {"name": "Android Parity Full CI",
+                    return {"name": "Android Parity Full CI", "workflow_id": 364063299,
+                            "path": ".github/workflows/android-parity-full-ci.yml", "event": "pull_request",
                             "repository": {"full_name": "fabu-android/fabushi-android"},
-                            "head_sha": android_head, "status": "completed", "conclusion": run_conclusion}
-                if endpoint == "/repos/fabu-android/fabushi-android/actions/runs/456/jobs?per_page=100":
+                            "head_sha": android_head, "run_attempt": 1,
+                            "status": "completed", "conclusion": run_conclusion}
+                if endpoint == "/repos/fabu-android/fabushi-android/actions/runs/456/jobs?filter=latest&per_page=100&page=1":
                     return {"jobs": [{
-                        "id": 789, "name": "android-build-unit-lint",
+                        "id": 789, "run_id": 456, "run_attempt": 1,
+                        "name": "android-build-unit-lint",
                         "status": "completed", "conclusion": "success",
                         "steps": [
                             {"name": "Build exact-HEAD native Mahayana Coordinator Host",
-                             "status": "completed", "conclusion": production_conclusion},
+                             "number": 9, "status": "completed", "conclusion": production_conclusion},
                             {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
-                             "status": "completed", "conclusion": test_conclusion},
+                             "number": 10, "status": "completed", "conclusion": test_conclusion},
                         ],
                     }]}
                 raise AssertionError("Unexpected GitHub API endpoint: " + endpoint)
