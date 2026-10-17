@@ -344,6 +344,125 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             self.assertEqual(evidence["workflow_step_name"], module.AUTOMATION_SCHEDULE_TEST_STEP)
             self.assertTrue(evidence["focused_tests"])
 
+
+    def test_client_side_tool_v2_current_sources_map_without_inheriting_verification(self):
+        module = load_generator()
+        responsibility = {
+            "responsibility_id": module.CLIENT_SIDE_TOOL_V2_RESPONSIBILITY_ID,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [],
+            "android_target": [],
+        }
+        responsibilities = padded_responsibilities(responsibility)
+        inventory = {
+            path: {"sha": spec["blob_sha"], "mode": "100644", "type": "blob"}
+            for path, spec in module.CLIENT_SIDE_TOOL_V2_SOURCE_SPECS.items()
+        }
+        module._ensure_client_side_tool_v2_semantic_mapping(
+            responsibilities, inventory, CURRENT_DESKTOP_COMMIT
+        )
+        item = next(
+            value for value in responsibilities
+            if value["responsibility_id"] == module.CLIENT_SIDE_TOOL_V2_RESPONSIBILITY_ID
+        )
+        by_path = {source["path"]: source for source in item["desktop_sources"]}
+        for path, spec in module.CLIENT_SIDE_TOOL_V2_SOURCE_SPECS.items():
+            source = by_path[path]
+            self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+            self.assertEqual(source["blob_sha"], spec["blob_sha"])
+            self.assertEqual(source["mapping_quality"], "semantic")
+            self.assertEqual(source["android_targets"], spec["android_targets"])
+            self.assertTrue(source["source_owner"])
+            self.assertTrue(source["android_owner"])
+        self.assertEqual(item["implementation_status"], "unreviewed")
+        self.assertEqual(item["verification_status"], "not-verified")
+
+    def test_client_side_tool_v2_attaches_fresh_exact_head_evidence_without_promoting_status(self):
+        module = load_generator()
+        responsibility = {
+            "responsibility_id": module.CLIENT_SIDE_TOOL_V2_RESPONSIBILITY_ID,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [],
+            "production_evidence": [],
+            "test_evidence": [],
+        }
+        android_head = "b" * 40
+        android = {
+            "android_pr_head_sha": android_head,
+            "android_checkout_sha": android_head,
+            "workflow_sha": android_head,
+        }
+        inventory = {
+            path: {"sha": spec["blob_sha"], "mode": "100644", "type": "blob"}
+            for path, spec in module.CLIENT_SIDE_TOOL_V2_SOURCE_SPECS.items()
+        }
+        tracked = {
+            target
+            for spec in module.CLIENT_SIDE_TOOL_V2_SOURCE_SPECS.values()
+            for target in spec["android_targets"]
+        } | set(module.CLIENT_SIDE_TOOL_V2_TEST_TARGETS)
+        module._latest_exact_head_android_ci_evidence = lambda *args, **kwargs: {
+            "workflow_name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "workflow_path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "workflow_event": "pull_request",
+            "workflow_repository": module.ANDROID_REPOSITORY,
+            "workflow_run_id": 39046993371,
+            "workflow_job_name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+            "workflow_job_id": 117437585855,
+            "workflow_job_run_attempt": 1,
+            "run_attempt": 1,
+            "run_conclusion": "success",
+            "production_step_name": module.CLIENT_SIDE_TOOL_V2_PRODUCTION_STEP,
+            "production_step_number": 19,
+            "test_step_name": module.CLIENT_SIDE_TOOL_V2_TEST_STEP,
+            "test_step_number": 20,
+        }
+        module._attach_client_side_tool_v2_exact_head_evidence(
+            [responsibility],
+            inventory,
+            tracked,
+            CURRENT_DESKTOP_COMMIT,
+            CURRENT_DESKTOP_TREE,
+            android,
+        )
+        self.assertEqual(responsibility["implementation_status"], "unreviewed")
+        self.assertEqual(responsibility["verification_status"], "not-verified")
+        self.assertEqual(len(responsibility["production_evidence"]), 1)
+        self.assertEqual(
+            responsibility["production_evidence"][0]["android_pr_head_sha"], android_head
+        )
+        self.assertEqual(
+            responsibility["production_evidence"][0]["workflow_step_name"],
+            module.CLIENT_SIDE_TOOL_V2_PRODUCTION_STEP,
+        )
+        self.assertEqual(
+            len(responsibility["test_evidence"]), len(module.CLIENT_SIDE_TOOL_V2_TEST_TARGETS)
+        )
+        focused = [
+            test
+            for evidence in responsibility["test_evidence"]
+            for test in evidence["focused_tests"]
+        ]
+        self.assertTrue(any(
+            "malformed_wire_version_account_base64_type_and_identity_fail_closed" in test
+            for test in focused
+        ))
+        self.assertTrue(any(
+            "duplicate_out_of_order_inconsistent_result_and_stale_epoch_are_rejected" in test
+            for test in focused
+        ))
+        self.assertTrue(any(
+            "client_side_tool_v2_replay_survives_process_reopen_and_account_retirement_is_durable" in test
+            for test in focused
+        ))
+        self.assertTrue(any(
+            "client_side_tool_v2_wire_ingress_is_reachable_only_through_rust_coordinator" in test
+            for test in focused
+        ))
+
     def test_official_device_registration_sources_map_without_claiming_verification(self):
         module = load_generator()
         responsibilities = [
@@ -1766,89 +1885,6 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn(
             "cargo test -p fabushi-mahayana-host "
             "runner::mcp_meta_routed_tools::tests::long_timeout_tier_uses_desktop_mcp_default_contract "
-            "-- --exact",
-            workflow,
-        )
-
-
-    def test_agent_exec_shell_mapping_uses_existing_remote_computer_owner_without_local_shell_grant(self):
-        module = load_generator()
-        source_path = module.AGENT_EXEC_SHELL_SOURCE_PATH
-        primary = {
-            "responsibility_id": module.AGENT_EXEC_SHELL_RESPONSIBILITY_ID,
-            "desktop_sources": [],
-            "source_owner": "Remote Computer owner",
-            "android_owner": "Authenticated Remote Runner owner",
-            "android_target": ["source/host/src/runner/remote_routed_tools.rs"],
-            "disposition": "android-adapted",
-        }
-        responsibilities = padded_responsibilities(primary)
-        source_object = {
-            "sha": module.AGENT_EXEC_SHELL_DESKTOP_BLOB,
-            "mode": "100644",
-            "type": "blob",
-        }
-        module._ensure_agent_exec_shell_semantic_mapping(
-            responsibilities,
-            {source_path: source_object},
-            CURRENT_DESKTOP_COMMIT,
-        )
-        owner = next(
-            item for item in responsibilities
-            if item["responsibility_id"] == module.AGENT_EXEC_SHELL_RESPONSIBILITY_ID
-        )
-        source = next(item for item in owner["desktop_sources"] if item["path"] == source_path)
-        self.assertEqual(source["blob_sha"], module.AGENT_EXEC_SHELL_DESKTOP_BLOB)
-        self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
-        self.assertEqual(source["mapping_quality"], "semantic")
-        self.assertEqual(source["symbols"][-1], "shellExecutorResource")
-        self.assertIn("RemoteExecManager", source["source_owner"])
-        self.assertIn("AuthenticatedRemoteHostRunner", source["android_owner"])
-        self.assertIn("no unrestricted shell", source["android_owner"])
-        self.assertIn("source/shared/src/execution.rs", source["android_targets"])
-        self.assertIn("source/host/src/runner/remote_routed_tools.rs", source["android_targets"])
-        self.assertIn("source/host/src/runner/local_routed_tools.rs", source["android_targets"])
-        self.assertIn("source/box-exec-daemon/src/transport.rs", source["android_targets"])
-        self.assertTrue(source["focused_tests"])
-        self.assertEqual(module.AGENT_EXEC_SHELL_SOURCE_SPEC["disposition"], "android-adapted")
-
-    def test_agent_exec_shell_contract_is_remote_authenticated_and_local_shell_remains_absent(self):
-        shared = (ROOT / "source" / "shared" / "src" / "execution.rs").read_text(encoding="utf-8")
-        remote = (
-            ROOT / "source" / "host" / "src" / "runner" / "remote_routed_tools.rs"
-        ).read_text(encoding="utf-8")
-        local = (
-            ROOT / "source" / "host" / "src" / "runner" / "local_routed_tools.rs"
-        ).read_text(encoding="utf-8")
-        transport = (
-            ROOT / "source" / "box-exec-daemon" / "src" / "transport.rs"
-        ).read_text(encoding="utf-8")
-        workflow = (
-            ROOT / ".github" / "workflows" / "grok-android-architecture.yml"
-        ).read_text(encoding="utf-8")
-        self.assertIn("pub struct ExecutionRequest {", shared)
-        self.assertIn("pub struct ExecutionResult {", shared)
-        self.assertIn("AuthenticatedRemoteHttpTransport", remote)
-        self.assertIn('name == "Shell"', remote)
-        self.assertIn('"shell",', remote)
-        self.assertIn('"Read" => LOCAL_FILE_READ_CAPABILITY,', local)
-        self.assertIn('"Write" => LOCAL_FILE_WRITE_CAPABILITY,', local)
-        self.assertNotIn('"Shell" =>', local)
-        self.assertIn('set("Authorization", &authorization)', transport)
-        self.assertIn('set("X-Fabushi-Account-Fence", &context.account_fence)', transport)
-        self.assertIn('set("X-Fabushi-Account-Epoch", &account_epoch)', transport)
-        self.assertIn("Side-effecting execution is deliberately sent exactly once", transport)
-        self.assertIn("Verify exact-HEAD agent-exec shell remote execution owner", workflow)
-        self.assertIn("Test exact-HEAD agent-exec shell remote execution owner", workflow)
-        self.assertIn(
-            "cargo test -p fabushi-android-box-exec-daemon "
-            "transport::tests::network_interruption_after_dispatch_is_outcome_unknown_without_blind_replay "
-            "-- --exact",
-            workflow,
-        )
-        self.assertIn(
-            "cargo test -p fabushi-mahayana-host "
-            "runner::local_routed_tools::tests::always_permission_executes_only_through_broker_and_runner "
             "-- --exact",
             workflow,
         )

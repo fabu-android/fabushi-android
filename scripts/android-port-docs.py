@@ -235,57 +235,6 @@ MCP_TOOL_TIMEOUT_SOURCE_SPEC = {
 }
 
 
-AGENT_EXEC_SHELL_SOURCE_PATH = 'source/packages/agent-exec/shell.ts'
-AGENT_EXEC_SHELL_DESKTOP_BLOB = 'eb8a4a897b934cbe2e4c08ff6a2845baa61f8bc6'
-AGENT_EXEC_SHELL_RESPONSIBILITY_ID = 'REMOTE-COMPUTER-001'
-AGENT_EXEC_SHELL_PRODUCTION_STEP = 'Verify exact-HEAD agent-exec shell remote execution owner'
-AGENT_EXEC_SHELL_TEST_STEP = 'Test exact-HEAD agent-exec shell remote execution owner'
-AGENT_EXEC_SHELL_SOURCE_SPEC = {
-    'symbols': [
-        'ShellExecutorArgs',
-        'ShellExecResult',
-        'ShellExecResponse',
-        'ShellExecutor',
-        'shellExecutorResource',
-    ],
-    'source_owner': (
-        'Desktop source/packages/agent-exec/shell.ts owns the typed ShellArgs/ShellResult '
-        'ExecutorResource bridge over RemoteExecManager and ControlledExecManager; the bridge '
-        'does not itself grant local shell permission'
-    ),
-    'android_owner': (
-        'Existing Rust Host RemoteRoutedTools and AuthenticatedRemoteHostRunner route Shell through '
-        'AuthenticatedRemoteHttpTransport with shared ExecutionRequest/ExecutionResult identity; '
-        'shipping Android local routing remains bounded file-only and exposes no unrestricted shell'
-    ),
-    'android_targets': [
-        'source/shared/src/execution.rs',
-        'source/host/src/runner/remote_routed_tools.rs',
-        'source/host/src/runner/local_routed_tools.rs',
-        'source/box-exec-daemon/src/transport.rs',
-    ],
-    'production_target': 'source/host/src/runner/remote_routed_tools.rs',
-    'test_targets': {
-        'source/shared/src/execution.rs': [
-            'source/shared/src/execution.rs::tests::execution_request_rejects_unbounded_or_invalid_wire_inputs',
-        ],
-        'source/box-exec-daemon/src/transport.rs': [
-            'source/box-exec-daemon/src/transport.rs::tests::execute_binds_bearer_account_epoch_operation_request_grant_and_device',
-            'source/box-exec-daemon/src/transport.rs::tests::network_interruption_after_dispatch_is_outcome_unknown_without_blind_replay',
-        ],
-        'source/host/src/runner/remote_routed_tools.rs': [
-            'source/host/src/runner/remote_routed_tools.rs::tests::binding_requires_explicit_known_executor_capabilities',
-            'source/host/src/runner/remote_routed_tools.rs::tests::remote_tool_identity_changes_when_arguments_change',
-        ],
-        'source/host/src/runner/local_routed_tools.rs': [
-            'source/host/src/runner/local_routed_tools.rs::tests::never_permission_hides_local_file_tools',
-            'source/host/src/runner/local_routed_tools.rs::tests::always_permission_executes_only_through_broker_and_runner',
-        ],
-    },
-    'disposition': 'android-adapted',
-}
-
-
 AUTOMATION_SCHEDULE_SOURCE_PATH = 'source/host/src/automations/automation_schedule.rs'
 AUTOMATION_SCHEDULE_DESKTOP_BLOB = '156e0483699813d1c98cdec187ed4b3b477a7489'
 AUTOMATION_SCHEDULE_RESPONSIBILITY_ID = 'AUTOMATION-SCHEDULE-ANDROID-001'
@@ -324,6 +273,50 @@ AUTOMATION_SCHEDULE_SOURCE_SPEC = {
         ],
     },
     'disposition': 'direct-port',
+}
+
+
+CLIENT_SIDE_TOOL_V2_RESPONSIBILITY_ID = 'TOOLS-CLIENT-SIDE-TOOL-V2-RELAY-001'
+CLIENT_SIDE_TOOL_V2_PRODUCTION_STEP = 'Verify exact-HEAD client-side tool v2 relay production owner'
+CLIENT_SIDE_TOOL_V2_TEST_STEP = 'Test exact-HEAD client-side tool v2 relay production owner'
+CLIENT_SIDE_TOOL_V2_SOURCE_SPECS = {
+    'source/node-agent-coordinator/src/client_side_tool_v2_relay.rs': {
+        'blob_sha': 'a01c69f3eb7aec0e07a8bcc003d251ad9d3d7c33',
+        'symbols': ['ClientSideToolV2Relay', 'CLIENT_SIDE_TOOL_V2_FAMILY', 'CLIENT_SIDE_TOOL_V2_WIRE_VERSION', 'CLIENT_SIDE_TOOL_V2_ACCOUNT_SLOT'],
+        'source_owner': 'Desktop Rust Coordinator relay owns client-side-tool-v2 wire admission, ordering, epoch fencing, replay materialization and reset semantics',
+        'android_owner': 'Android Rust MahayanaCoordinator owns the same relay state and durable replay/account-retirement fencing',
+        'android_targets': ['source/mahayana-agent-coordinator/src/client_side_tool_v2_relay.rs', 'source/mahayana-agent-coordinator/src/main.rs'],
+        'disposition': 'direct-port',
+    },
+    'source/node-agent-coordinator/src/main.rs': {
+        'blob_sha': 'c822c07dff3027a22a658d1ece6aefe919691365',
+        'symbols': ['CoordinatorState.tool_relay', 'post_tool_event', 'replay_tool_events'],
+        'source_owner': 'Desktop Coordinator production composition owns relay construction, Host channel consumption, renderer projection/replay and lifecycle clearing',
+        'android_owner': 'Android MahayanaCoordinator plus android-host-jni own production ingress/replay and account retirement; Kotlin/UI does not decode or own canonical relay state',
+        'android_targets': ['source/mahayana-agent-coordinator/src/main.rs', 'source/android-host-jni/src/lib.rs'],
+        'disposition': 'android-adapted',
+    },
+    'source/shared/rpc/client-side-tool-v2-transport.ts': {
+        'blob_sha': 'e0a298c7dd5ca454ae2b61e8337a9d74bf18b8ba',
+        'symbols': ['CLIENT_SIDE_TOOL_V2_FAMILY', 'CLIENT_SIDE_TOOL_V2_WIRE_VERSION', 'CLIENT_SIDE_TOOL_V2_ACCOUNT_SLOT', 'parseClientSideToolV2TransportEvent', 'materializeClientSideToolV2RendererEvent'],
+        'source_owner': 'Desktop shared RPC contract owns versioned wire identity, encoded payload validation and renderer materialization',
+        'android_owner': 'Android Rust client_side_tool_v2_relay enforces the versioned transport contract before JNI projection',
+        'android_targets': ['source/mahayana-agent-coordinator/src/client_side_tool_v2_relay.rs', 'source/android-host-jni/src/lib.rs'],
+        'disposition': 'android-adapted',
+    },
+}
+CLIENT_SIDE_TOOL_V2_TEST_TARGETS = {
+    'source/mahayana-agent-coordinator/src/client_side_tool_v2_relay.rs': [
+        'client_side_tool_v2_relay::tests::malformed_wire_version_account_base64_type_and_identity_fail_closed',
+        'client_side_tool_v2_relay::tests::duplicate_out_of_order_inconsistent_result_and_stale_epoch_are_rejected',
+        'client_side_tool_v2_relay::tests::reset_account_switch_and_serialized_reopen_replay_are_fenced',
+    ],
+    'source/mahayana-agent-coordinator/src/main.rs': [
+        'main::tests::client_side_tool_v2_replay_survives_process_reopen_and_account_retirement_is_durable',
+    ],
+    'source/android-host-jni/src/lib.rs': [
+        'tests::client_side_tool_v2_wire_ingress_is_reachable_only_through_rust_coordinator',
+    ],
 }
 
 
@@ -2093,85 +2086,6 @@ def _ensure_mcp_tool_timeout_semantic_mapping(
 
 
 
-def _ensure_agent_exec_shell_semantic_mapping(
-    responsibilities: list[dict],
-    new_by_path: dict[str, dict],
-    desktop_commit: str,
-) -> None:
-    """Map Desktop shell executor transport semantics without granting Android a local shell."""
-    source_object = new_by_path.get(AGENT_EXEC_SHELL_SOURCE_PATH)
-    if source_object is None:
-        return
-    require(
-        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
-        'Desktop agent-exec shell source has invalid blob/mode/type',
-    )
-    require(
-        source_object.get('sha') == AGENT_EXEC_SHELL_DESKTOP_BLOB,
-        'Desktop agent-exec shell blob does not match pinned b614 authority',
-    )
-    matches = [
-        item for item in responsibilities
-        if item.get('responsibility_id') == AGENT_EXEC_SHELL_RESPONSIBILITY_ID
-    ]
-    require(
-        len(matches) == 1,
-        'agent-exec shell semantic mapping requires exactly one '
-        + AGENT_EXEC_SHELL_RESPONSIBILITY_ID,
-    )
-    item = matches[0]
-    existing_sources = {
-        source.get('path'): dict(source)
-        for source in item.get('desktop_sources', [])
-        if isinstance(source, dict) and isinstance(source.get('path'), str)
-    }
-    focused_tests = [
-        test
-        for tests in AGENT_EXEC_SHELL_SOURCE_SPEC['test_targets'].values()
-        for test in tests
-    ]
-    source = existing_sources.get(AGENT_EXEC_SHELL_SOURCE_PATH, {})
-    source.update({
-        'path': AGENT_EXEC_SHELL_SOURCE_PATH,
-        'blob_sha': source_object['sha'],
-        'source_mode': source_object['mode'],
-        'source_type': source_object['type'],
-        'source_commit': desktop_commit,
-        'mapping_quality': 'semantic',
-        'symbols': list(AGENT_EXEC_SHELL_SOURCE_SPEC['symbols']),
-        'focused_tests': focused_tests,
-        'android_targets': list(AGENT_EXEC_SHELL_SOURCE_SPEC['android_targets']),
-        'source_owner': AGENT_EXEC_SHELL_SOURCE_SPEC['source_owner'],
-        'android_owner': AGENT_EXEC_SHELL_SOURCE_SPEC['android_owner'],
-    })
-    existing_sources[AGENT_EXEC_SHELL_SOURCE_PATH] = source
-    item['desktop_sources'] = sorted(
-        existing_sources.values(), key=lambda value: value.get('path', '')
-    )
-    raw_targets = item.get('android_target')
-    if not isinstance(raw_targets, list):
-        raw_targets = []
-    for target in AGENT_EXEC_SHELL_SOURCE_SPEC['android_targets']:
-        if target not in raw_targets:
-            raw_targets.append(target)
-    item['android_target'] = raw_targets
-    note = (
-        'Desktop shellExecutorResource is mapped to the existing authenticated Remote Computer '
-        'execution path. Android local execution remains capability-registered and shipping local '
-        'routing exposes bounded file Read/Write only; this mapping does not authorize unrestricted '
-        'Android shell. Same-head production/test evidence is required for package closure.'
-    )
-    notes = item.get('notes')
-    if isinstance(notes, str):
-        if note not in notes:
-            item['notes'] = notes + ' ' + note
-    elif isinstance(notes, list):
-        if note not in notes:
-            notes.append(note)
-    else:
-        item['notes'] = note
-
-
 def _ensure_automation_schedule_semantic_mapping(
     responsibilities: list[dict],
     new_by_path: dict[str, dict],
@@ -2342,6 +2256,163 @@ def _attach_automation_schedule_exact_head_evidence(
             'focused_tests': list(focused_tests),
         })
 
+
+
+def _ensure_client_side_tool_v2_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Bind current Desktop relay sources to real Android Rust/JNI owners without inheriting verification."""
+    if not all(path in new_by_path for path in CLIENT_SIDE_TOOL_V2_SOURCE_SPECS):
+        return
+    item = next(
+        (value for value in responsibilities if value.get('responsibility_id') == CLIENT_SIDE_TOOL_V2_RESPONSIBILITY_ID),
+        None,
+    )
+    require(item is not None, 'client-side-tool-v2 relay responsibility is missing')
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for path, spec in CLIENT_SIDE_TOOL_V2_SOURCE_SPECS.items():
+        source_object = new_by_path[path]
+        require(
+            source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+            'client-side-tool-v2 Desktop source has invalid blob/mode/type: ' + path,
+        )
+        require(
+            source_object.get('sha') == spec['blob_sha'],
+            'client-side-tool-v2 Desktop blob does not match pinned current-main authority: ' + path,
+        )
+        source = existing_sources.get(path, {})
+        source.update({
+            'path': path,
+            'blob_sha': source_object['sha'],
+            'source_mode': source_object['mode'],
+            'source_type': source_object['type'],
+            'source_commit': desktop_commit,
+            'mapping_quality': 'semantic',
+            'symbols': list(spec['symbols']),
+            'android_targets': list(spec['android_targets']),
+            'source_owner': spec['source_owner'],
+            'android_owner': spec['android_owner'],
+        })
+        existing_sources[path] = source
+        for target in spec['android_targets']:
+            if target not in raw_targets:
+                raw_targets.append(target)
+    item['desktop_sources'] = sorted(existing_sources.values(), key=lambda value: value.get('path', ''))
+    item['android_target'] = raw_targets
+    note = (
+        'Fresh current-main client-side-tool-v2 relay authority is bound to Desktop shipping '
+        'Coordinator/shared transport sources and the Android Rust Coordinator/JNI production ingress. '
+        'Same-head production and focused test evidence is required; predecessor verification is never inherited.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
+def _attach_client_side_tool_v2_exact_head_evidence(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    tracked_android_paths: set[str],
+    current: str,
+    tree_sha: str,
+    android: dict,
+) -> None:
+    """Attach fresh same-HEAD relay evidence while leaving rebaseline acceptance status conservative."""
+    source_paths = list(CLIENT_SIDE_TOOL_V2_SOURCE_SPECS)
+    if not all(path in new_by_path for path in source_paths):
+        return
+    responsibility = next(
+        item for item in responsibilities
+        if item.get('responsibility_id') == CLIENT_SIDE_TOOL_V2_RESPONSIBILITY_ID
+    )
+    source_path_set = set(source_paths)
+    for evidence_key in ('production_evidence', 'test_evidence'):
+        existing_evidence = responsibility.get(evidence_key)
+        if not isinstance(existing_evidence, list):
+            existing_evidence = []
+        responsibility[evidence_key] = [
+            evidence for evidence in existing_evidence
+            if not source_path_set.intersection(
+                evidence.get('source_paths')
+                if isinstance(evidence.get('source_paths'), list)
+                else [evidence.get('source_path')]
+            )
+        ]
+    ci_evidence = _latest_exact_head_android_ci_evidence(
+        android['android_pr_head_sha'],
+        production_step_name=CLIENT_SIDE_TOOL_V2_PRODUCTION_STEP,
+        test_step_name=CLIENT_SIDE_TOOL_V2_TEST_STEP,
+        evidence_label='client-side tool v2 relay',
+    )
+    if ci_evidence is None:
+        print(
+            'WARNING: no successful same-exact-head client-side-tool-v2 relay evidence; relay sources remain provenance-only',
+            file=sys.stderr,
+        )
+        return
+    required_targets = {
+        target
+        for spec in CLIENT_SIDE_TOOL_V2_SOURCE_SPECS.values()
+        for target in spec['android_targets']
+    } | set(CLIENT_SIDE_TOOL_V2_TEST_TARGETS)
+    missing_targets = sorted(target for target in required_targets if target not in tracked_android_paths)
+    require(
+        not missing_targets,
+        'client-side-tool-v2 evidence target is not tracked at exact HEAD: ' + ', '.join(missing_targets),
+    )
+    common = {
+        'source_paths': source_paths,
+        'source_commit': current,
+        'desktop_commit': current,
+        'desktop_root_tree': tree_sha,
+        'source_blob_shas': {path: new_by_path[path]['sha'] for path in source_paths},
+        'android_pr_head_sha': android['android_pr_head_sha'],
+        'android_tested_checkout_sha': android['android_checkout_sha'],
+        'workflow_sha': android['workflow_sha'],
+        'workflow_name': ci_evidence['workflow_name'],
+        'workflow_id': ci_evidence['workflow_id'],
+        'workflow_path': ci_evidence['workflow_path'],
+        'workflow_event': ci_evidence['workflow_event'],
+        'workflow_repository': ci_evidence['workflow_repository'],
+        'workflow_run_id': ci_evidence['workflow_run_id'],
+        'workflow_job_name': ci_evidence['workflow_job_name'],
+        'workflow_job_id': ci_evidence['workflow_job_id'],
+        'workflow_job_run_attempt': ci_evidence['workflow_job_run_attempt'],
+        'run_attempt': ci_evidence['run_attempt'],
+        'run_conclusion': ci_evidence['run_conclusion'],
+        'result': 'passed',
+    }
+    responsibility['production_evidence'].append({
+        **common,
+        'kind': 'production-wiring',
+        'workflow_step_name': ci_evidence['production_step_name'],
+        'workflow_step_number': ci_evidence['production_step_number'],
+        'evidence_ref': 'source/mahayana-agent-coordinator/src/main.rs#client-side-tool-v2-production-owner',
+    })
+    for test_target, focused_tests in CLIENT_SIDE_TOOL_V2_TEST_TARGETS.items():
+        responsibility['test_evidence'].append({
+            **common,
+            'kind': 'focused-unit-test',
+            'workflow_step_name': ci_evidence['test_step_name'],
+            'workflow_step_number': ci_evidence['test_step_number'],
+            'evidence_ref': test_target + '#client-side-tool-v2-focused-tests',
+            'focused_tests': list(focused_tests),
+        })
 
 def _ensure_official_device_registration_semantic_mapping(
     responsibilities: list[dict],
@@ -2533,10 +2604,10 @@ def merge_responsibility_mapping(
         _ensure_constants_structured_log_semantic_mapping(responsibilities, new_by_path, current)
     if MCP_TOOL_TIMEOUT_SOURCE_PATH in new_by_path:
         _ensure_mcp_tool_timeout_semantic_mapping(responsibilities, new_by_path, current)
-    if AGENT_EXEC_SHELL_SOURCE_PATH in new_by_path:
-        _ensure_agent_exec_shell_semantic_mapping(responsibilities, new_by_path, current)
     if AUTOMATION_SCHEDULE_SOURCE_PATH in new_by_path:
         _ensure_automation_schedule_semantic_mapping(responsibilities, new_by_path, current)
+    if all(path in new_by_path for path in CLIENT_SIDE_TOOL_V2_SOURCE_SPECS):
+        _ensure_client_side_tool_v2_semantic_mapping(responsibilities, new_by_path, current)
     if any(path in new_by_path for path in OFFICIAL_DEVICE_SOURCE_SPECS):
         _ensure_official_device_registration_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
@@ -2599,6 +2670,14 @@ def merge_responsibility_mapping(
 
     tracked_android_paths = _current_android_tracked_files()
     _attach_automation_schedule_exact_head_evidence(
+        responsibilities,
+        new_by_path,
+        tracked_android_paths,
+        current,
+        tree_sha,
+        android,
+    )
+    _attach_client_side_tool_v2_exact_head_evidence(
         responsibilities,
         new_by_path,
         tracked_android_paths,
@@ -2761,90 +2840,6 @@ def merge_responsibility_mapping(
             print(
                 'WARNING: no successful same-exact-head MCP tool timeout evidence; '
                 'MCP tool timeout package coverage remains incomplete',
-                file=sys.stderr,
-            )
-
-    if AGENT_EXEC_SHELL_SOURCE_PATH in new_by_path:
-        shell_responsibility = next(
-            item for item in responsibilities
-            if item.get('responsibility_id') == AGENT_EXEC_SHELL_RESPONSIBILITY_ID
-        )
-        for evidence_key in ('production_evidence', 'test_evidence'):
-            existing_evidence = shell_responsibility.get(evidence_key)
-            if not isinstance(existing_evidence, list):
-                existing_evidence = []
-            shell_responsibility[evidence_key] = [
-                evidence for evidence in existing_evidence
-                if AGENT_EXEC_SHELL_SOURCE_PATH not in (
-                    evidence.get('source_paths')
-                    if isinstance(evidence.get('source_paths'), list)
-                    else [evidence.get('source_path')]
-                )
-            ]
-        shell_evidence = _latest_exact_head_android_ci_evidence(
-            android['android_pr_head_sha'],
-            production_step_name=AGENT_EXEC_SHELL_PRODUCTION_STEP,
-            test_step_name=AGENT_EXEC_SHELL_TEST_STEP,
-            evidence_label='agent-exec shell remote execution',
-        )
-        if shell_evidence is not None:
-            production_target = AGENT_EXEC_SHELL_SOURCE_SPEC['production_target']
-            test_targets = AGENT_EXEC_SHELL_SOURCE_SPEC['test_targets']
-            required_targets = [
-                *AGENT_EXEC_SHELL_SOURCE_SPEC['android_targets'],
-                production_target,
-                *test_targets.keys(),
-            ]
-            missing_targets = sorted({
-                target for target in required_targets if target not in tracked_android_paths
-            })
-            require(
-                not missing_targets,
-                'agent-exec shell evidence target is not tracked at exact HEAD: '
-                + ', '.join(missing_targets),
-            )
-            common = {
-                'source_paths': [AGENT_EXEC_SHELL_SOURCE_PATH],
-                'source_commit': current,
-                'desktop_commit': current,
-                'desktop_root_tree': tree_sha,
-                'source_blob_sha': new_by_path[AGENT_EXEC_SHELL_SOURCE_PATH]['sha'],
-                'android_pr_head_sha': android['android_pr_head_sha'],
-                'android_tested_checkout_sha': android['android_checkout_sha'],
-                'workflow_sha': android['workflow_sha'],
-                'workflow_name': shell_evidence['workflow_name'],
-                'workflow_id': shell_evidence['workflow_id'],
-                'workflow_path': shell_evidence['workflow_path'],
-                'workflow_event': shell_evidence['workflow_event'],
-                'workflow_repository': shell_evidence['workflow_repository'],
-                'workflow_run_id': shell_evidence['workflow_run_id'],
-                'workflow_job_name': shell_evidence['workflow_job_name'],
-                'workflow_job_id': shell_evidence['workflow_job_id'],
-                'workflow_job_run_attempt': shell_evidence['workflow_job_run_attempt'],
-                'run_attempt': shell_evidence['run_attempt'],
-                'run_conclusion': shell_evidence['run_conclusion'],
-                'result': 'passed',
-            }
-            shell_responsibility['production_evidence'].append({
-                **common,
-                'kind': 'production-wiring',
-                'workflow_step_name': shell_evidence['production_step_name'],
-                'workflow_step_number': shell_evidence['production_step_number'],
-                'evidence_ref': production_target + '#agent-exec-shell-remote-production-owner',
-            })
-            for test_target, focused_tests in test_targets.items():
-                shell_responsibility['test_evidence'].append({
-                    **common,
-                    'kind': 'focused-unit-test',
-                    'workflow_step_name': shell_evidence['test_step_name'],
-                    'workflow_step_number': shell_evidence['test_step_number'],
-                    'evidence_ref': test_target + '#agent-exec-shell-remote-focused-tests',
-                    'focused_tests': list(focused_tests),
-                })
-        else:
-            print(
-                'WARNING: no successful same-exact-head agent-exec shell evidence; '
-                'agent-exec shell package coverage remains incomplete',
                 file=sys.stderr,
             )
 
@@ -3133,6 +3128,8 @@ def merge_responsibility_mapping(
             row['disposition'] = MCP_TOOL_TIMEOUT_SOURCE_SPEC['disposition']
         elif path == AUTOMATION_SCHEDULE_SOURCE_PATH:
             row['disposition'] = AUTOMATION_SCHEDULE_SOURCE_SPEC['disposition']
+        elif path in CLIENT_SIDE_TOOL_V2_SOURCE_SPECS:
+            row['disposition'] = CLIENT_SIDE_TOOL_V2_SOURCE_SPECS[path]['disposition']
         elif path in OFFICIAL_DEVICE_SOURCE_SPECS:
             row['disposition'] = OFFICIAL_DEVICE_SOURCE_SPECS[path]['disposition']
         else:
