@@ -54,8 +54,8 @@ OWNER_PLACEHOLDER_VALUES = frozenset({
     '', 'unknown', 'tbd', 'todo', 'n/a', 'na', 'none', 'unassigned',
     'not assigned', 'not reviewed', 'placeholder', 'owner unknown',
 })
-DEFAULT_RESPONSIBILITY_ARTIFACT = '12053467058'
-DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:26fe89b6a05f76ce96ab5ddab5a6107251586ad8143f42fff0d4794a4da15eb5'
+DEFAULT_RESPONSIBILITY_ARTIFACT = '12072277149'
+DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
 
 def require(condition: bool, message: str) -> None:
     if not condition:

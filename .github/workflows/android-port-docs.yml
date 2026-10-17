@@ -45,8 +45,8 @@ jobs:
           ANDROID_PR_NUMBER: '3'
           ANDROID_PR_BASE_SHA: ''
           ANDROID_PR_BASE_REF: 'main'
-          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12053467058'
-          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:26fe89b6a05f76ce96ab5ddab5a6107251586ad8143f42fff0d4794a4da15eb5'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
         run: python3 scripts/android-port-docs.py rebaseline
       - name: Enumerate source and verify authority
         env:
