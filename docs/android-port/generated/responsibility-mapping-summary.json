@@ -28,8 +28,8 @@
   "mapping_provenance": {
     "artifact_id": null,
     "artifact_digest": null,
-    "source_manifest_run_id": 38988319909,
-    "source_manifest_android_head": "a22e1ce02328c74b0ea1923daef9cc4fb6960130",
+    "source_manifest_run_id": 38988394327,
+    "source_manifest_android_head": "65fccbf2978e784ae62565d16acafc48452cb690",
     "source_manifest_desktop_commit": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
     "source_manifest_desktop_root_tree": "72fc5f777012f6e7bf5f5f471b6f121fd3612bb2",
     "mapping_source": "validated-local-persisted-snapshot"
@@ -39,17 +39,17 @@
   "android_provenance": {
     "android_repository": "fabu-android/fabushi-android",
     "android_pr": 3,
-    "android_pr_head_sha": "a22e1ce02328c74b0ea1923daef9cc4fb6960130",
+    "android_pr_head_sha": "65fccbf2978e784ae62565d16acafc48452cb690",
     "android_pr_head_ref": "spec/grok-bot-018-android-parity-20260922",
     "android_pr_base_sha": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
     "android_pr_base_ref": "main",
-    "android_checkout_sha": "a22e1ce02328c74b0ea1923daef9cc4fb6960130",
+    "android_checkout_sha": "65fccbf2978e784ae62565d16acafc48452cb690",
     "workflow_event": "push",
-    "workflow_run_id": 38988319909,
+    "workflow_run_id": 38988394327,
     "run_attempt": 1,
-    "workflow_sha": "a22e1ce02328c74b0ea1923daef9cc4fb6960130",
+    "workflow_sha": "65fccbf2978e784ae62565d16acafc48452cb690",
     "workflow_ref": "fabu-android/fabushi-android/.github/workflows/android-port-docs.yml@refs/heads/spec/grok-bot-018-android-parity-20260922",
-    "run_url": "https://github.com/fabu-android/fabushi-android/actions/runs/38988319909",
-    "generated_at_utc": "2026-10-17T00:52:06Z"
+    "run_url": "https://github.com/fabu-android/fabushi-android/actions/runs/38988394327",
+    "generated_at_utc": "2026-10-17T00:53:03Z"
   }
 }
