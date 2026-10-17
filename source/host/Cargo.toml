@@ -19,6 +19,7 @@ fabushi-android-shared = { path = "../shared" }
 fabushi-android-box-exec-daemon = { path = "../box-exec-daemon" }
 fabushi-android-local-exec-daemon = { path = "../local-exec-daemon" }
 fabushi-constants = { path = "../packages/constants" }
+fabushi-android-agent-kv = { path = "../packages/agent-kv" }
 futures = "0.3"
 fs2 = "0.4"
 notify = "8.2.0"

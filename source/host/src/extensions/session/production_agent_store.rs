@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use fabushi_android_agent_kv::{agent_store::AgentMetadataSerde, reference::BlobRef, subagent_states::resolve_subagent_state_references};
 
 use crate::agent_isolation::{
     ProductionAgentStoreWorkerBackend, WorkerBlobStore,
@@ -129,8 +130,10 @@ impl ProductionAgentStore {
         key: ProductionAgentMetadataKey,
         value: Value,
     ) -> Result<bool, String> {
+        let normalized = AgentMetadataSerde::default()
+            .normalize_field(key.as_str(), value, &self.agent_id)?;
         self.db
-            .set_metadata(key.as_str(), value)
+            .set_metadata(key.as_str(), normalized)
             .map_err(|error| error.to_string())
     }
 
@@ -210,35 +213,31 @@ impl ProductionAgentStore {
         let structure = decode_conversation_state_recovery_fields(&checkpoint)
             .map_err(|error| format!("invalid ConversationStateStructure checkpoint: {error}"))?;
 
-        let mut persisted = BTreeMap::<String, SubagentPersistedStateFields>::new();
+        let mut inline = BTreeMap::<String, SubagentPersistedStateFields>::new();
         for (subagent_id, bytes) in structure.subagent_states {
-            persisted.insert(
+            inline.insert(
                 subagent_id,
                 decode_subagent_persisted_state_fields(&bytes)
                     .map_err(|error| format!("invalid inline subagent state: {error}"))?,
             );
         }
-
-        let mut missing = Vec::new();
-        for (subagent_id, blob_id) in structure.subagent_state_refs {
-            match self.get_blob(&blob_id)? {
-                Some(bytes) => {
-                    persisted.insert(
-                        subagent_id,
-                        decode_subagent_persisted_state_fields(&bytes)
-                            .map_err(|error| format!("invalid referenced subagent state: {error}"))?,
-                    );
-                }
-                None if persisted.contains_key(&subagent_id) => {}
-                None => missing.push(encode_hex(&blob_id)),
-            }
-        }
-        if !missing.is_empty() {
-            return Err(format!(
-                "subagent state ref blob not found: {}",
-                missing.join(",")
-            ));
-        }
+        let refs = structure.subagent_state_refs
+            .into_iter()
+            .map(|(subagent_id, bytes)| {
+                let reference = BlobRef::from_digest_bytes(&bytes)
+                    .map_err(|error| format!("invalid subagent blob reference for {subagent_id}: {error}"))?;
+                Ok((subagent_id, reference))
+            })
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
+        let resolution = resolve_subagent_state_references(
+            inline,
+            refs,
+            |reference| self.get_blob(&reference.to_bytes()),
+            |bytes| decode_subagent_persisted_state_fields(bytes)
+                .map_err(|error| error.to_string()),
+        )?;
+        let persisted = resolution.states;
+        let _inline_fallback_ids = resolution.inline_fallback_ids;
 
         let resolver = SessionConversationState::new(self.db.busy_timeout_ms());
         let mut subagent_states = BTreeMap::new();
@@ -424,9 +423,23 @@ impl ProductionAgentStore {
         &self,
         blob_id: &[u8],
     ) -> Result<Option<Vec<u8>>, String> {
-        self.blob_store
+        if blob_id.len() != 32 {
+            return Err(format!("invalid SHA-256 blob id length: {}", blob_id.len()));
+        }
+        let bytes = self.blob_store
             .get_blob_blocking(blob_id)
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?;
+        if let Some(ref bytes) = bytes {
+            let actual = Sha256::digest(bytes);
+            if actual.as_slice() != blob_id {
+                return Err(format!(
+                    "blob SHA-256 mismatch: expected {}, computed {}",
+                    encode_hex(blob_id),
+                    encode_hex(&actual),
+                ));
+            }
+        }
+        Ok(bytes)
     }
 
     pub fn flush(&self) {
