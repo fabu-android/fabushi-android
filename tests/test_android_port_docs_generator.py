@@ -1653,9 +1653,83 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         merge_start = generator.index("def merge_responsibility_mapping(")
         rebaseline_start = generator.index("def rebaseline()")
         merge_body = generator[merge_start:rebaseline_start]
-        self.assertIn("authority_pair in {pinned_pair, current_pair}", merge_body)
+        self.assertIn("prior_pair = (PRIOR_DESKTOP_COMMIT, PRIOR_DESKTOP_TREE)", merge_body)
+        self.assertIn("authority_pair in {pinned_pair, prior_pair, current_pair}", merge_body)
         self.assertNotIn("predecessor_authority.get('desktop_commit') == mapping_provenance.get('source_manifest_desktop_commit')", merge_body)
         self.assertIn("mapping must originate from a verified predecessor artifact", merge_body)
+
+    def test_merge_lineage_accepts_exact_prior_authority_pair(self):
+        module = load_generator()
+        current_commit, current_tree = "d" * 40, "e" * 40
+        prior_commit, prior_tree = "c" * 40, "b" * 40
+        android_head = "a" * 40
+        predecessor = {
+            "authority": {"desktop_commit": prior_commit, "desktop_root_tree": prior_tree},
+            "responsibilities": padded_responsibilities({
+                "responsibility_id": "RESP-001",
+                "source_owner": "canonical owner",
+                "android_owner": "Rust Host",
+                "android_target": ["source/host/src/lib.rs"],
+                "desktop_sources": [],
+            }),
+        }
+        ledger_rows = [{
+            "source_path": "source/unmapped.rs",
+            "source_commit": current_commit,
+            "source_blob_sha": "1" * 40,
+            "source_type": "blob",
+            "source_mode": "100644",
+            "implementation_status": "unreviewed",
+            "evidence": [],
+        }]
+        inventory = {
+            "source/unmapped.rs": {
+                "path": "source/unmapped.rs",
+                "sha": "1" * 40,
+                "type": "blob",
+                "mode": "100644",
+            }
+        }
+        provenance = {
+            "android_repository": "fabu-android/fabushi-android",
+            "android_pr": 3,
+            "android_pr_head_sha": android_head,
+            "android_pr_head_ref": "branch",
+            "android_pr_base_sha": "2" * 40,
+            "android_pr_base_ref": "main",
+            "android_checkout_sha": android_head,
+            "workflow_event": "pull_request",
+            "workflow_run_id": 456,
+            "run_attempt": 1,
+            "workflow_sha": android_head,
+            "workflow_ref": "ref",
+            "run_url": "https://example.invalid/run/456",
+            "generated_at_utc": "2026-10-17T00:00:00Z",
+        }
+        with tempfile.TemporaryDirectory() as temp, \
+             patch.object(module, "OUT", Path(temp)), \
+             patch.object(module, "PRIOR_DESKTOP_COMMIT", prior_commit), \
+             patch.object(module, "PRIOR_DESKTOP_TREE", prior_tree), \
+             patch.object(module, "load_predecessor_responsibility_mapping",
+                          return_value=(predecessor, {}, "current-responsibility-ledger", {
+                              "artifact_id": 12072277149,
+                              "artifact_digest": "sha256:" + "f" * 64,
+                              "source_manifest_run_id": 1,
+                              "source_manifest_android_head": android_head,
+                              "source_manifest_desktop_commit": "9" * 40,
+                              "source_manifest_desktop_root_tree": "8" * 40,
+                          })), \
+             patch.object(module, "current_android_provenance", return_value=provenance):
+            result = module.merge_responsibility_mapping(
+                Path("responsibility-ledger.json"),
+                ledger_rows,
+                inventory,
+                current_commit,
+                current_tree,
+            )
+        self.assertEqual(result["authority"]["desktop_commit"], current_commit)
+        self.assertEqual(ledger_rows[0]["mapping_status"], "unmapped")
+
 
     def test_rebaseline_defers_generated_mapping_writes_until_after_validation(self):
         generator = SCRIPT.read_text(encoding="utf-8")
