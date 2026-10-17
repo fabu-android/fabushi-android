@@ -1029,18 +1029,25 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
                 ('docs/android-port/authority/source-inventory-ledger.jsonl',),
                 'source inventory ledger',
             )
-            tree_name = one_member(
-                (
-                    'docs/android-port/generated/desktop-recursive-api.json',
-                    'docs/android-port/generated/desktop-complete-tree.json',
-                ),
-                'historical recursive tree evidence',
+            tree_names = [
+                name for name in names
+                if name.endswith('docs/android-port/generated/desktop-recursive-api.json')
+                or name.endswith('docs/android-port/generated/desktop-complete-tree.json')
+            ]
+            require(
+                1 <= len(tree_names) <= 2,
+                'predecessor artifact must contain one or both historical recursive tree evidence files; '
+                + 'got ' + str(len(tree_names)),
             )
             baseline = json.loads(archive.read(baseline_name).decode('utf-8'))
             candidate = json.loads(archive.read(responsibility_name).decode('utf-8'))
             manifest = json.loads(archive.read(manifest_name).decode('utf-8'))
             ledger_text = archive.read(ledger_name).decode('utf-8')
-            tree_doc = json.loads(archive.read(tree_name).decode('utf-8'))
+            tree_docs = [
+                json.loads(archive.read(name).decode('utf-8'))
+                for name in sorted(tree_names)
+            ]
+            tree_doc = tree_docs[0]
     except (zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise RuntimeError(
             'predecessor responsibility artifact is invalid: ' + type(error).__name__
@@ -1108,6 +1115,30 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
         isinstance(tree_entries, list) and len(tree_entries) == PREDECESSOR_TREE_ENTRY_COUNT,
         f'predecessor recursive tree must contain {PREDECESSOR_TREE_ENTRY_COUNT} entries',
     )
+    canonical_tree_objects = [
+        (item.get('path'), item.get('sha'), item.get('mode'), item.get('type'))
+        for item in tree_entries if isinstance(item, dict)
+    ]
+    for duplicate_tree_doc in tree_docs[1:]:
+        require(
+            duplicate_tree_doc.get('sha') == PREDECESSOR_DESKTOP_TREE
+            and duplicate_tree_doc.get('truncated') is False,
+            'duplicate predecessor recursive tree evidence has wrong root identity or is truncated',
+        )
+        duplicate_entries = duplicate_tree_doc.get('tree')
+        require(
+            isinstance(duplicate_entries, list)
+            and len(duplicate_entries) == PREDECESSOR_TREE_ENTRY_COUNT,
+            'duplicate predecessor recursive tree evidence has the wrong entry count',
+        )
+        duplicate_objects = [
+            (item.get('path'), item.get('sha'), item.get('mode'), item.get('type'))
+            for item in duplicate_entries if isinstance(item, dict)
+        ]
+        require(
+            duplicate_objects == canonical_tree_objects,
+            'predecessor recursive tree evidence files disagree on path/object/mode/type',
+        )
     tree_by_path: dict[str, dict] = {}
     historical_non_tree: dict[str, dict] = {}
     for item in tree_entries:

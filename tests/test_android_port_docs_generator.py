@@ -784,7 +784,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "source_path": fixture["source_path"], "source_commit": fixture["predecessor_commit"],
             "source_blob_sha": "7" * 40, "source_mode": "100644", "source_type": "blob",
         }
-        bad_ledger = json.dumps(bad_row, sort_keys=True) + "\\n"
+        bad_ledger = json.dumps(bad_row, sort_keys=True) + "\n"
         manifest = json.loads(contents["docs/android-port/authority/source-inventory-manifest.json"])
         manifest["ledger_sha256"] = hashlib.sha256(bad_ledger.encode("utf-8")).hexdigest()
         output = io.BytesIO()
@@ -1018,20 +1018,30 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "source_commit": CURRENT_DESKTOP_COMMIT, "desktop_commit": CURRENT_DESKTOP_COMMIT,
             "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
             "workflow_sha": android_head, "evidence_ref": target + "#production",
-            "workflow_run_id": 456, "workflow_job_id": 789, "workflow_job_name": "android-build-unit-lint",
-            "run_attempt": 1, "workflow_step_number": 9,
-            "workflow_step_name": "Build exact-HEAD native Mahayana Coordinator Host",
-            "workflow_name": "Android Parity Full CI", "result": "passed",
+            "workflow_name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "workflow_path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "workflow_event": "pull_request", "workflow_repository": module.ANDROID_REPOSITORY,
+            "workflow_run_id": 456, "workflow_job_id": 789,
+            "workflow_job_name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+            "workflow_job_run_attempt": 1, "run_attempt": 1, "run_conclusion": "success",
+            "workflow_step_number": 7, "workflow_step_name": module.AGENT_KV_PRODUCTION_STEP,
+            "result": "passed",
         } for path in paths]
         test_evidence = [{
             "kind": "contract-test", "source_path": path,
             "source_commit": CURRENT_DESKTOP_COMMIT, "desktop_commit": CURRENT_DESKTOP_COMMIT,
             "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
             "workflow_sha": android_head, "evidence_ref": test_target + "#test",
-            "workflow_run_id": 456, "workflow_job_id": 789, "workflow_job_name": "android-build-unit-lint",
-            "run_attempt": 1, "workflow_step_number": 10,
-            "workflow_step_name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
-            "workflow_name": "Android Parity Full CI", "result": "passed",
+            "workflow_name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "workflow_path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "workflow_event": "pull_request", "workflow_repository": module.ANDROID_REPOSITORY,
+            "workflow_run_id": 456, "workflow_job_id": 789,
+            "workflow_job_name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+            "workflow_job_run_attempt": 1, "run_attempt": 1, "run_conclusion": "success",
+            "workflow_step_number": 8, "workflow_step_name": module.AGENT_KV_TEST_STEP,
+            "result": "passed",
         } for path in paths]
         responsibility = {
             "responsibility_id": "PKG-RESP-001",
@@ -1050,21 +1060,23 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         def github_api(run_conclusion, production_conclusion, test_conclusion):
             def get_ci(endpoint):
                 if endpoint == "/repos/fabu-android/fabushi-android/actions/runs/456":
-                    return {"name": "Android Parity Full CI", "workflow_id": 364063299,
-                            "path": ".github/workflows/android-parity-full-ci.yml", "event": "pull_request",
-                            "repository": {"full_name": "fabu-android/fabushi-android"},
+                    return {"name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+                            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+                            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+                            "event": "pull_request",
+                            "repository": {"full_name": module.ANDROID_REPOSITORY},
                             "head_sha": android_head, "run_attempt": 1,
                             "status": "completed", "conclusion": run_conclusion}
                 if endpoint == "/repos/fabu-android/fabushi-android/actions/runs/456/jobs?filter=latest&per_page=100&page=1":
                     return {"jobs": [{
                         "id": 789, "run_id": 456, "run_attempt": 1,
-                        "name": "android-build-unit-lint",
+                        "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
                         "status": "completed", "conclusion": "success",
                         "steps": [
-                            {"name": "Build exact-HEAD native Mahayana Coordinator Host",
-                             "number": 9, "status": "completed", "conclusion": production_conclusion},
-                            {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
-                             "number": 10, "status": "completed", "conclusion": test_conclusion},
+                            {"name": module.AGENT_KV_PRODUCTION_STEP,
+                             "number": 7, "status": "completed", "conclusion": production_conclusion},
+                            {"name": module.AGENT_KV_TEST_STEP,
+                             "number": 8, "status": "completed", "conclusion": test_conclusion},
                         ],
                     }]}
                 raise AssertionError("Unexpected GitHub API endpoint: " + endpoint)
@@ -1293,14 +1305,14 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "ANDROID_PR_NUMBER": "3",
         }
         with patch.dict("os.environ", env, clear=True), \
-             patch.object(module.subprocess, "check_output", return_value=head + "\\n"), \
+             patch.object(module.subprocess, "check_output", return_value=head + "\n"), \
              patch.object(module, "get", return_value=pr):
             provenance = module.current_android_provenance()
         self.assertEqual(provenance["workflow_sha"], head)
 
         env.pop("ANDROID_WORKFLOW_SHA")
         with patch.dict("os.environ", env, clear=True), \
-             patch.object(module.subprocess, "check_output", return_value=head + "\\n"), \
+             patch.object(module.subprocess, "check_output", return_value=head + "\n"), \
              patch.object(module, "get", return_value=pr):
             with self.assertRaisesRegex(ValueError, "workflow SHA/checkout mismatch"):
                 module.current_android_provenance()
@@ -1355,7 +1367,6 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "workflow-repository": {"workflow_repository": "other/repo"},
             "run-conclusion": {"run_conclusion": "failure"},
             "job-name": {"workflow_job_name": "other"},
-            "step-number": {"workflow_step_number": 99},
             "evidence-no-anchor": {"evidence_ref": target},
             "evidence-empty-anchor": {"evidence_ref": target + "#"},
             "evidence-untracked": {"evidence_ref": "source/missing.rs#test"},
@@ -1369,6 +1380,13 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                         action_job_cache={},
                     ))
                     get_mock.assert_not_called()
+
+        wrong_step_number = {**entry, "workflow_step_number": 99}
+        with patch.object(module, "get", side_effect=[run, {"jobs": [job]}]):
+            self.assertFalse(module._package_action_job_passed(
+                wrong_step_number, android_head=android_head, tracked_android_paths={target},
+                action_job_cache={},
+            ))
 
         run_mutations = {
             "name": {"name": "other"}, "workflow-id": {"workflow_id": 1},
