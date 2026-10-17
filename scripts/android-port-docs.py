@@ -1590,6 +1590,7 @@ def merge_responsibility_mapping(
     tree_sha: str,
     expected_responsibility_count: int | None = None,
     persist_outputs: bool = True,
+    deferred_outputs: dict[str, dict] | None = None,
 ) -> dict:
     predecessor, predecessor_source_rows, mapping_origin, mapping_provenance = load_predecessor_responsibility_mapping(responsibility_path)
     android = current_android_provenance()
@@ -1910,9 +1911,9 @@ def merge_responsibility_mapping(
     package_coverage_summary = {
         key: value for key, value in package_coverage.items() if key != 'gaps'
     }
-    if persist_outputs:
-        save(OUT / 'packages-semantic-coverage.json', package_coverage)
-        save(OUT / 'rejected-android-targets.json', {
+    generated_outputs = {
+        'packages-semantic-coverage.json': package_coverage,
+        'rejected-android-targets.json': {
             'status': 'incomplete' if rejected_android_targets else 'passed',
             'count': len(rejected_android_targets),
             'rejected_targets': sorted(
@@ -1920,8 +1921,8 @@ def merge_responsibility_mapping(
                 key=lambda item: (item['responsibility_id'], item['target'], item['reason']),
             ),
             'policy': 'Rejected targets are retained for diagnosis and never count as Android parity evidence.',
-        })
-        save(OUT / 'unmapped-source-rows.json', {
+        },
+        'unmapped-source-rows.json': {
             'status': 'incomplete' if unmapped_paths else 'passed',
             'count': len(unmapped_paths),
             'paths': unmapped_paths,
@@ -1932,8 +1933,8 @@ def merge_responsibility_mapping(
             'coverage_only_count': len(coverage_only_paths),
             'coverage_only_paths': coverage_only_paths,
             'mapping_provenance': mapping_provenance,
-        })
-        save(OUT / 'responsibility-mapping-summary.json', {
+        },
+        'responsibility-mapping-summary.json': {
             'status': 'incomplete' if (
                 unmapped_paths or missing_dispositions or missing_targets
                 or package_coverage_summary['strict_incomplete_rows']
@@ -1955,7 +1956,13 @@ def merge_responsibility_mapping(
             'desktop_commit': current,
             'desktop_root_tree': tree_sha,
             'android_provenance': android,
-        })
+        },
+    }
+    if deferred_outputs is not None:
+        deferred_outputs.update(json.loads(json.dumps(generated_outputs)))
+    if persist_outputs:
+        for filename, document in generated_outputs.items():
+            save(OUT / filename, document)
 
     for item in responsibilities:
         item['source_commit'] = current
@@ -2175,6 +2182,7 @@ def rebaseline() -> None:
     touched_responsibilities = 0
     deleted_anchor_count = 0
     if responsibility_path.is_file():
+        mapping_outputs: dict[str, dict] = {}
         responsibility_doc = merge_responsibility_mapping(
             responsibility_path,
             new_rows,
@@ -2183,6 +2191,7 @@ def rebaseline() -> None:
             tree_sha,
             expected_responsibility_count=EXPECTED_RESPONSIBILITY_COUNT,
             persist_outputs=False,
+            deferred_outputs=mapping_outputs,
         )
         authority = responsibility_doc.setdefault('authority', {})
         authority['desktop_commit'] = current
@@ -2274,6 +2283,8 @@ def rebaseline() -> None:
         save(responsibility_path, responsibility_doc)
         save(manifest_path, manifest)
         save(baseline_path, baseline)
+        for filename, document in mapping_outputs.items():
+            save(OUT / filename, document)
 
     summary = {
         'desktop_commit': current,

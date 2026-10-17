@@ -1228,12 +1228,16 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         merge_body = generator[merge_start:rebaseline_start]
         rebaseline_body = generator[rebaseline_start:generator.index("\ndef inventory()", rebaseline_start)]
         self.assertIn("persist_outputs: bool = True", merge_body)
+        self.assertIn("deferred_outputs: dict[str, dict] | None = None", merge_body)
+        self.assertIn("if deferred_outputs is not None:", merge_body)
         self.assertIn("if persist_outputs:", merge_body)
         self.assertIn("persist_outputs=False", rebaseline_body)
-        self.assertLess(rebaseline_body.index("validate_exact_head_provenance("),
-                        rebaseline_body.index("ledger_path.write_text("))
-        self.assertLess(rebaseline_body.index("latest_desktop_main ="),
-                        rebaseline_body.index("ledger_path.write_text("))
+        self.assertIn("deferred_outputs=mapping_outputs", rebaseline_body)
+        self.assertIn("for filename, document in mapping_outputs.items():", rebaseline_body)
+        first_write = rebaseline_body.index("ledger_path.write_text(")
+        self.assertLess(rebaseline_body.index("validate_exact_head_provenance("), first_write)
+        self.assertLess(rebaseline_body.index("latest_desktop_main ="), first_write)
+        self.assertGreater(rebaseline_body.index("for filename, document in mapping_outputs.items():"), first_write)
 
     def test_predecessor_fixture_records_reverse_links_for_every_anchor(self):
         module = load_generator()
