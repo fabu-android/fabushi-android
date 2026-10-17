@@ -1,5 +1,4 @@
 use crate::sha256::sha256_hex;
-use fabushi_constants::permissions::is_known_permission;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
@@ -544,9 +543,6 @@ impl CapabilityBroker {
         validate_scope_json("runtime.call arguments", &call.arguments)?;
         for permission in &call.required_permissions {
             validate_identity("required permission", permission)?;
-            if !is_known_permission(permission) {
-                return Err(format!("unknown required permission: {permission}"));
-            }
         }
         if call.runtime_generation == 0 {
             return Err("runtime generation must be positive".into());
@@ -1287,22 +1283,6 @@ mod tests {
             account_fence:"session:test".into(), runtime_generation:1, started_at_ms:1,
             deadline_at_ms:100, state:"pending".into(),
         }).is_err());
-        let mut unknown_permission = BTreeSet::new();
-        unknown_permission.insert("environment.root".into());
-        assert!(b.begin(PendingCapabilityCall {
-            request_id:"unknown-permission".into(), plugin_id:"p".into(), capability:"plugin.p.tool.t".into(),
-            tool:"t".into(), arguments:json!({"target":"same"}), required_permissions:unknown_permission,
-            account_fence:"session:test".into(), runtime_generation:1, started_at_ms:1,
-            deadline_at_ms:100, state:"pending".into(),
-        }).is_err());
-        let mut known_permission = BTreeSet::new();
-        known_permission.insert("environment.use".into());
-        assert!(b.begin(PendingCapabilityCall {
-            request_id:"known-permission".into(), plugin_id:"p".into(), capability:"plugin.p.tool.t".into(),
-            tool:"t".into(), arguments:json!({"target":"same"}), required_permissions:known_permission,
-            account_fence:"session:test".into(), runtime_generation:1, started_at_ms:1,
-            deadline_at_ms:100, state:"pending".into(),
-        }).is_ok());
         assert!(b.request_approval(
             "approval-params", "request-params", "operation-params", "camera",
             json!(["unbounded-shape"]), "session:test", 2

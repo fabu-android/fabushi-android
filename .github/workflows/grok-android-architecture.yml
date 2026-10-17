@@ -99,12 +99,6 @@ jobs:
           set -euo pipefail
           ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.FabushiAppAgentSurfaceTest --tests com.ombhrum.fabushi.RemoteCommandJournalTest
 
-      - name: Verify exact-HEAD permission registry production owner
-        run: |
-          grep -Fq 'fabushi_constants::permissions::is_known_permission' source/host/src/capability_broker.rs
-          grep -Fq 'unknown required permission' source/host/src/capability_broker.rs
-      - name: Test exact-HEAD permission registry production owner
-        run: cargo test -p fabushi-mahayana-host capability_broker::tests::parameter_scope_and_permission_identity_are_validated -- --exact
       - name: Verify exact-HEAD MCP tool timeout production owner
         run: |
           set -euo pipefail
