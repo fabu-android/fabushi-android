@@ -65,8 +65,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '49b325828abca503d0f38877d4f7cca588820739'
-EXPECTED_DESKTOP_TREE = 'a0506b8411ef49fffed70f3e5abe13a925a1ccad'
+EXPECTED_DESKTOP_COMMIT = '428dfdaaa37de3e5da20496a4e968fe439178c7b'
+EXPECTED_DESKTOP_TREE = '94da6ac98384ccee7a8e0eff92288c46e47a48ff'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
 PREDECESSOR_DESKTOP_TREE = '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
 
@@ -2575,7 +2575,7 @@ def rebaseline() -> None:
     files = [item for item in entries if item['type'] != 'tree']
     require(files, 'Empty source inventory during rebaseline')
     require(current == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
-            'Desktop authority changed from the pinned 49b32582/a0506b84 current-main lock')
+            'Desktop authority changed from the pinned 428dfdaa/94da6ac9 current-main lock')
     require(len(entries) == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop recursive tree count mismatch: expected {EXPECTED_TREE_ENTRY_COUNT}, got {len(entries)}')
     require(len(files) == EXPECTED_TRACKED_NON_TREE_COUNT,
