@@ -570,31 +570,26 @@ fn mcp_account_fence_generation(account_fence: &str) -> u64 {
     u64::from_str_radix(&digest[..16], 16).unwrap_or(1).max(1)
 }
 
-fn validate_mcp_approval_target(
-    target: &Value,
-    server_id: &str,
-    tool_name: &str,
-) -> Result<(), String> {
+fn mcp_approval_target_identity(target: &Value) -> Result<(&str, &str), String> {
     let Some(target) = target.as_object() else {
-        // Older approvals did not bind MCP server/tool identity. They remain compatible, but
-        // dispatch still requires a fresh current-catalog check before the approval is consumed.
-        return Ok(());
+        return Err("MCP approval target must be an object".into());
     };
-    if let Some(value) = target.get("serverId") {
-        let declared = value
-            .as_str()
-            .ok_or("MCP approval target serverId must be a string")?;
-        if declared != server_id {
-            return Err("MCP approval target serverId does not match dispatch".into());
-        }
+    let server_id = target.get("serverId").and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty() && !value.chars().any(char::is_control))
+        .ok_or("MCP approval target serverId must be a non-empty string")?;
+    let tool_name = target.get("toolName").and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty() && !value.chars().any(char::is_control))
+        .ok_or("MCP approval target toolName must be a non-empty string")?;
+    Ok((server_id, tool_name))
+}
+
+fn validate_mcp_approval_target(target: &Value, server_id: &str, tool_name: &str) -> Result<(), String> {
+    let (declared_server_id, declared_tool_name) = mcp_approval_target_identity(target)?;
+    if declared_server_id != server_id {
+        return Err("MCP approval target serverId does not match dispatch".into());
     }
-    if let Some(value) = target.get("toolName") {
-        let declared = value
-            .as_str()
-            .ok_or("MCP approval target toolName must be a string")?;
-        if declared != tool_name {
-            return Err("MCP approval target toolName does not match dispatch".into());
-        }
+    if declared_tool_name != tool_name {
+        return Err("MCP approval target toolName does not match dispatch".into());
     }
     Ok(())
 }
@@ -13985,18 +13980,6 @@ impl AndroidJsonHost {
             return Err("mcp.routed.execute tool is disabled for the current account".into());
         }
 
-        // Revalidate the live server/tool catalog before consuming the one-time grant. A tool
-        // disappearing or being replaced after the approval UI was shown must not inherit that
-        // approval or fall through to an arbitrary backend tool name.
-        let backend = self
-            .mcp_dashboard_backend
-            .as_ref()
-            .ok_or("MCP Dashboard backend is available only in production")?;
-        let current_tools = backend.list_server_tools(&server_id)?;
-        if !current_tools.iter().any(|tool| tool.name == tool_name) {
-            return Err("mcp.routed.execute tool is absent from current server catalog".into());
-        }
-
         let approval = self.capability_broker.approval_for_dispatch(
             approval_id,
             approval_operation_id,
@@ -14005,6 +13988,18 @@ impl AndroidJsonHost {
             &account_fence,
         )?;
         validate_mcp_approval_target(&approval.target, &server_id, &tool_name)?;
+
+        // Revalidate the live server/tool catalog after preflighting the scoped grant but before
+        // consuming it. A tool disappearing or being replaced after the approval UI was shown
+        // must not inherit that approval or fall through to an arbitrary backend tool name.
+        let backend = self
+            .mcp_dashboard_backend
+            .as_ref()
+            .ok_or("MCP Dashboard backend is available only in production")?;
+        let current_tools = backend.list_server_tools(&server_id)?;
+        if !current_tools.iter().any(|tool| tool.name == tool_name) {
+            return Err("mcp.routed.execute tool is absent from current server catalog".into());
+        }
 
         self.capability_broker.consume_approval_for_dispatch(
             approval_id,
@@ -14266,6 +14261,12 @@ impl AndroidJsonHost {
                     request_id
                 };
                 let target = command.get("target").cloned().unwrap_or(Value::Null);
+                if capability == "mcp.execute" {
+                    if let Err(error) = mcp_approval_target_identity(&target) {
+                        self.active_operations.remove(&operation_id);
+                        return Err(error);
+                    }
+                }
                 self.capability_broker.request_approval(
                     &approval_id,
                     approval_request_id,
@@ -19510,33 +19511,60 @@ mod tests {
 
     #[test]
     fn mcp_approval_target_fences_server_and_tool_identity() {
-        assert!(validate_mcp_approval_target(&Value::Null, "server-a", "read").is_ok());
-        assert!(validate_mcp_approval_target(&json!({"reason":"legacy"}), "server-a", "read").is_ok());
         assert!(validate_mcp_approval_target(
-            &json!({"serverId":"server-a","toolName":"read"}),
-            "server-a",
-            "read",
+            &json!({"serverId":"server-a","toolName":"read"}), "server-a", "read",
         ).is_ok());
-
-        let server_error = validate_mcp_approval_target(
-            &json!({"serverId":"server-b","toolName":"read"}),
-            "server-a",
-            "read",
-        ).unwrap_err();
-        assert!(server_error.contains("serverId does not match"));
-
-        let tool_error = validate_mcp_approval_target(
-            &json!({"serverId":"server-a","toolName":"write"}),
-            "server-a",
-            "read",
-        ).unwrap_err();
-        assert!(tool_error.contains("toolName does not match"));
-
+        assert!(validate_mcp_approval_target(&Value::Null, "server-a", "read")
+            .unwrap_err().contains("must be an object"));
+        assert!(validate_mcp_approval_target(&json!({"reason":"legacy"}), "server-a", "read")
+            .unwrap_err().contains("serverId"));
+        assert!(validate_mcp_approval_target(&json!({"serverId":"server-a"}), "server-a", "read")
+            .unwrap_err().contains("toolName"));
         assert!(validate_mcp_approval_target(
-            &json!({"serverId":7,"toolName":"read"}),
-            "server-a",
-            "read",
-        ).unwrap_err().contains("serverId must be a string"));
+            &json!({"serverId":"server-b","toolName":"read"}), "server-a", "read",
+        ).unwrap_err().contains("serverId does not match"));
+        assert!(validate_mcp_approval_target(
+            &json!({"serverId":"server-a","toolName":"write"}), "server-a", "read",
+        ).unwrap_err().contains("toolName does not match"));
+        assert!(validate_mcp_approval_target(
+            &json!({"serverId":7,"toolName":"read"}), "server-a", "read",
+        ).unwrap_err().contains("serverId must be a non-empty string"));
+        assert!(validate_mcp_approval_target(
+            &json!({"serverId":"server-a","toolName":""}), "server-a", "read",
+        ).unwrap_err().contains("toolName must be a non-empty string"));
+    }
+
+    #[test]
+    fn mcp_capability_approval_request_requires_server_and_tool_scope() {
+        let app_data = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(app_data.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let invalid_targets = [
+            Value::Null, json!({"serverId":"server-a"}), json!({"toolName":"read"}),
+            json!({"serverId":7,"toolName":"read"}), json!({"serverId":"server-a","toolName":""}),
+        ];
+        for (index, target) in invalid_targets.into_iter().enumerate() {
+            let error = host.dispatch("feature.execute", &json!({"command":{
+                "type":"capability.request","requestId":format!("mcp-unscoped-{index}"),
+                "capability":"mcp.execute","target":target
+            }})).unwrap_err();
+            assert!(error.contains("MCP approval target"), "{error}");
+            assert!(host.pending_approvals.is_empty());
+            assert!(host.active_operations.is_empty());
+        }
+        let accepted = host.dispatch("feature.execute", &json!({"command":{
+            "type":"capability.request","requestId":"mcp-scoped-approval",
+            "capability":"mcp.execute","target":{"serverId":"server-a","toolName":"read"}
+        }})).unwrap();
+        assert_eq!(accepted["accepted"], true);
+        let operation_id = accepted["operationId"].as_str().unwrap();
+        let approval_id = format!("approval-{operation_id}");
+        assert!(host.pending_approvals.contains_key(&approval_id));
+        assert!(host.events.iter().any(|event| {
+            event.get("type").and_then(Value::as_str) == Some("approval.requested")
+                && event.get("operationId").and_then(Value::as_str) == Some(operation_id)
+                && event.get("target") == Some(&json!({"serverId":"server-a","toolName":"read"}))
+        }));
     }
 
 #[test]

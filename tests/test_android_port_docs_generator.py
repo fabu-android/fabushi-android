@@ -1080,7 +1080,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "head_sha": android_head,
             "run_attempt": 1,
             "status": "completed",
-            "conclusion": "failure",
+            "conclusion": "success",
         }
         job = {
             "id": 789,
