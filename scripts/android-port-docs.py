@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 from urllib.error import HTTPError
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 from urllib.request import Request, urlopen
 import zipfile
 import urllib.request
@@ -60,15 +60,19 @@ OWNER_PLACEHOLDER_VALUES = frozenset({
 DEFAULT_RESPONSIBILITY_ARTIFACT = '12072277149'
 DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
 ANDROID_REPOSITORY = 'fabu-android/fabushi-android'
-ANDROID_PARITY_FULL_CI_WORKFLOW_ID = 364063299
+ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME = 'Grok Android Architecture'
+ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
+ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
+ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
+PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
 EXPECTED_DESKTOP_COMMIT = 'dc81eac2df50f6c08ae4daf98988076bfdc956d9'
 EXPECTED_DESKTOP_TREE = '04473e188c5088b66a7f984e5e89e6d47e75eafb'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
 PREDECESSOR_DESKTOP_TREE = '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
 
 AGENT_KV_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
-AGENT_KV_PRODUCTION_STEP = 'Build exact-HEAD native Mahayana Coordinator Host'
-AGENT_KV_TEST_STEP = 'Compile, unit-test, lint, and assemble non-release acceptance APKs'
+AGENT_KV_PRODUCTION_STEP = 'Build exact-HEAD agent-kv production owners'
+AGENT_KV_TEST_STEP = 'Test exact-HEAD agent-kv production owners'
 AGENT_KV_SOURCE_SPECS = {
     'source/packages/agent-kv/agent-store.ts': {
         'symbols': ['AgentMetadata', 'AgentMetadataSerde', 'AgentStore2', 'getDefaultAgentMetadata', 'generateBlobEncryptionKeyHex', 'isValidBlobEncryptionKeyHex'],
@@ -334,7 +338,7 @@ def _has_real_owner(value: object) -> bool:
 
 
 def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
-    """Wait for a real exact-head Android Parity Full CI attempt and named successful steps."""
+    """Wait for the dedicated exact-head Agent KV workflow to pass completely."""
     if not os.environ.get('GH_TOKEN'):
         print('WARNING: GH_TOKEN is unavailable; agent-kv CI evidence remains incomplete', file=sys.stderr)
         return None
@@ -345,9 +349,6 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
     deadline = time.monotonic() + wait_seconds
     while True:
         try:
-            # Runs can be delayed in the API and a prior terminal run can be returned
-            # before the current synchronize run appears. Walk pages and keep polling
-            # until the deadline instead of treating that first stale snapshot as final.
             runs_by_id = {}
             for page in range(1, 21):
                 response = get(
@@ -356,9 +357,9 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                 batch = response.get('workflow_runs', [])
                 for run in batch:
                     if (
-                        run.get('name') == 'Android Parity Full CI'
-                        and run.get('workflow_id') == ANDROID_PARITY_FULL_CI_WORKFLOW_ID
-                        and run.get('path') == '.github/workflows/android-parity-full-ci.yml'
+                        run.get('name') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME
+                        and run.get('workflow_id') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID
+                        and run.get('path') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH
                         and run.get('event') == 'pull_request'
                         and run.get('head_sha') == android_head
                         and (run.get('repository') or {}).get('full_name') == ANDROID_REPOSITORY
@@ -366,11 +367,13 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                         runs_by_id[run.get('id')] = run
                 if len(batch) < 100:
                     break
-            runs = list(runs_by_id.values())
             terminal = [
-                run for run in runs
+                run for run in runs_by_id.values()
                 if run.get('status') == 'completed'
-                and run.get('conclusion') in {'success', 'failure'}
+                and run.get('conclusion') == 'success'
+                and isinstance(run.get('run_attempt'), int)
+                and not isinstance(run.get('run_attempt'), bool)
+                and run.get('run_attempt') > 0
             ]
             for run in sorted(
                 terminal,
@@ -389,10 +392,10 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                         break
                 job = next((
                     value for value in jobs_by_id.values()
-                    if value.get('name') == 'android-build-unit-lint'
+                    if value.get('name') == ANDROID_AGENT_KV_EVIDENCE_JOB_NAME
                     and value.get('status') == 'completed'
                     and value.get('conclusion') == 'success'
-                    and value.get('run_attempt', run.get('run_attempt')) == run.get('run_attempt')
+                    and value.get('run_attempt') == run.get('run_attempt')
                 ), None)
                 if not job:
                     continue
@@ -404,7 +407,12 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                 production_step = steps.get(AGENT_KV_PRODUCTION_STEP)
                 test_step = steps.get(AGENT_KV_TEST_STEP)
                 if not all(
-                    step and step.get('status') == 'completed' and step.get('conclusion') == 'success'
+                    step
+                    and step.get('status') == 'completed'
+                    and step.get('conclusion') == 'success'
+                    and isinstance(step.get('number'), int)
+                    and not isinstance(step.get('number'), bool)
+                    and step.get('number') > 0
                     for step in (production_step, test_step)
                 ):
                     continue
@@ -413,20 +421,22 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
                     'workflow_id': run['workflow_id'],
                     'workflow_path': run['path'],
                     'workflow_event': run['event'],
+                    'workflow_repository': (run.get('repository') or {}).get('full_name'),
                     'workflow_run_id': run['id'],
-                    'run_attempt': run.get('run_attempt'),
-                    'run_conclusion': run.get('conclusion'),
+                    'run_attempt': run['run_attempt'],
+                    'run_conclusion': run['conclusion'],
                     'workflow_job_name': job['name'],
                     'workflow_job_id': job['id'],
+                    'workflow_job_run_attempt': job['run_attempt'],
                     'production_step_name': production_step['name'],
-                    'production_step_number': production_step.get('number'),
+                    'production_step_number': production_step['number'],
                     'test_step_name': test_step['name'],
-                    'test_step_number': test_step.get('number'),
+                    'test_step_number': test_step['number'],
                     'android_head': android_head,
                 }
         except (RuntimeError, KeyError, TypeError, ValueError) as error:
             print(
-                'WARNING: unable to read exact-head Android Parity Full CI evidence: '
+                'WARNING: unable to read exact-head Agent KV CI evidence: '
                 + type(error).__name__,
                 file=sys.stderr,
             )
@@ -435,70 +445,96 @@ def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
             pass
         if time.monotonic() >= deadline:
             print(
-                'WARNING: timed out waiting for terminal exact-head Android Parity Full CI '
-                'with successful required job steps; agent-kv evidence remains incomplete',
+                'WARNING: timed out waiting for a successful exact-head Agent KV evidence workflow; '
+                'agent-kv evidence remains incomplete',
                 file=sys.stderr,
             )
             return None
         time.sleep(15)
+
 
 def _package_action_job_passed(
     entry: dict,
     *,
     android_head: str,
     tracked_android_paths: set[str],
-    action_job_cache: dict[tuple[int, int, str, str], bool],
+    action_job_cache: dict[tuple[object, ...], bool],
 ) -> bool:
-    """Count only a successful job and named successful step on the exact Android checkout."""
+    """Count only a successful dedicated run/job/step on the exact Android checkout."""
     run_id = entry.get('workflow_run_id')
     job_id = entry.get('workflow_job_id')
     job_name = entry.get('workflow_job_name')
     step_name = entry.get('workflow_step_name')
+    step_number = entry.get('workflow_step_number')
+    run_attempt = entry.get('run_attempt')
+    job_attempt = entry.get('workflow_job_run_attempt')
     evidence_ref = entry.get('evidence_ref')
     if (
         not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0
         or not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0
-        or not isinstance(job_name, str) or not job_name.strip()
+        or not isinstance(run_attempt, int) or isinstance(run_attempt, bool) or run_attempt <= 0
+        or not isinstance(job_attempt, int) or isinstance(job_attempt, bool) or job_attempt <= 0
+        or not isinstance(step_number, int) or isinstance(step_number, bool) or step_number <= 0
+        or job_attempt != run_attempt
+        or job_name != ANDROID_AGENT_KV_EVIDENCE_JOB_NAME
         or not isinstance(step_name, str) or not step_name.strip()
-        or not isinstance(evidence_ref, str) or not evidence_ref.strip()
+        or entry.get('workflow_name') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME
+        or entry.get('workflow_id') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID
+        or entry.get('workflow_path') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH
+        or entry.get('workflow_event') != 'pull_request'
+        or entry.get('workflow_repository') != ANDROID_REPOSITORY
+        or entry.get('run_conclusion') != 'success'
+        or not isinstance(evidence_ref, str) or evidence_ref.count('#') != 1
     ):
         return False
-    evidence_path = evidence_ref.split('#', 1)[0]
-    if evidence_path not in tracked_android_paths:
+    evidence_path, evidence_anchor = evidence_ref.split('#', 1)
+    evidence_posix = PurePosixPath(evidence_path)
+    if (
+        not evidence_path or not evidence_anchor.strip()
+        or evidence_posix.is_absolute() or '..' in evidence_posix.parts
+        or evidence_path not in tracked_android_paths
+    ):
         return False
-    key = (run_id, job_id, android_head, step_name)
+    key = (
+        run_id, run_attempt, job_id, job_attempt, job_name,
+        android_head, step_name, step_number, evidence_ref,
+    )
     if key not in action_job_cache:
         try:
             run = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}')
             if (
-                run.get('name') != 'Android Parity Full CI'
-                or run.get('workflow_id') != ANDROID_PARITY_FULL_CI_WORKFLOW_ID
-                or run.get('path') != '.github/workflows/android-parity-full-ci.yml'
+                run.get('name') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME
+                or run.get('workflow_id') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID
+                or run.get('path') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH
                 or run.get('event') != 'pull_request'
                 or (run.get('repository') or {}).get('full_name') != ANDROID_REPOSITORY
                 or run.get('head_sha') != android_head
                 or run.get('status') != 'completed'
                 or run.get('conclusion') != 'success'
-                or run.get('run_attempt') != entry.get('run_attempt')
+                or run.get('run_attempt') != run_attempt
             ):
                 action_job_cache[key] = False
             else:
-                jobs = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page=1')
+                jobs = get(
+                    f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page=1'
+                )
                 job = next((
                     value for value in jobs.get('jobs', [])
                     if value.get('id') == job_id
                 ), None)
                 if (
-                    not job or job.get('name') != job_name
+                    not job
+                    or job.get('name') != job_name
                     or job.get('status') != 'completed'
                     or job.get('conclusion') != 'success'
-                    or job.get('run_attempt', run.get('run_attempt')) != run.get('run_attempt')
+                    or job.get('run_attempt') != run_attempt
+                    or job.get('run_attempt') != job_attempt
                 ):
                     action_job_cache[key] = False
                 else:
                     step = next((
                         value for value in job.get('steps', [])
-                        if value.get('name') == step_name
+                        if value.get('name') == step_name and value.get('number') == step_number
                     ), None)
                     action_job_cache[key] = bool(
                         step and step.get('status') == 'completed'
@@ -517,7 +553,7 @@ def _has_package_evidence(
     android_head: str,
     required_kinds: frozenset[str],
     tracked_android_paths: set[str],
-    action_job_cache: dict[tuple[int, int, str, str], bool],
+    action_job_cache: dict[tuple[object, ...], bool],
 ) -> bool:
     """Require source-scoped evidence plus a successful exact-head Android CI job."""
     if not isinstance(entries, list):
@@ -567,7 +603,7 @@ def _package_semantic_coverage(
     android_owner_rows = 0
     target_rows = 0
     disposition_rows = 0
-    action_job_cache: dict[tuple[int, int, str, str], bool] = {}
+    action_job_cache: dict[tuple[object, ...], bool] = {}
 
     for row in package_rows:
         path = row.get('source_path') or '<missing-source-path>'
@@ -805,8 +841,8 @@ def _ensure_agent_kv_semantic_mapping(
         'Current-main Agent KV semantic mapping covers AgentStore2/metadata serde, content-addressed '
         'BlobStore and not-found errors, eager/lazy references, codecs, persisted subagent-state resolution, '
         'and typed blob metadata/mirror semantics. Source-specific Android targets and focused tests are '
-        'explicit; exact-head production/test evidence is added only from successful Android Parity Full CI '
-        'job steps. Mapping and CI evidence do not promote implementation_status or verification_status.'
+        'explicit; exact-head production/test evidence is added only from the successful dedicated Grok Android Architecture '
+        'agent-kv evidence job steps. Mapping and CI evidence do not promote implementation_status or verification_status.'
     )
     notes = item.get('notes')
     if isinstance(notes, str):
@@ -864,58 +900,351 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+def _http_200_payload(response: object, label: str) -> bytes:
+    """Read a bounded HTTP response only when its observable status is exactly 200."""
+    status = getattr(response, 'status', None)
+    if status is None:
+        getcode = getattr(response, 'getcode', None)
+        status = getcode() if callable(getcode) else None
+    require(status == 200, f'{label} returned unexpected HTTP status: {status}')
+    payload = response.read()
+    require(isinstance(payload, (bytes, bytearray)) and len(payload) > 0,
+            f'{label} returned an empty response body')
+    headers = getattr(response, 'headers', None)
+    if headers is not None:
+        raw_length = headers.get('Content-Length')
+        if raw_length not in (None, ''):
+            try:
+                expected_length = int(raw_length)
+            except (TypeError, ValueError):
+                raise ValueError(f'{label} returned an invalid Content-Length') from None
+            require(expected_length == len(payload),
+                    f'{label} Content-Length mismatch: expected={expected_length} actual={len(payload)}')
+    return bytes(payload)
+
+
 def _download_predecessor_bytes(artifact_id: str, token: str) -> bytes:
     endpoint = f'https://api.github.com/repos/{ANDROID_REPOSITORY}/actions/artifacts/{artifact_id}/zip'
-    request = Request(endpoint, headers={'Accept':'application/vnd.github+json','Authorization':'Bearer '+token,'User-Agent':'Fabushi-Android-Docs','X-GitHub-Api-Version':'2022-11-28'})
+    request = Request(endpoint, headers={
+        'Accept': 'application/vnd.github+json',
+        'Authorization': 'Bearer ' + token,
+        'User-Agent': 'Fabushi-Android-Docs',
+        'X-GitHub-Api-Version': '2022-11-28',
+    })
     try:
         try:
             with urllib.request.build_opener(_NoRedirect()).open(request, timeout=60) as response:
-                payload = response.read()
+                payload = _http_200_payload(response, 'GitHub predecessor artifact endpoint')
         except HTTPError as error:
-            if error.code not in (301,302,303,307,308): raise
+            if error.code not in (301, 302, 303, 307, 308):
+                raise
             location = error.headers.get('Location')
             require(bool(location), 'GitHub artifact redirect omitted Location')
-            with urlopen(Request(location,headers={'User-Agent':'Fabushi-Android-Docs','Accept':'application/octet-stream'}),timeout=60) as response:
-                payload=response.read()
+            parsed = urlparse(location)
+            require(parsed.scheme == 'https' and bool(parsed.netloc),
+                    'GitHub artifact redirect is not an absolute HTTPS URL')
+            redirected = Request(location, headers={
+                'User-Agent': 'Fabushi-Android-Docs',
+                'Accept': 'application/octet-stream',
+            })
+            with urlopen(redirected, timeout=60) as response:
+                payload = _http_200_payload(response, 'GitHub predecessor artifact signed download')
     except HTTPError as error:
-        raise RuntimeError('failed to recover predecessor responsibility artifact '+artifact_id+' (HTTP '+str(error.code)+')') from None
+        raise RuntimeError(
+            'failed to recover predecessor responsibility artifact '
+            + artifact_id + ' (HTTP ' + str(error.code) + ')'
+        ) from None
+    except (ValueError, RuntimeError):
+        raise
     except Exception as error:
-        raise RuntimeError('failed to recover predecessor responsibility artifact '+artifact_id+' ('+type(error).__name__+': '+str(error)+')') from None
-    require(payload.startswith(b'PK\x03\x04'),'predecessor artifact download is not a ZIP local-file header')
+        raise RuntimeError(
+            'failed to recover predecessor responsibility artifact '
+            + artifact_id + ' (' + type(error).__name__ + ': ' + str(error) + ')'
+        ) from None
+    require(payload.startswith(b'PK\x03\x04'),
+            'predecessor artifact download is not a ZIP local-file header')
     return payload
 
 
 def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
-    artifact_id=os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT',DEFAULT_RESPONSIBILITY_ARTIFACT)
-    expected_digest=os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST',DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST)
-    token=os.environ.get('GH_TOKEN')
-    require(token,'GH_TOKEN is required to recover predecessor responsibility mapping')
-    payload=_download_predecessor_bytes(artifact_id,token)
-    actual_digest='sha256:'+hashlib.sha256(payload).hexdigest()
-    require(actual_digest==expected_digest,f'predecessor responsibility artifact digest mismatch: expected={expected_digest} actual={actual_digest}')
+    artifact_id = os.environ.get(
+        'ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', DEFAULT_RESPONSIBILITY_ARTIFACT
+    )
+    expected_digest = os.environ.get(
+        'ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST',
+        DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST,
+    )
+    require(re.fullmatch(r'sha256:[0-9a-f]{64}', expected_digest or '') is not None,
+            'predecessor responsibility artifact digest is not a canonical sha256 value')
+    token = os.environ.get('GH_TOKEN')
+    require(token, 'GH_TOKEN is required to recover predecessor responsibility mapping')
+    payload = _download_predecessor_bytes(artifact_id, token)
+    actual_digest = 'sha256:' + hashlib.sha256(payload).hexdigest()
+    require(
+        actual_digest == expected_digest,
+        f'predecessor responsibility artifact digest mismatch: expected={expected_digest} actual={actual_digest}',
+    )
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            bad=archive.testzip()
-            require(bad is None,'predecessor artifact ZIP integrity failure: '+str(bad))
-            names=archive.namelist()
-            rn=[n for n in names if n.endswith('docs/android-port/authority/responsibility-ledger.json')]
-            mn=[n for n in names if n.endswith('docs/android-port/authority/source-inventory-manifest.json')]
-            ln=[n for n in names if n.endswith('docs/android-port/authority/source-inventory-ledger.jsonl')]
-            require(len(rn)==len(mn)==len(ln)==1,'predecessor artifact is missing or duplicates an authority input')
-            candidate=json.loads(archive.read(rn[0]).decode('utf-8'))
-            manifest=json.loads(archive.read(mn[0]).decode('utf-8'))
-            source_rows={}
-            for line in archive.read(ln[0]).decode('utf-8').splitlines():
-                if line.strip():
-                    row=json.loads(line); source_rows[row['source_path']]=row
-    except Exception as error:
-        raise RuntimeError('predecessor responsibility artifact is invalid') from error
-    require(isinstance(candidate,dict) and candidate.get('responsibilities'),'predecessor responsibility mapping is empty')
-    require(len(candidate['responsibilities'])==EXPECTED_RESPONSIBILITY_COUNT,f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(candidate["responsibilities"])}')
-    require(manifest.get('tracked_non_tree_entries')==PREDECESSOR_TRACKED_NON_TREE_COUNT,'predecessor manifest does not cover historical 8258-row inventory')
-    require(manifest.get('tree_entries')==PREDECESSOR_TREE_ENTRY_COUNT,'predecessor manifest does not preserve historical 9412-entry tree')
-    require(len(source_rows)==PREDECESSOR_TRACKED_NON_TREE_COUNT,f'predecessor source ledger must contain 8258 unique rows, got {len(source_rows)}')
-    return candidate,source_rows,{'artifact_id':int(artifact_id),'artifact_digest':actual_digest,'source_manifest_run_id':manifest.get('workflow_run_id'),'source_manifest_android_head':manifest.get('android_pr_head_sha'),'source_manifest_desktop_commit':manifest.get('desktop_commit'),'source_manifest_desktop_root_tree':manifest.get('desktop_root_tree')}
+            bad = archive.testzip()
+            require(bad is None, 'predecessor artifact ZIP integrity failure: ' + str(bad))
+            infos = archive.infolist()
+            require(bool(infos), 'predecessor artifact ZIP is empty')
+            names = [info.filename for info in infos]
+            require(len(names) == len(set(names)), 'predecessor artifact ZIP contains duplicate member names')
+            for info in infos:
+                raw_name = info.filename.rstrip('/')
+                if not raw_name:
+                    continue
+                member = PurePosixPath(raw_name)
+                require(
+                    not member.is_absolute() and '..' not in member.parts and '\x00' not in raw_name,
+                    'predecessor artifact ZIP contains an unsafe member path: ' + info.filename,
+                )
+                unix_type = (info.external_attr >> 16) & 0o170000
+                require(unix_type != 0o120000,
+                        'predecessor artifact ZIP contains a symbolic-link member: ' + info.filename)
+
+            def one_member(suffixes: tuple[str, ...], label: str) -> str:
+                matches = [
+                    name for name in names
+                    if any(name.endswith(suffix) for suffix in suffixes)
+                ]
+                require(len(matches) == 1,
+                        f'predecessor artifact must contain exactly one {label}; got {len(matches)}')
+                return matches[0]
+
+            baseline_name = one_member(
+                ('docs/android-port/authority/baseline.json',), 'baseline authority input'
+            )
+            responsibility_name = one_member(
+                ('docs/android-port/authority/responsibility-ledger.json',),
+                'responsibility authority input',
+            )
+            manifest_name = one_member(
+                ('docs/android-port/authority/source-inventory-manifest.json',),
+                'source inventory manifest',
+            )
+            ledger_name = one_member(
+                ('docs/android-port/authority/source-inventory-ledger.jsonl',),
+                'source inventory ledger',
+            )
+            tree_name = one_member(
+                (
+                    'docs/android-port/generated/desktop-recursive-api.json',
+                    'docs/android-port/generated/desktop-complete-tree.json',
+                ),
+                'historical recursive tree evidence',
+            )
+            baseline = json.loads(archive.read(baseline_name).decode('utf-8'))
+            candidate = json.loads(archive.read(responsibility_name).decode('utf-8'))
+            manifest = json.loads(archive.read(manifest_name).decode('utf-8'))
+            ledger_text = archive.read(ledger_name).decode('utf-8')
+            tree_doc = json.loads(archive.read(tree_name).decode('utf-8'))
+    except (zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            'predecessor responsibility artifact is invalid: ' + type(error).__name__
+        ) from None
+
+    predecessor_pair = (PREDECESSOR_DESKTOP_COMMIT, PREDECESSOR_DESKTOP_TREE)
+    current_pair = (EXPECTED_DESKTOP_COMMIT, EXPECTED_DESKTOP_TREE)
+    require(isinstance(baseline, dict), 'predecessor baseline is not an object')
+    require(baseline.get('desktop_repository') == 'bhrumom/fabushi-desktop',
+            'predecessor baseline repository mismatch')
+    baseline_pair = (baseline.get('desktop_commit'), baseline.get('desktop_root_tree'))
+    require(baseline_pair in {predecessor_pair, current_pair},
+            'predecessor artifact baseline has an unknown Desktop authority')
+    if baseline_pair == current_pair:
+        lineage = str(baseline.get('rebaseline_note') or '')
+        require(
+            PREDECESSOR_DESKTOP_COMMIT in lineage
+            and PREDECESSOR_DESKTOP_TREE in lineage
+            and str(PREDECESSOR_TRACKED_NON_TREE_COUNT) in lineage
+            and str(PREDECESSOR_TREE_ENTRY_COUNT) in lineage,
+            'current baseline in predecessor artifact does not preserve the historical authority lineage',
+        )
+        if baseline.get('desktop_main_before') is not None:
+            require(baseline.get('desktop_main_before') == PREDECESSOR_DESKTOP_COMMIT,
+                    'predecessor artifact baseline desktop_main_before mismatch')
+        if baseline.get('desktop_main_after') is not None:
+            require(baseline.get('desktop_main_after') == EXPECTED_DESKTOP_COMMIT,
+                    'predecessor artifact baseline desktop_main_after mismatch')
+
+    require(isinstance(manifest, dict), 'predecessor source manifest is not an object')
+    require(
+        manifest.get('authority_current') is True
+        and manifest.get('desktop_commit') == PREDECESSOR_DESKTOP_COMMIT
+        and manifest.get('source_commit') == PREDECESSOR_DESKTOP_COMMIT
+        and manifest.get('desktop_root_tree') == PREDECESSOR_DESKTOP_TREE,
+        'predecessor manifest does not match the pinned historical Desktop authority',
+    )
+    require(
+        manifest.get('desktop_main_before') == PREDECESSOR_DESKTOP_COMMIT
+        and manifest.get('desktop_main_after') == PREDECESSOR_DESKTOP_COMMIT,
+        'predecessor manifest Desktop main lineage is not the historical authority',
+    )
+    require(
+        manifest.get('tracked_non_tree_entries') == PREDECESSOR_TRACKED_NON_TREE_COUNT
+        and manifest.get('authority_ledger_rows') == PREDECESSOR_TRACKED_NON_TREE_COUNT,
+        'predecessor manifest does not cover the historical 8258-row inventory',
+    )
+    require(
+        manifest.get('tree_entries') == PREDECESSOR_TREE_ENTRY_COUNT,
+        'predecessor manifest does not preserve the historical 9412-entry tree',
+    )
+    require(
+        hashlib.sha256(ledger_text.encode('utf-8')).hexdigest() == manifest.get('ledger_sha256'),
+        'predecessor source ledger digest does not match its manifest',
+    )
+
+    require(
+        isinstance(tree_doc, dict)
+        and tree_doc.get('sha') == PREDECESSOR_DESKTOP_TREE
+        and tree_doc.get('truncated') is False,
+        'predecessor recursive tree evidence is not the complete pinned historical tree',
+    )
+    tree_entries = tree_doc.get('tree')
+    require(
+        isinstance(tree_entries, list) and len(tree_entries) == PREDECESSOR_TREE_ENTRY_COUNT,
+        f'predecessor recursive tree must contain {PREDECESSOR_TREE_ENTRY_COUNT} entries',
+    )
+    tree_by_path: dict[str, dict] = {}
+    historical_non_tree: dict[str, dict] = {}
+    for item in tree_entries:
+        require(isinstance(item, dict), 'predecessor recursive tree contains a non-object entry')
+        path = item.get('path')
+        require(isinstance(path, str) and path, 'predecessor recursive tree entry is missing a path')
+        posix = PurePosixPath(path)
+        require(not posix.is_absolute() and '..' not in posix.parts,
+                'predecessor recursive tree contains an unsafe path: ' + path)
+        require(path not in tree_by_path, 'predecessor recursive tree contains duplicate path: ' + path)
+        require(SHA.fullmatch(str(item.get('sha') or '')) is not None,
+                'predecessor recursive tree contains an invalid object SHA: ' + path)
+        item_type = item.get('type')
+        item_mode = item.get('mode')
+        require(
+            (item_type == 'tree' and item_mode == '040000')
+            or (item_type in ALLOWED_SOURCE_TYPES and item_mode in ALLOWED_SOURCE_MODES),
+            'predecessor recursive tree contains an invalid mode/type: ' + path,
+        )
+        tree_by_path[path] = item
+        if item_type != 'tree':
+            historical_non_tree[path] = item
+    require(
+        len(historical_non_tree) == PREDECESSOR_TRACKED_NON_TREE_COUNT,
+        f'predecessor recursive tree must contain {PREDECESSOR_TRACKED_NON_TREE_COUNT} non-tree entries',
+    )
+
+    source_rows: dict[str, dict] = {}
+    ordered_paths: list[str] = []
+    for line_number, line in enumerate(ledger_text.splitlines(), 1):
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        require(isinstance(row, dict),
+                f'predecessor source ledger row {line_number} is not an object')
+        path = row.get('source_path')
+        require(isinstance(path, str) and path,
+                f'predecessor source ledger row {line_number} has no source_path')
+        posix = PurePosixPath(path)
+        require(not posix.is_absolute() and '..' not in posix.parts,
+                'predecessor source ledger contains an unsafe path: ' + path)
+        require(path not in source_rows,
+                'predecessor source ledger contains duplicate path: ' + path)
+        require(
+            row.get('source_commit') == PREDECESSOR_DESKTOP_COMMIT
+            and row.get('source_type') in ALLOWED_SOURCE_TYPES
+            and row.get('source_mode') in ALLOWED_SOURCE_MODES
+            and SHA.fullmatch(str(row.get('source_blob_sha') or '')) is not None,
+            'predecessor source ledger has invalid provenance/object metadata: ' + path,
+        )
+        ordered_paths.append(path)
+        source_rows[path] = row
+    require(ordered_paths == sorted(ordered_paths),
+            'predecessor source ledger is not in canonical sorted path order')
+    require(
+        len(source_rows) == PREDECESSOR_TRACKED_NON_TREE_COUNT,
+        f'predecessor source ledger must contain {PREDECESSOR_TRACKED_NON_TREE_COUNT} unique rows',
+    )
+    require(set(source_rows) == set(historical_non_tree),
+            'predecessor source ledger paths do not equal the historical non-tree paths')
+    for path, tree_item in historical_non_tree.items():
+        row = source_rows[path]
+        require(
+            row.get('source_blob_sha') == tree_item.get('sha')
+            and row.get('source_mode') == tree_item.get('mode')
+            and row.get('source_type') == tree_item.get('type'),
+            'predecessor source ledger object does not match historical tree: ' + path,
+        )
+
+    require(isinstance(candidate, dict) and candidate.get('responsibilities'),
+            'predecessor responsibility mapping is empty')
+    candidate_authority = candidate.get('authority') or {}
+    require(
+        candidate_authority.get('desktop_commit') == PREDECESSOR_DESKTOP_COMMIT
+        and candidate_authority.get('desktop_root_tree') == PREDECESSOR_DESKTOP_TREE,
+        'predecessor responsibility authority disagrees with historical source authority',
+    )
+    if candidate.get('source_commit') is not None:
+        require(candidate.get('source_commit') == PREDECESSOR_DESKTOP_COMMIT,
+                'predecessor responsibility ledger source_commit mismatch')
+    responsibilities = candidate['responsibilities']
+    require(
+        len(responsibilities) == EXPECTED_RESPONSIBILITY_COUNT,
+        f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(responsibilities)}',
+    )
+    responsibility_ids = [item.get('responsibility_id') for item in responsibilities]
+    require(
+        all(isinstance(rid, str) and rid for rid in responsibility_ids)
+        and len(set(responsibility_ids)) == EXPECTED_RESPONSIBILITY_COUNT,
+        f'predecessor responsibility ledger must contain {EXPECTED_RESPONSIBILITY_COUNT} unique IDs',
+    )
+    semantic_anchor_count = 0
+    for item in responsibilities:
+        rid = item['responsibility_id']
+        sources = item.get('desktop_sources') or []
+        require(isinstance(sources, list),
+                'predecessor responsibility desktop_sources is not a list: ' + rid)
+        for source in sources:
+            require(isinstance(source, dict),
+                    'predecessor responsibility source anchor is not an object: ' + rid)
+            if not _is_semantic_source_anchor(rid, source):
+                continue
+            semantic_anchor_count += 1
+            path = source.get('path')
+            require(isinstance(path, str) and path in source_rows,
+                    'predecessor semantic source anchor is absent from source ledger: ' + str(path))
+            row = source_rows[path]
+            if source.get('source_commit') is not None:
+                require(source.get('source_commit') == PREDECESSOR_DESKTOP_COMMIT,
+                        'predecessor semantic source anchor has stale source_commit: ' + path)
+            require(
+                source.get('blob_sha') == row.get('source_blob_sha')
+                and source.get('source_mode') == row.get('source_mode')
+                and source.get('source_type') == row.get('source_type'),
+                'predecessor semantic source anchor object differs from source ledger: ' + path,
+            )
+    require(
+        semantic_anchor_count == PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT,
+        f'predecessor responsibility ledger must preserve {PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT} semantic source anchors; got {semantic_anchor_count}',
+    )
+    if manifest.get('semantic_source_anchor_entries') is not None:
+        require(manifest.get('semantic_source_anchor_entries') == semantic_anchor_count,
+                'predecessor manifest semantic source-anchor count disagrees with responsibility ledger')
+
+    return candidate, source_rows, {
+        'artifact_id': int(artifact_id),
+        'artifact_digest': actual_digest,
+        'zip_member_count': len(names),
+        'source_manifest_run_id': manifest.get('workflow_run_id'),
+        'source_manifest_android_head': manifest.get('android_pr_head_sha'),
+        'source_manifest_desktop_commit': manifest.get('desktop_commit'),
+        'source_manifest_desktop_root_tree': manifest.get('desktop_root_tree'),
+        'validated_tree_entries': len(tree_entries),
+        'validated_source_rows': len(source_rows),
+        'validated_responsibility_ids': len(set(responsibility_ids)),
+        'validated_semantic_source_anchors': semantic_anchor_count,
+    }
 
 
 def _parse_persisted_source_inventory(
@@ -992,6 +1321,7 @@ def _validate_rebaseline_boundary(
     tree_sha: str,
     tree_entry_count: int,
     tracked_non_tree_count: int,
+    predecessor_source_rows: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Accept only the pinned historical inventory or an already-current inventory."""
     require(baseline.get('desktop_repository') == 'bhrumom/fabushi-desktop',
@@ -1004,6 +1334,9 @@ def _validate_rebaseline_boundary(
             'baseline Desktop commit does not match current main')
     require(baseline.get('desktop_root_tree') == tree_sha,
             'baseline Desktop tree does not match current main')
+    require(baseline.get('desktop_main_before') == PREDECESSOR_DESKTOP_COMMIT
+            and baseline.get('desktop_main_after') == current,
+            'baseline does not preserve predecessor-to-current Desktop main lineage')
     require(tree_entry_count == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop tree must contain {EXPECTED_TREE_ENTRY_COUNT} recursive entries, got {tree_entry_count}')
     require(tracked_non_tree_count == EXPECTED_TRACKED_NON_TREE_COUNT,
@@ -1015,9 +1348,15 @@ def _validate_rebaseline_boundary(
     if (prior_commit, prior_tree) == (PREDECESSOR_DESKTOP_COMMIT, PREDECESSOR_DESKTOP_TREE):
         prior_rows_expected = PREDECESSOR_TRACKED_NON_TREE_COUNT
         prior_tree_expected = PREDECESSOR_TREE_ENTRY_COUNT
+        require(prior_manifest.get('desktop_main_before') == PREDECESSOR_DESKTOP_COMMIT
+                and prior_manifest.get('desktop_main_after') == PREDECESSOR_DESKTOP_COMMIT,
+                'historical source manifest Desktop main lineage mismatch')
     elif (prior_commit, prior_tree) == (current, tree_sha):
         prior_rows_expected = EXPECTED_TRACKED_NON_TREE_COUNT
         prior_tree_expected = EXPECTED_TREE_ENTRY_COUNT
+        require(prior_manifest.get('desktop_main_after') == current
+                and prior_manifest.get('desktop_main_before') in {PREDECESSOR_DESKTOP_COMMIT, current},
+                'current source manifest Desktop main lineage mismatch')
     else:
         raise ValueError('persisted source manifest is neither the pinned historical 8258/9412 predecessor nor the current 8260/9415 authority')
     require(prior_manifest.get('source_commit') == prior_commit,
@@ -1056,6 +1395,20 @@ def _validate_rebaseline_boundary(
     require(paths == sorted(paths), 'persisted source ledger is not in canonical sorted path order')
     require(len(paths) == len(set(paths)) == prior_rows_expected,
             f'persisted source ledger expected {prior_rows_expected} unique rows, got {len(paths)}')
+    if prior_commit == PREDECESSOR_DESKTOP_COMMIT:
+        require(predecessor_source_rows is not None,
+                'historical persisted source ledger requires digest-pinned predecessor source rows')
+        require(set(paths) == set(predecessor_source_rows),
+                'historical persisted source ledger paths differ from digest-pinned predecessor artifact')
+        for row in rows:
+            pinned = predecessor_source_rows[row['source_path']]
+            require(
+                row.get('source_blob_sha') == pinned.get('source_blob_sha')
+                and row.get('source_mode') == pinned.get('source_mode')
+                and row.get('source_type') == pinned.get('source_type'),
+                'historical persisted source ledger object differs from digest-pinned predecessor artifact: '
+                + row['source_path'],
+            )
     return rows
 
 
@@ -1342,9 +1695,14 @@ def merge_responsibility_mapping(
                     'android_tested_checkout_sha': android['android_checkout_sha'],
                     'workflow_sha': android['workflow_sha'],
                     'workflow_name': ci_evidence['workflow_name'],
+                    'workflow_id': ci_evidence['workflow_id'],
+                    'workflow_path': ci_evidence['workflow_path'],
+                    'workflow_event': ci_evidence['workflow_event'],
+                    'workflow_repository': ci_evidence['workflow_repository'],
                     'workflow_run_id': ci_evidence['workflow_run_id'],
                     'workflow_job_name': ci_evidence['workflow_job_name'],
                     'workflow_job_id': ci_evidence['workflow_job_id'],
+                    'workflow_job_run_attempt': ci_evidence['workflow_job_run_attempt'],
                     'run_attempt': ci_evidence['run_attempt'],
                     'run_conclusion': ci_evidence['run_conclusion'],
                     'result': 'passed',
@@ -1354,19 +1712,19 @@ def merge_responsibility_mapping(
                     'kind': 'production-wiring',
                     'workflow_step_name': ci_evidence['production_step_name'],
                     'workflow_step_number': ci_evidence['production_step_number'],
-                    'evidence_ref': production_target,
+                    'evidence_ref': production_target + '#agent-kv-production-owner',
                 })
                 agent_kv_responsibility['test_evidence'].append({
                     **common,
                     'kind': 'focused-unit-test',
                     'workflow_step_name': ci_evidence['test_step_name'],
                     'workflow_step_number': ci_evidence['test_step_number'],
-                    'evidence_ref': test_target,
+                    'evidence_ref': test_target + '#agent-kv-focused-tests',
                     'focused_tests': list(spec['focused_tests']),
                 })
         else:
             print(
-                'WARNING: no successful same-exact-head Android build/unit-test job and step evidence; '
+                'WARNING: no successful same-exact-head dedicated agent-kv workflow/job/step evidence; '
                 'agent-kv coverage remains incomplete',
                 file=sys.stderr,
             )
@@ -1633,8 +1991,15 @@ def rebaseline() -> None:
             'persisted source manifest and ledger are required for a guarded rebaseline')
     prior_manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     prior_ledger_text = ledger_path.read_text(encoding='utf-8')
+    predecessor_source_rows = None
+    if (
+        prior_manifest.get('desktop_commit') == PREDECESSOR_DESKTOP_COMMIT
+        and prior_manifest.get('desktop_root_tree') == PREDECESSOR_DESKTOP_TREE
+    ):
+        _, predecessor_source_rows, _ = _load_pinned_responsibility_mapping()
     old_rows = _validate_rebaseline_boundary(
-        baseline, prior_manifest, prior_ledger_text, current, tree_sha, len(entries), len(files)
+        baseline, prior_manifest, prior_ledger_text, current, tree_sha, len(entries), len(files),
+        predecessor_source_rows=predecessor_source_rows,
     )
     old_by_path = {row['source_path']: row for row in old_rows}
     require(responsibility_path.is_file(), 'Persistent responsibility ledger is missing')
@@ -1691,7 +2056,7 @@ def rebaseline() -> None:
         'desktop_commit': current,
         'source_commit': current,
         'desktop_root_tree': tree_sha,
-        'desktop_main_before': current,
+        'desktop_main_before': prior_manifest.get('desktop_commit'),
         'desktop_main_after': current,
         'authority_current': True,
         'android_tested_checkout_sha': android['android_checkout_sha'],
@@ -1723,6 +2088,8 @@ def rebaseline() -> None:
     baseline['observed_date'] = time.strftime('%Y-%m-%d', time.gmtime())
     baseline['desktop_commit'] = current
     baseline['desktop_root_tree'] = tree_sha
+    baseline['desktop_main_before'] = PREDECESSOR_DESKTOP_COMMIT
+    baseline['desktop_main_after'] = current
     require(responsibility_path.is_file(), 'Persistent responsibility ledger is missing')
 
     touched_responsibilities = 0
@@ -1976,19 +2343,10 @@ def audit_receipt() -> None:
     require(bool(token), 'GH_TOKEN is required to download the predecessor artifact')
     artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', DEFAULT_RESPONSIBILITY_ARTIFACT)
     expected_digest = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST', DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST)
-    artifact_bytes = _download_predecessor_bytes(artifact_id, token)
-    require(artifact_bytes.startswith(b'PK\x03\x04'), 'predecessor download is not a ZIP artifact')
-    actual_digest = 'sha256:' + hashlib.sha256(artifact_bytes).hexdigest()
-    require(actual_digest == expected_digest, 'predecessor artifact SHA-256 mismatch: expected '
-            + expected_digest + ', got ' + actual_digest)
-    try:
-        with zipfile.ZipFile(io.BytesIO(artifact_bytes)) as archive:
-            bad_member = archive.testzip()
-            require(bad_member is None, 'predecessor artifact ZIP integrity failure: ' + str(bad_member))
-            artifact_entries = archive.namelist()
-            require(bool(artifact_entries), 'predecessor artifact is empty')
-    except zipfile.BadZipFile as error:
-        raise RuntimeError('predecessor artifact ZIP invalid: ' + str(error)) from None
+    _, _, predecessor_validation = _load_pinned_responsibility_mapping()
+    actual_digest = predecessor_validation['artifact_digest']
+    require(actual_digest == expected_digest,
+            'predecessor artifact SHA-256 mismatch: expected ' + expected_digest + ', got ' + actual_digest)
 
     inputs = {
         'baseline': DOC / 'authority/baseline.json',
@@ -2090,9 +2448,17 @@ def audit_receipt() -> None:
     receipt_doc = {
         'schema': 'MAHAYANA_ANDROID_AUDIT_RECEIPT_V1',
         'status': 'audit-only-not-product-acceptance',
-        'predecessor_artifact': {'artifact_id': int(artifact_id), 'downloaded_bytes_sha256': actual_digest,
-                                 'expected_sha256': expected_digest, 'zip_integrity_verified': True,
-                                 'entry_count': len(artifact_entries)},
+        'predecessor_artifact': {
+            'artifact_id': int(artifact_id),
+            'downloaded_bytes_sha256': actual_digest,
+            'expected_sha256': expected_digest,
+            'zip_integrity_verified': True,
+            'entry_count': predecessor_validation['zip_member_count'],
+            'validated_tree_entries': predecessor_validation['validated_tree_entries'],
+            'validated_source_rows': predecessor_validation['validated_source_rows'],
+            'validated_responsibility_ids': predecessor_validation['validated_responsibility_ids'],
+            'validated_semantic_source_anchors': predecessor_validation['validated_semantic_source_anchors'],
+        },
         'authority_input_sha256': digests,
         'provenance': provenance,
         'desktop_authority': {'repository': baseline.get('desktop_repository'),

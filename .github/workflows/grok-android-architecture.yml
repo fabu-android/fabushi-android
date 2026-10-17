@@ -17,6 +17,50 @@ env:
   SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
 
 jobs:
+  agent-kv-exact-head-evidence:
+    name: agent-kv-exact-head-evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: android-actions/setup-android@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Install Android NDK for agent-kv production evidence
+        run: |
+          set -euo pipefail
+          NDK_PACKAGE='ndk;28.2.13676358'
+          NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          NDK_CLANG="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          for attempt in 1 2 3; do
+            if sdkmanager "$NDK_PACKAGE" && test -x "$NDK_CLANG"; then
+              exit 0
+            fi
+            rm -rf "$NDK_HOME" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          exit 1
+      - name: Install cargo-ndk for agent-kv production evidence
+        run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
+      - name: Build exact-HEAD agent-kv production owners
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          set -euo pipefail
+          rm -rf evidence/agent-kv-jni
+          cargo ndk -t arm64-v8a -o evidence/agent-kv-jni build --release -p fabushi-android-host-jni
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+      - name: Test exact-HEAD agent-kv production owners
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-agent-kv --all-targets
+
   parity-ledger:
     runs-on: ubuntu-latest
     steps:

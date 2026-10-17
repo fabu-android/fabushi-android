@@ -32,11 +32,107 @@ def padded_responsibilities(primary):
     ]
 
 
+class HttpBytes(io.BytesIO):
+    def __init__(self, payload, status=200, headers=None):
+        super().__init__(payload)
+        self.status = status
+        self.headers = headers or Message()
+
+    def getcode(self):
+        return self.status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+        return False
+
+
 def valid_zip_bytes():
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("predecessor.json", "{}")
     return output.getvalue()
+
+
+def pinned_predecessor_zip_bytes(module, responsibilities=2, anchors=1):
+    predecessor_commit = "1" * 40
+    predecessor_tree = "2" * 40
+    current_commit = "3" * 40
+    current_tree = "4" * 40
+    source_path = "source/example.ts"
+    source_sha = "5" * 40
+    row = {
+        "source_path": source_path,
+        "source_commit": predecessor_commit,
+        "source_blob_sha": source_sha,
+        "source_mode": "100644",
+        "source_type": "blob",
+    }
+    ledger_text = json.dumps(row, sort_keys=True) + "\n"
+    manifest = {
+        "authority_current": True,
+        "desktop_commit": predecessor_commit,
+        "source_commit": predecessor_commit,
+        "desktop_root_tree": predecessor_tree,
+        "desktop_main_before": predecessor_commit,
+        "desktop_main_after": predecessor_commit,
+        "tree_entries": 2,
+        "tracked_non_tree_entries": 1,
+        "authority_ledger_rows": 1,
+        "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
+        "semantic_source_anchor_entries": anchors,
+        "workflow_run_id": 9,
+        "android_pr_head_sha": "a" * 40,
+    }
+    baseline = {
+        "desktop_repository": "bhrumom/fabushi-desktop",
+        "desktop_commit": current_commit,
+        "desktop_root_tree": current_tree,
+        "rebaseline_note": (
+            f"Historical predecessor authority {predecessor_commit}/tree {predecessor_tree} "
+            "had 1 non-tree/2 recursive entries."
+        ),
+    }
+    tree = {
+        "sha": predecessor_tree,
+        "truncated": False,
+        "tree": [
+            {"path": "source", "sha": "6" * 40, "mode": "040000", "type": "tree"},
+            {"path": source_path, "sha": source_sha, "mode": "100644", "type": "blob"},
+        ],
+    }
+    responsibility_rows = []
+    for index in range(responsibilities):
+        item = {"responsibility_id": f"RESP-{index + 1:03d}", "desktop_sources": []}
+        if index == 0 and anchors:
+            item["desktop_sources"] = [{
+                "path": source_path,
+                "blob_sha": source_sha,
+                "source_mode": "100644",
+                "source_type": "blob",
+                "source_commit": predecessor_commit,
+                "mapping_quality": "semantic",
+            }]
+        responsibility_rows.append(item)
+    responsibility = {
+        "source_commit": predecessor_commit,
+        "authority": {"desktop_commit": predecessor_commit, "desktop_root_tree": predecessor_tree},
+        "responsibilities": responsibility_rows,
+    }
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("docs/android-port/authority/baseline.json", json.dumps(baseline))
+        archive.writestr("docs/android-port/authority/source-inventory-manifest.json", json.dumps(manifest))
+        archive.writestr("docs/android-port/authority/source-inventory-ledger.jsonl", ledger_text)
+        archive.writestr("docs/android-port/authority/responsibility-ledger.json", json.dumps(responsibility))
+        archive.writestr("docs/android-port/generated/desktop-recursive-api.json", json.dumps(tree))
+    return output.getvalue(), {
+        "predecessor_commit": predecessor_commit, "predecessor_tree": predecessor_tree,
+        "current_commit": current_commit, "current_tree": current_tree,
+        "source_path": source_path, "source_sha": source_sha,
+    }
 
 
 class AndroidPortDocsGeneratorTest(unittest.TestCase):
@@ -543,6 +639,8 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 "desktop_repository": "bhrumom/fabushi-desktop",
                 "desktop_commit": current_commit,
                 "desktop_root_tree": current_tree,
+                "desktop_main_before": predecessor_commit,
+                "desktop_main_after": current_commit,
             }
             old_row = {
                 "source_path": "old/path.rs", "source_commit": predecessor_commit,
@@ -552,11 +650,17 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             old_manifest = {
                 "authority_current": True, "desktop_commit": predecessor_commit,
                 "source_commit": predecessor_commit, "desktop_root_tree": predecessor_tree,
+                "desktop_main_before": predecessor_commit, "desktop_main_after": predecessor_commit,
                 "tree_entries": 2, "tracked_non_tree_entries": 1, "authority_ledger_rows": 1,
                 "ledger_sha256": hashlib.sha256(old_text.encode("utf-8")).hexdigest(),
             }
             old_rows = module._validate_rebaseline_boundary(
-                baseline, old_manifest, old_text, current_commit, current_tree, 3, 2
+                baseline, old_manifest, old_text, current_commit, current_tree, 3, 2,
+                predecessor_source_rows={
+                    "old/path.rs": {
+                        "source_blob_sha": "1" * 40, "source_mode": "100644", "source_type": "blob",
+                    }
+                },
             )
             self.assertEqual(old_rows[0]["source_path"], "old/path.rs")
 
@@ -570,6 +674,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             current_manifest = {
                 "authority_current": True, "desktop_commit": current_commit,
                 "source_commit": current_commit, "desktop_root_tree": current_tree,
+                "desktop_main_before": predecessor_commit, "desktop_main_after": current_commit,
                 "tree_entries": 3, "tracked_non_tree_entries": 2, "authority_ledger_rows": 2,
                 "ledger_sha256": hashlib.sha256(current_text.encode("utf-8")).hexdigest(),
             }
@@ -600,7 +705,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         opener.open.side_effect = redirect_error
         payload = valid_zip_bytes()
         with patch.object(module.urllib.request, "build_opener", return_value=opener) as build_opener, \
-             patch.object(module, "urlopen", return_value=io.BytesIO(payload)) as signed_download:
+             patch.object(module, "urlopen", return_value=HttpBytes(payload, 200)) as signed_download:
             downloaded = module._download_predecessor_bytes("123", "sensitive-token")
         self.assertEqual(downloaded, payload)
         self.assertTrue(downloaded.startswith(b"PK\x03\x04"))
@@ -623,10 +728,91 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
     def test_predecessor_download_rejects_invalid_zip_magic(self):
         module = load_generator()
         opener = Mock()
-        opener.open.return_value = io.BytesIO(b"not-a-zip")
+        opener.open.return_value = HttpBytes(b"not-a-zip", 200)
         with patch.object(module.urllib.request, "build_opener", return_value=opener):
             with self.assertRaisesRegex(ValueError, "not a ZIP local-file header"):
                 module._download_predecessor_bytes("123", "token")
+
+
+    def test_predecessor_download_rejects_non_200_and_content_length_mismatch(self):
+        module = load_generator()
+        opener = Mock()
+        opener.open.return_value = HttpBytes(b"PK\\x03\\x04data", 206)
+        with patch.object(module.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(ValueError, "unexpected HTTP status"):
+                module._download_predecessor_bytes("123", "token")
+        headers = Message()
+        headers["Content-Length"] = "999"
+        opener.open.return_value = HttpBytes(b"PK\\x03\\x04data", 200, headers)
+        with patch.object(module.urllib.request, "build_opener", return_value=opener):
+            with self.assertRaisesRegex(ValueError, "Content-Length mismatch"):
+                module._download_predecessor_bytes("123", "token")
+
+    def test_pinned_predecessor_validates_tree_rows_responsibilities_and_all_semantic_anchors(self):
+        module = load_generator()
+        payload, fixture = pinned_predecessor_zip_bytes(module)
+        digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+        patches = [
+            patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", fixture["predecessor_commit"]),
+            patch.object(module, "PREDECESSOR_DESKTOP_TREE", fixture["predecessor_tree"]),
+            patch.object(module, "EXPECTED_DESKTOP_COMMIT", fixture["current_commit"]),
+            patch.object(module, "EXPECTED_DESKTOP_TREE", fixture["current_tree"]),
+            patch.object(module, "PREDECESSOR_TRACKED_NON_TREE_COUNT", 1),
+            patch.object(module, "PREDECESSOR_TREE_ENTRY_COUNT", 2),
+            patch.object(module, "EXPECTED_RESPONSIBILITY_COUNT", 2),
+            patch.object(module, "PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT", 1),
+            patch.object(module, "_download_predecessor_bytes", return_value=payload),
+            patch.dict("os.environ", {
+                "GH_TOKEN": "token",
+                "ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT": "123",
+                "ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST": digest,
+            }),
+        ]
+        with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6], patches[7], patches[8], patches[9]:
+            candidate, rows, provenance = module._load_pinned_responsibility_mapping()
+        self.assertEqual(len(candidate["responsibilities"]), 2)
+        self.assertEqual(rows[fixture["source_path"]]["source_blob_sha"], fixture["source_sha"])
+        self.assertEqual(provenance["validated_tree_entries"], 2)
+        self.assertEqual(provenance["validated_source_rows"], 1)
+        self.assertEqual(provenance["validated_responsibility_ids"], 2)
+        self.assertEqual(provenance["validated_semantic_source_anchors"], 1)
+
+        # Corrupt the only source object without changing the tree and require a hard failure.
+        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+            contents = {name: archive.read(name) for name in archive.namelist()}
+        bad_row = {
+            "source_path": fixture["source_path"], "source_commit": fixture["predecessor_commit"],
+            "source_blob_sha": "7" * 40, "source_mode": "100644", "source_type": "blob",
+        }
+        bad_ledger = json.dumps(bad_row, sort_keys=True) + "\\n"
+        manifest = json.loads(contents["docs/android-port/authority/source-inventory-manifest.json"])
+        manifest["ledger_sha256"] = hashlib.sha256(bad_ledger.encode("utf-8")).hexdigest()
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+            for name, body in contents.items():
+                if name.endswith("source-inventory-ledger.jsonl"):
+                    archive.writestr(name, bad_ledger)
+                elif name.endswith("source-inventory-manifest.json"):
+                    archive.writestr(name, json.dumps(manifest))
+                else:
+                    archive.writestr(name, body)
+        corrupt = output.getvalue()
+        corrupt_digest = "sha256:" + hashlib.sha256(corrupt).hexdigest()
+        with patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", fixture["predecessor_commit"]), \
+             patch.object(module, "PREDECESSOR_DESKTOP_TREE", fixture["predecessor_tree"]), \
+             patch.object(module, "EXPECTED_DESKTOP_COMMIT", fixture["current_commit"]), \
+             patch.object(module, "EXPECTED_DESKTOP_TREE", fixture["current_tree"]), \
+             patch.object(module, "PREDECESSOR_TRACKED_NON_TREE_COUNT", 1), \
+             patch.object(module, "PREDECESSOR_TREE_ENTRY_COUNT", 2), \
+             patch.object(module, "EXPECTED_RESPONSIBILITY_COUNT", 2), \
+             patch.object(module, "PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT", 1), \
+             patch.object(module, "_download_predecessor_bytes", return_value=corrupt), \
+             patch.dict("os.environ", {
+                 "GH_TOKEN": "token", "ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT": "123",
+                 "ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST": corrupt_digest,
+             }):
+            with self.assertRaisesRegex(ValueError, "object does not match historical tree"):
+                module._load_pinned_responsibility_mapping()
 
     def test_audit_receipt_is_written_to_runner_temp_with_real_json_newline(self):
         module = load_generator()
@@ -712,7 +898,25 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             (out / "rejected-android-targets.json").write_text(
                 json.dumps({"status": "passed", "count": 0, "rejected_targets": []}), encoding="utf-8"
             )
-            payload = valid_zip_bytes()
+            payload, predecessor_fixture = pinned_predecessor_zip_bytes(module, responsibilities=2, anchors=1)
+            # Rebind the tiny predecessor artifact baseline's current authority to this receipt fixture.
+            with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                contents = {name: archive.read(name) for name in archive.namelist()}
+            predecessor_baseline = json.loads(contents["docs/android-port/authority/baseline.json"])
+            predecessor_baseline["desktop_commit"] = desktop_commit
+            predecessor_baseline["desktop_root_tree"] = desktop_tree
+            predecessor_baseline["rebaseline_note"] = (
+                f"Historical predecessor authority {predecessor_fixture['predecessor_commit']}/tree "
+                f"{predecessor_fixture['predecessor_tree']} had 1 non-tree/2 recursive entries."
+            )
+            rebuilt = io.BytesIO()
+            with zipfile.ZipFile(rebuilt, "w", zipfile.ZIP_DEFLATED) as archive:
+                for name, body in contents.items():
+                    if name.endswith("baseline.json"):
+                        archive.writestr(name, json.dumps(predecessor_baseline))
+                    else:
+                        archive.writestr(name, body)
+            payload = rebuilt.getvalue()
             provenance = {
                 "android_repository": "fabu-android/fabushi-android", "android_pr": 3,
                 "android_pr_head_sha": android_head, "android_pr_head_ref": "branch",
@@ -731,6 +935,11 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                  patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \
                  patch.object(module, "EXPECTED_RESPONSIBILITY_COUNT", 2), \
                  patch.object(module, "EXPECTED_PACKAGES_SOURCE_COUNT", 0), \
+                 patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", predecessor_fixture["predecessor_commit"]), \
+                 patch.object(module, "PREDECESSOR_DESKTOP_TREE", predecessor_fixture["predecessor_tree"]), \
+                 patch.object(module, "PREDECESSOR_TRACKED_NON_TREE_COUNT", 1), \
+                 patch.object(module, "PREDECESSOR_TREE_ENTRY_COUNT", 2), \
+                 patch.object(module, "PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT", 1), \
                  patch.object(module, "_download_predecessor_bytes", return_value=payload), \
                  patch.object(module, "_current_android_tracked_files", return_value={"source/host.rs"}), \
                  patch.object(module, "current_android_provenance", return_value=provenance), \
@@ -1067,94 +1276,171 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             self.assertIn(source_spec["test_target"], source["android_targets"])
             self.assertTrue(all(target.startswith("source/") for target in source["android_targets"]))
 
-    def test_package_action_evidence_requires_a_successful_exact_head_job_and_named_step(self):
+    def test_current_android_provenance_prefers_android_workflow_sha_and_rejects_stale_fallback(self):
+        module = load_generator()
+        head = "a" * 40
+        pr = {
+            "number": 3,
+            "head": {"sha": head, "ref": "spec/grok-bot-018-android-parity-20260922",
+                     "repo": {"full_name": "fabu-android/fabushi-android"}},
+            "base": {"sha": "b" * 40, "ref": "main"},
+        }
+        env = {
+            "ANDROID_PR_HEAD_SHA": head,
+            "ANDROID_WORKFLOW_SHA": head,
+            "GITHUB_WORKFLOW_SHA": "c" * 40,
+            "GITHUB_REPOSITORY": "fabu-android/fabushi-android",
+            "ANDROID_PR_NUMBER": "3",
+        }
+        with patch.dict("os.environ", env, clear=True), \
+             patch.object(module.subprocess, "check_output", return_value=head + "\\n"), \
+             patch.object(module, "get", return_value=pr):
+            provenance = module.current_android_provenance()
+        self.assertEqual(provenance["workflow_sha"], head)
+
+        env.pop("ANDROID_WORKFLOW_SHA")
+        with patch.dict("os.environ", env, clear=True), \
+             patch.object(module.subprocess, "check_output", return_value=head + "\\n"), \
+             patch.object(module, "get", return_value=pr):
+            with self.assertRaisesRegex(ValueError, "workflow SHA/checkout mismatch"):
+                module.current_android_provenance()
+
+    def test_package_action_evidence_requires_successful_exact_head_run_job_step_attempt_and_anchor(self):
         module = load_generator()
         android_head = "a" * 40
         target = "source/packages/agent-kv/src/serde.rs"
         run = {
-            "name": "Android Parity Full CI",
-            "workflow_id": 364063299,
-            "path": ".github/workflows/android-parity-full-ci.yml",
+            "name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
             "event": "pull_request",
-            "repository": {"full_name": "fabu-android/fabushi-android"},
-            "head_sha": android_head,
-            "run_attempt": 1,
-            "status": "completed",
-            "conclusion": "success",
+            "repository": {"full_name": module.ANDROID_REPOSITORY},
+            "head_sha": android_head, "run_attempt": 2,
+            "status": "completed", "conclusion": "success",
         }
         job = {
-            "id": 789,
-            "name": "android-build-unit-lint",
-            "status": "completed",
-            "conclusion": "success",
+            "id": 789, "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+            "run_attempt": 2, "status": "completed", "conclusion": "success",
             "steps": [
-                {"name": "Build exact-HEAD native Mahayana Coordinator Host",
+                {"name": module.AGENT_KV_PRODUCTION_STEP, "number": 6,
                  "status": "completed", "conclusion": "success"},
-                {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
+                {"name": module.AGENT_KV_TEST_STEP, "number": 7,
                  "status": "completed", "conclusion": "success"},
             ],
         }
         entry = {
-            "workflow_run_id": 456,
-            "workflow_job_id": 789,
-            "workflow_job_name": "android-build-unit-lint",
-            "run_attempt": 1,
-            "workflow_step_name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
-            "evidence_ref": target,
+            "workflow_name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "workflow_path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "workflow_event": "pull_request",
+            "workflow_repository": module.ANDROID_REPOSITORY,
+            "workflow_run_id": 456, "run_attempt": 2, "run_conclusion": "success",
+            "workflow_job_id": 789, "workflow_job_name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+            "workflow_job_run_attempt": 2,
+            "workflow_step_name": module.AGENT_KV_TEST_STEP, "workflow_step_number": 7,
+            "evidence_ref": target + "#agent-kv-focused-tests",
         }
         with patch.object(module, "get", side_effect=[run, {"jobs": [job]}]):
             self.assertTrue(module._package_action_job_passed(
                 entry, android_head=android_head, tracked_android_paths={target},
                 action_job_cache={},
             ))
-        bad_step = json.loads(json.dumps(job))
-        bad_step["steps"][1]["conclusion"] = "cancelled"
-        with patch.object(module, "get", side_effect=[run, {"jobs": [bad_step]}]):
-            self.assertFalse(module._package_action_job_passed(
-                entry, android_head=android_head, tracked_android_paths={target},
-                action_job_cache={},
-            ))
-        wrong_head = {**run, "head_sha": "b" * 40}
-        with patch.object(module, "get", return_value=wrong_head):
-            self.assertFalse(module._package_action_job_passed(
-                entry, android_head=android_head, tracked_android_paths={target},
-                action_job_cache={},
-            ))
 
-    def test_exact_head_ci_discovery_accepts_failed_overall_run_only_when_required_job_steps_pass(self):
+        entry_mutations = {
+            "run-attempt": {"run_attempt": 1},
+            "job-attempt": {"workflow_job_run_attempt": 1},
+            "workflow-id": {"workflow_id": 1},
+            "workflow-path": {"workflow_path": ".github/workflows/other.yml"},
+            "workflow-event": {"workflow_event": "push"},
+            "workflow-repository": {"workflow_repository": "other/repo"},
+            "run-conclusion": {"run_conclusion": "failure"},
+            "job-name": {"workflow_job_name": "other"},
+            "step-number": {"workflow_step_number": 99},
+            "evidence-no-anchor": {"evidence_ref": target},
+            "evidence-empty-anchor": {"evidence_ref": target + "#"},
+            "evidence-untracked": {"evidence_ref": "source/missing.rs#test"},
+        }
+        for label, mutation in entry_mutations.items():
+            with self.subTest(label=label):
+                mutated = {**entry, **mutation}
+                with patch.object(module, "get") as get_mock:
+                    self.assertFalse(module._package_action_job_passed(
+                        mutated, android_head=android_head, tracked_android_paths={target},
+                        action_job_cache={},
+                    ))
+                    get_mock.assert_not_called()
+
+        run_mutations = {
+            "name": {"name": "other"}, "workflow-id": {"workflow_id": 1},
+            "path": {"path": ".github/workflows/other.yml"}, "event": {"event": "push"},
+            "repository": {"repository": {"full_name": "other/repo"}},
+            "head": {"head_sha": "b" * 40}, "status": {"status": "queued"},
+            "failure": {"conclusion": "failure"}, "cancelled": {"conclusion": "cancelled"},
+            "attempt": {"run_attempt": 1},
+        }
+        for label, mutation in run_mutations.items():
+            with self.subTest(run=label), patch.object(module, "get", return_value={**run, **mutation}):
+                self.assertFalse(module._package_action_job_passed(
+                    entry, android_head=android_head, tracked_android_paths={target},
+                    action_job_cache={},
+                ))
+
+        for label, mutation in {
+            "name": {"name": "other"}, "status": {"status": "in_progress"},
+            "failure": {"conclusion": "failure"}, "cancelled": {"conclusion": "cancelled"},
+            "attempt": {"run_attempt": 1},
+        }.items():
+            bad_job = {**job, **mutation}
+            with self.subTest(job=label), patch.object(module, "get", side_effect=[run, {"jobs": [bad_job]}]):
+                self.assertFalse(module._package_action_job_passed(
+                    entry, android_head=android_head, tracked_android_paths={target},
+                    action_job_cache={},
+                ))
+
+        for conclusion in ("failure", "cancelled", "skipped"):
+            bad_job = json.loads(json.dumps(job))
+            bad_job["steps"][1]["conclusion"] = conclusion
+            with self.subTest(step=conclusion), patch.object(module, "get", side_effect=[run, {"jobs": [bad_job]}]):
+                self.assertFalse(module._package_action_job_passed(
+                    entry, android_head=android_head, tracked_android_paths={target},
+                    action_job_cache={},
+                ))
+
+    def test_exact_head_ci_discovery_requires_successful_overall_dedicated_run(self):
         module = load_generator()
         android_head = "a" * 40
-        run = {
-            "id": 456, "name": "Android Parity Full CI", "head_sha": android_head,
-            "workflow_id": 364063299, "path": ".github/workflows/android-parity-full-ci.yml",
-            "event": "pull_request", "repository": {"full_name": "fabu-android/fabushi-android"},
-            "status": "completed", "conclusion": "failure", "run_number": 12, "run_attempt": 1,
+        success = {
+            "id": 456, "name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "head_sha": android_head, "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "event": "pull_request", "repository": {"full_name": module.ANDROID_REPOSITORY},
+            "status": "completed", "conclusion": "success", "run_number": 12, "run_attempt": 1,
         }
         job = {
-            "id": 789, "name": "android-build-unit-lint",
+            "id": 789, "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME, "run_attempt": 1,
             "status": "completed", "conclusion": "success",
             "steps": [
-                {"name": "Build exact-HEAD native Mahayana Coordinator Host",
-                 "number": 9, "status": "completed", "conclusion": "success"},
-                {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
-                 "number": 10, "status": "completed", "conclusion": "success"},
+                {"name": module.AGENT_KV_PRODUCTION_STEP, "number": 6,
+                 "status": "completed", "conclusion": "success"},
+                {"name": module.AGENT_KV_TEST_STEP, "number": 7,
+                 "status": "completed", "conclusion": "success"},
             ],
         }
-        with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}):
-            with patch.object(module, "get", side_effect=[
-                {"workflow_runs": [run]}, {"jobs": [job]},
-            ]):
-                evidence = module._latest_exact_head_android_ci_evidence(android_head)
+        with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}), \
+             patch.object(module, "get", side_effect=[{"workflow_runs": [success]}, {"jobs": [job]}]):
+            evidence = module._latest_exact_head_android_ci_evidence(android_head)
         self.assertIsNotNone(evidence)
         self.assertEqual(evidence["workflow_run_id"], 456)
-        self.assertEqual(evidence["workflow_job_id"], 789)
-        self.assertEqual(evidence["run_conclusion"], "failure")
-        self.assertEqual(evidence["production_step_number"], 9)
-        self.assertEqual(evidence["test_step_number"], 10)
+        self.assertEqual(evidence["workflow_job_run_attempt"], 1)
+        self.assertEqual(evidence["run_conclusion"], "success")
+        self.assertEqual(evidence["production_step_number"], 6)
+        self.assertEqual(evidence["test_step_number"], 7)
 
-        cancelled = {**run, "conclusion": "cancelled"}
-        with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}):
-            with patch.object(module, "get", return_value={"workflow_runs": [cancelled]}):
+        for conclusion in ("failure", "cancelled", "skipped"):
+            failed = {**success, "conclusion": conclusion}
+            with self.subTest(conclusion=conclusion), \
+                 patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}), \
+                 patch.object(module, "get", return_value={"workflow_runs": [failed]}):
                 self.assertIsNone(module._latest_exact_head_android_ci_evidence(android_head))
 
 
@@ -1162,19 +1448,20 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         module = load_generator()
         android_head = "a" * 40
         run = {
-            "id": 456, "name": "Android Parity Full CI", "head_sha": android_head,
-            "workflow_id": 364063299, "path": ".github/workflows/android-parity-full-ci.yml",
-            "event": "pull_request", "repository": {"full_name": "fabu-android/fabushi-android"},
-            "status": "completed", "conclusion": "failure", "run_number": 12, "run_attempt": 1,
+            "id": 456, "name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "head_sha": android_head, "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "event": "pull_request", "repository": {"full_name": module.ANDROID_REPOSITORY},
+            "status": "completed", "conclusion": "success", "run_number": 12, "run_attempt": 1,
         }
         job = {
-            "id": 789, "name": "android-build-unit-lint", "run_attempt": 1,
+            "id": 789, "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME, "run_attempt": 1,
             "status": "completed", "conclusion": "success",
             "steps": [
-                {"name": "Build exact-HEAD native Mahayana Coordinator Host",
-                 "number": 9, "status": "completed", "conclusion": "success"},
-                {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
-                 "number": 10, "status": "completed", "conclusion": "success"},
+                {"name": module.AGENT_KV_PRODUCTION_STEP,
+                 "number": 6, "status": "completed", "conclusion": "success"},
+                {"name": module.AGENT_KV_TEST_STEP,
+                 "number": 7, "status": "completed", "conclusion": "success"},
             ],
         }
         with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "60"}):
@@ -1186,9 +1473,9 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                     evidence = module._latest_exact_head_android_ci_evidence(android_head)
         self.assertIsNotNone(evidence)
         self.assertEqual(evidence["workflow_run_id"], 456)
-        self.assertEqual(evidence["production_step_number"], 9)
-        self.assertEqual(evidence["test_step_number"], 10)
-        self.assertEqual(evidence["workflow_id"], 364063299)
+        self.assertEqual(evidence["production_step_number"], 6)
+        self.assertEqual(evidence["test_step_number"], 7)
+        self.assertEqual(evidence["workflow_id"], module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID)
 
 if __name__ == "__main__":
     unittest.main()

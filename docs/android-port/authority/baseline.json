@@ -34,5 +34,7 @@
     "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
   ],
   "rebaseline_note": "Historical predecessor authority 12a4e29819592e3a7e32f7435cb0cf2e3cc53848/tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2 had 8258 non-tree/9412 recursive entries. Current Desktop main is dc81eac2df50f6c08ae4daf98988076bfdc956d9/tree 04473e188c5088b66a7f984e5e89e6d47e75eafb and must be enumerated in Actions (8260 non-tree/9415 recursive entries).",
-  "rebaseline_requested_at": "2026-10-16T12:15:00+08:00"
+  "rebaseline_requested_at": "2026-10-16T12:15:00+08:00",
+  "desktop_main_before": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
+  "desktop_main_after": "dc81eac2df50f6c08ae4daf98988076bfdc956d9"
 }
