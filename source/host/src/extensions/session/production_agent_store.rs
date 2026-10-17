@@ -130,8 +130,11 @@ impl ProductionAgentStore {
         key: ProductionAgentMetadataKey,
         value: Value,
     ) -> Result<bool, String> {
-        let normalized = AgentMetadataSerde::default()
-            .normalize_field(key.as_str(), value, &self.agent_id)?;
+        let normalized = AgentMetadataSerde::normalize_field(
+            key.as_str(),
+            value,
+            &self.agent_id,
+        )?;
         self.db
             .set_metadata(key.as_str(), normalized)
             .map_err(|error| error.to_string())
