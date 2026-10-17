@@ -21,6 +21,7 @@ from urllib.error import HTTPError
 from urllib.parse import unquote
 from urllib.request import Request, urlopen
 import zipfile
+import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 DOC = ROOT / 'docs/android-port'
@@ -47,8 +48,10 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9412
-EXPECTED_TRACKED_NON_TREE_COUNT = 8258
+EXPECTED_TREE_ENTRY_COUNT = 9415
+EXPECTED_TRACKED_NON_TREE_COUNT = 8260
+PREDECESSOR_TREE_ENTRY_COUNT = 9412
+PREDECESSOR_TRACKED_NON_TREE_COUNT = 8258
 EXPECTED_PACKAGES_SOURCE_COUNT = 852
 OWNER_PLACEHOLDER_VALUES = frozenset({
     '', 'unknown', 'tbd', 'todo', 'n/a', 'na', 'none', 'unassigned',
@@ -825,72 +828,64 @@ def _merge_responsibility_sources(current: dict, predecessor: dict) -> dict:
     return merged
 
 
-def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
-    artifact_id = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT', DEFAULT_RESPONSIBILITY_ARTIFACT)
-    expected_digest = os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST', DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST)
-    token = os.environ.get('GH_TOKEN')
-    require(token, 'GH_TOKEN is required to recover predecessor responsibility mapping')
-    req = Request(
-        f'https://api.github.com/repos/fabu-android/fabushi-android/actions/artifacts/{artifact_id}/zip',
-        headers={
-            'Accept': 'application/vnd.github+json',
-            'Authorization': 'Bearer ' + token,
-            'User-Agent': 'Fabushi-Android-Docs',
-            'X-GitHub-Api-Version': '2022-11-28',
-        },
-    )
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Expose artifact redirects so bearer credentials never cross hosts."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _download_predecessor_bytes(artifact_id: str, token: str) -> bytes:
+    endpoint = f'https://api.github.com/repos/{ANDROID_REPOSITORY}/actions/artifacts/{artifact_id}/zip'
+    request = Request(endpoint, headers={'Accept':'application/vnd.github+json','Authorization':'Bearer '+token,'User-Agent':'Fabushi-Android-Docs','X-GitHub-Api-Version':'2022-11-28'})
     try:
-        with urlopen(req, timeout=60) as response:
-            payload = response.read()
+        try:
+            with urllib.request.build_opener(_NoRedirect()).open(request, timeout=60) as response:
+                payload = response.read()
+        except HTTPError as error:
+            if error.code not in (301,302,303,307,308): raise
+            location = error.headers.get('Location')
+            require(bool(location), 'GitHub artifact redirect omitted Location')
+            with urlopen(Request(location,headers={'User-Agent':'Fabushi-Android-Docs','Accept':'application/octet-stream'}),timeout=60) as response:
+                payload=response.read()
     except HTTPError as error:
-        raise RuntimeError(
-            'failed to recover predecessor responsibility artifact '
-            + artifact_id + ' (HTTP ' + str(error.code) + ')'
-        ) from None
+        raise RuntimeError('failed to recover predecessor responsibility artifact '+artifact_id+' (HTTP '+str(error.code)+')') from None
     except Exception as error:
-        raise RuntimeError(
-            'failed to recover predecessor responsibility artifact '
-            + artifact_id + ' (' + type(error).__name__ + ')'
-        ) from None
-    actual_digest = 'sha256:' + hashlib.sha256(payload).hexdigest()
-    require(actual_digest == expected_digest,
-            f'predecessor responsibility artifact digest mismatch: expected={expected_digest} actual={actual_digest}')
+        raise RuntimeError('failed to recover predecessor responsibility artifact '+artifact_id+' ('+type(error).__name__+': '+str(error)+')') from None
+    require(payload.startswith(b'PK\x03\x04'),'predecessor artifact download is not a ZIP local-file header')
+    return payload
+
+
+def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
+    artifact_id=os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT',DEFAULT_RESPONSIBILITY_ARTIFACT)
+    expected_digest=os.environ.get('ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST',DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST)
+    token=os.environ.get('GH_TOKEN')
+    require(token,'GH_TOKEN is required to recover predecessor responsibility mapping')
+    payload=_download_predecessor_bytes(artifact_id,token)
+    actual_digest='sha256:'+hashlib.sha256(payload).hexdigest()
+    require(actual_digest==expected_digest,f'predecessor responsibility artifact digest mismatch: expected={expected_digest} actual={actual_digest}')
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            responsibility_names = [n for n in archive.namelist()
-                                    if n.endswith('docs/android-port/authority/responsibility-ledger.json')]
-            manifest_names = [n for n in archive.namelist()
-                              if n.endswith('docs/android-port/authority/source-inventory-manifest.json')]
-            ledger_names = [n for n in archive.namelist()
-                            if n.endswith('docs/android-port/authority/source-inventory-ledger.jsonl')]
-            require(len(responsibility_names) == 1, 'predecessor artifact does not contain exactly one responsibility ledger')
-            require(len(manifest_names) == 1, 'predecessor artifact does not contain exactly one source inventory manifest')
-            require(len(ledger_names) == 1, 'predecessor artifact does not contain exactly one source inventory ledger')
-            candidate = json.loads(archive.read(responsibility_names[0]).decode('utf-8'))
-            source_manifest = json.loads(archive.read(manifest_names[0]).decode('utf-8'))
-            source_rows = {}
-            for line in archive.read(ledger_names[0]).decode('utf-8').splitlines():
+            bad=archive.testzip()
+            require(bad is None,'predecessor artifact ZIP integrity failure: '+str(bad))
+            names=archive.namelist()
+            rn=[n for n in names if n.endswith('docs/android-port/authority/responsibility-ledger.json')]
+            mn=[n for n in names if n.endswith('docs/android-port/authority/source-inventory-manifest.json')]
+            ln=[n for n in names if n.endswith('docs/android-port/authority/source-inventory-ledger.jsonl')]
+            require(len(rn)==len(mn)==len(ln)==1,'predecessor artifact is missing or duplicates an authority input')
+            candidate=json.loads(archive.read(rn[0]).decode('utf-8'))
+            manifest=json.loads(archive.read(mn[0]).decode('utf-8'))
+            source_rows={}
+            for line in archive.read(ln[0]).decode('utf-8').splitlines():
                 if line.strip():
-                    row = json.loads(line)
-                    source_rows[row['source_path']] = row
+                    row=json.loads(line); source_rows[row['source_path']]=row
     except Exception as error:
         raise RuntimeError('predecessor responsibility artifact is invalid') from error
-    require(isinstance(candidate, dict) and candidate.get('responsibilities'),
-            'predecessor responsibility mapping is empty')
-    require(len(candidate['responsibilities']) == EXPECTED_RESPONSIBILITY_COUNT,
-            f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(candidate["responsibilities"])}')
-    require(source_manifest.get('tracked_non_tree_entries') == 8258,
-            'predecessor source manifest does not cover the full 8258-row Desktop inventory')
-    require(len(source_rows) == 8258,
-            f'predecessor source ledger must contain 8258 unique rows, got {len(source_rows)}')
-    return candidate, source_rows, {
-        'artifact_id': int(artifact_id),
-        'artifact_digest': actual_digest,
-        'source_manifest_run_id': source_manifest.get('workflow_run_id'),
-        'source_manifest_android_head': source_manifest.get('android_pr_head_sha'),
-        'source_manifest_desktop_commit': source_manifest.get('desktop_commit'),
-        'source_manifest_desktop_root_tree': source_manifest.get('desktop_root_tree'),
-    }
+    require(isinstance(candidate,dict) and candidate.get('responsibilities'),'predecessor responsibility mapping is empty')
+    require(len(candidate['responsibilities'])==EXPECTED_RESPONSIBILITY_COUNT,f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(candidate["responsibilities"])}')
+    require(manifest.get('tracked_non_tree_entries')==PREDECESSOR_TRACKED_NON_TREE_COUNT,'predecessor manifest does not cover historical 8258-row inventory')
+    require(manifest.get('tree_entries')==PREDECESSOR_TREE_ENTRY_COUNT,'predecessor manifest does not preserve historical 9412-entry tree')
+    require(len(source_rows)==PREDECESSOR_TRACKED_NON_TREE_COUNT,f'predecessor source ledger must contain 8258 unique rows, got {len(source_rows)}')
+    return candidate,source_rows,{'artifact_id':int(artifact_id),'artifact_digest':actual_digest,'source_manifest_run_id':manifest.get('workflow_run_id'),'source_manifest_android_head':manifest.get('android_pr_head_sha'),'source_manifest_desktop_commit':manifest.get('desktop_commit'),'source_manifest_desktop_root_tree':manifest.get('desktop_root_tree')}
 
 
 def _parse_persisted_source_inventory(
@@ -1062,81 +1057,19 @@ def validate_exact_head_provenance(
                     'exact-head responsibility anchor differs from current Desktop object: ' + str(path))
 
 
-def _load_local_persisted_mapping(
-    responsibility_path: Path,
-    current_candidate: dict,
-) -> tuple[dict, dict[str, dict], dict]:
-    """Recover coverage from the committed snapshot only after verifying its authority and digest.
-
-    This is mapping continuity, not verification evidence. Strict parity checks still decide
-    whether any source row or responsibility is complete.
-    """
-    authority_dir = responsibility_path.parent
-    manifest_path = authority_dir / 'source-inventory-manifest.json'
-    ledger_path = authority_dir / 'source-inventory-ledger.jsonl'
-    require(manifest_path.is_file() and ledger_path.is_file(),
-            'validated local source authority snapshot is unavailable')
-    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
-    authority = current_candidate.get('authority') or {}
-    require(manifest.get('authority_current') is True,
-            'local source authority snapshot is not current')
-    require(manifest.get('desktop_commit') == authority.get('desktop_commit'),
-            'local source authority Desktop commit does not match responsibility ledger')
-    require(manifest.get('desktop_root_tree') == authority.get('desktop_root_tree'),
-            'local source authority Desktop tree does not match responsibility ledger')
-    require(manifest.get('tree_entries') == 9412,
-            'local source authority does not preserve the 9412-entry recursive tree')
-    require(manifest.get('tracked_non_tree_entries') == 8258,
-            'local source authority does not preserve the 8258-entry tracked non-tree inventory')
-
-    ledger_text = ledger_path.read_text(encoding='utf-8')
-    source_rows = _parse_persisted_source_inventory(ledger_text, manifest)
-    return current_candidate, source_rows, {
-        'artifact_id': None,
-        'artifact_digest': None,
-        'source_manifest_run_id': manifest.get('workflow_run_id'),
-        'source_manifest_android_head': manifest.get('android_pr_head_sha'),
-        'source_manifest_desktop_commit': manifest.get('desktop_commit'),
-        'source_manifest_desktop_root_tree': manifest.get('desktop_root_tree'),
-        'mapping_source': 'validated-local-persisted-snapshot',
-    }
-
-
-def load_predecessor_responsibility_mapping(
-    responsibility_path: Path,
-) -> tuple[dict, dict[str, dict], str, dict]:
-    current_candidate = None
+def load_predecessor_responsibility_mapping(responsibility_path: Path) -> tuple[dict, dict[str, dict], str, dict]:
+    """Fail closed unless the pinned, digest-verified predecessor artifact is available."""
+    predecessor,source_rows,provenance=_load_pinned_responsibility_mapping()
+    candidate=None
     try:
-        if responsibility_path.is_file() and responsibility_path.stat().st_size > 0:
-            candidate = json.loads(responsibility_path.read_text(encoding='utf-8'))
-            if isinstance(candidate, dict) and candidate.get('responsibilities'):
-                current_candidate = candidate
-    except (OSError, ValueError, TypeError, AttributeError, json.JSONDecodeError):
-        current_candidate = None
+        if responsibility_path.is_file() and responsibility_path.stat().st_size:
+            value=json.loads(responsibility_path.read_text(encoding='utf-8'))
+            if isinstance(value,dict) and value.get('responsibilities'): candidate=value
+    except (OSError,ValueError,TypeError,AttributeError,json.JSONDecodeError): candidate=None
+    if candidate is None: return predecessor,source_rows,'pinned-predecessor-artifact',provenance
+    require(len(candidate['responsibilities'])==EXPECTED_RESPONSIBILITY_COUNT,f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(candidate["responsibilities"])}')
+    return _merge_responsibility_sources(candidate,predecessor),source_rows,'current-responsibility-ledger+pin-predecessor-coverage',provenance
 
-    if current_candidate is not None:
-        require(len(current_candidate['responsibilities']) == EXPECTED_RESPONSIBILITY_COUNT,
-                f'expected {EXPECTED_RESPONSIBILITY_COUNT} responsibility definitions, got {len(current_candidate["responsibilities"])}')
-        try:
-            predecessor, source_rows, provenance = _load_pinned_responsibility_mapping()
-        except RuntimeError as error:
-            if not str(error).startswith('failed to recover predecessor responsibility artifact '):
-                raise
-            predecessor, source_rows, provenance = _load_local_persisted_mapping(
-                responsibility_path, current_candidate
-            )
-            print(
-                'WARNING: pinned predecessor artifact is unavailable; using the digest-verified '
-                'local source snapshot for mapping continuity only',
-                file=sys.stderr,
-            )
-            merged = _merge_responsibility_sources(current_candidate, predecessor)
-            return merged, source_rows, 'current-responsibility-ledger+validated-local-coverage', provenance
-        merged = _merge_responsibility_sources(current_candidate, predecessor)
-        return merged, source_rows, 'current-responsibility-ledger+pin-predecessor-coverage', provenance
-
-    predecessor, source_rows, provenance = _load_pinned_responsibility_mapping()
-    return predecessor, source_rows, 'pinned-predecessor-artifact', provenance
 
 def merge_responsibility_mapping(
     responsibility_path: Path,
@@ -1149,10 +1082,9 @@ def merge_responsibility_mapping(
     predecessor, predecessor_source_rows, mapping_origin, mapping_provenance = load_predecessor_responsibility_mapping(responsibility_path)
     android = current_android_provenance()
     predecessor_authority = predecessor.get('authority') or {}
-    require(predecessor_authority.get('desktop_commit') == current,
-            'responsibility mapping authority Desktop commit does not match current Desktop main')
-    require(predecessor_authority.get('desktop_root_tree') == tree_sha,
-            'responsibility mapping authority Desktop tree does not match current Desktop main')
+    require(predecessor_authority.get('desktop_commit') == mapping_provenance.get('source_manifest_desktop_commit'), 'pinned mapping and predecessor manifest Desktop commit disagree')
+    require(predecessor_authority.get('desktop_root_tree') == mapping_provenance.get('source_manifest_desktop_root_tree'), 'pinned mapping and predecessor manifest tree disagree')
+    require(mapping_provenance.get('artifact_id') is not None and mapping_provenance.get('artifact_digest'), 'mapping must originate from a verified predecessor artifact')
 
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
     if any(path.startswith('source/packages/agent-kv/') for path in new_by_path):
@@ -1913,12 +1845,8 @@ def audit_receipt() -> None:
         headers={'Accept': 'application/vnd.github+json', 'Authorization': 'Bearer ' + token,
                  'User-Agent': 'Fabushi-Android-Audit-Receipt', 'X-GitHub-Api-Version': '2022-11-28'},
     )
-    try:
-        with urlopen(req, timeout=60) as response:
-            artifact_bytes = response.read()
-    except HTTPError as error:
-        raise RuntimeError('predecessor artifact download failed: HTTP ' + str(error.code)) from None
-    require(artifact_bytes.startswith(b'PK\\x03\\x04'), 'predecessor download is not a ZIP artifact')
+    artifact_bytes = _download_predecessor_bytes(artifact_id, token)
+    require(artifact_bytes.startswith(b'PK\x03\x04'), 'predecessor download is not a ZIP artifact')
     actual_digest = 'sha256:' + hashlib.sha256(artifact_bytes).hexdigest()
     require(actual_digest == expected_digest, 'predecessor artifact SHA-256 mismatch: expected '
             + expected_digest + ', got ' + actual_digest)
@@ -1952,7 +1880,7 @@ def audit_receipt() -> None:
     responsibility_rows = responsibility.get('responsibilities', [])
     source_paths = [row.get('source_path') for row in source_rows]
     responsibility_ids = [row.get('responsibility_id') for row in responsibility_rows]
-    require(len(source_paths) == len(set(source_paths)) == 8258, 'receipt requires 8258 unique source_path values')
+    require(len(source_paths) == len(set(source_paths)) == EXPECTED_TRACKED_NON_TREE_COUNT, 'receipt requires 8260 unique current source_path values')
     require(len(responsibility_ids) == len(set(responsibility_ids)) == 306, 'receipt requires 306 unique responsibility IDs')
     rejected_path = OUT / 'rejected-android-targets.json'
     require(rejected_path.is_file(), 'rejected target diagnostics missing')
@@ -2001,7 +1929,7 @@ def audit_receipt() -> None:
         'responsibility_target_disposition_audit': target_rows,
     }
     output = Path(runner_temp) / 'android-port-audit-receipt.json'
-    output.write_text(json.dumps(receipt_doc, ensure_ascii=False, sort_keys=True, indent=2) + '\\n', encoding='utf-8')
+    output.write_text(json.dumps(receipt_doc, ensure_ascii=False, sort_keys=True, indent=2) + '\n', encoding='utf-8')
     print(json.dumps({'receipt_path': str(output), 'predecessor_artifact_sha256': actual_digest,
                       'authority_inputs': digests, 'unique_source_paths': len(set(source_paths)),
                       'unique_responsibility_ids': len(set(responsibility_ids)),
