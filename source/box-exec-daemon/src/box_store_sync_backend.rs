@@ -1,4 +1,5 @@
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
+use fabushi_constants::agent_store_ids::is_agent_store_source_id;
 use serde::Deserialize;
 
 use crate::server::{
@@ -46,6 +47,11 @@ impl BoxStoreSyncRequest {
             ));
         }
         validate_bounded("store id", &parsed.store_id, MAX_STORE_ID_BYTES)?;
+        if !is_agent_store_source_id(&parsed.store_id) {
+            return Err(ExecutionError::InvalidRequest(
+                "box.store.sync store id is not a canonical Agent Store source id".into(),
+            ));
+        }
         if let Some(etag) = parsed.base_manifest_etag.as_deref() {
             validate_bounded("manifest etag", etag, MAX_ETAG_BYTES)?;
         }
@@ -208,7 +214,7 @@ mod tests {
             operation_id: "operation-1".into(),
             capability_id: BOX_STORE_SYNC_CAPABILITY.into(),
             input_json: format!(
-                r#"{{"version":1,"action":"{action}","storeId":"store-a","baseManifestEtag":"etag-1"}}"#
+                r#"{{"version":1,"action":"{action}","storeId":"123e4567-e89b-42d3-a456-426614174000","baseManifestEtag":"etag-1"}}"#
             ),
             timeout_ms: 120_000,
         }
@@ -244,12 +250,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_noncanonical_agent_store_source_id_before_executor() {
+        let mut backend = BoxStoreSyncBackend::new(RecordingExecutor::default());
+        let mut invalid = request("snapshot");
+        invalid.input_json = r#"{"version":1,"action":"snapshot","storeId":"store-a"}"#.into();
+        assert!(matches!(
+            backend.start(&identity(), &invalid),
+            Err(ExecutionError::InvalidRequest(_))
+        ));
+        assert!(backend.executor.starts.is_empty());
+    }
+
+    #[test]
     fn malformed_version_store_or_etag_fail_closed() {
         let mut backend = BoxStoreSyncBackend::new(RecordingExecutor::default());
 
         let mut wrong_version = request("snapshot");
         wrong_version.input_json =
-            r#"{"version":2,"action":"snapshot","storeId":"store-a"}"#.into();
+            r#"{"version":2,"action":"snapshot","storeId":"123e4567-e89b-42d3-a456-426614174000"}"#.into();
         assert!(matches!(
             backend.start(&identity(), &wrong_version),
             Err(ExecutionError::InvalidRequest(_))
@@ -265,7 +283,7 @@ mod tests {
 
         let mut control_etag = request("snapshot");
         control_etag.input_json =
-            "{\"version\":1,\"action\":\"snapshot\",\"storeId\":\"store-a\",\"baseManifestEtag\":\"bad\\nvalue\"}".into();
+            "{\"version\":1,\"action\":\"snapshot\",\"storeId\":\"123e4567-e89b-42d3-a456-426614174000\",\"baseManifestEtag\":\"bad\\nvalue\"}".into();
         assert!(matches!(
             backend.start(&identity(), &control_etag),
             Err(ExecutionError::InvalidRequest(_))

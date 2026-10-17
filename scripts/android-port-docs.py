@@ -155,6 +155,48 @@ AGENT_KV_SOURCE_SPECS = {
 AGENT_KV_SOURCE_SPEC_BY_PATH = AGENT_KV_SOURCE_SPECS
 
 
+AGENT_STORE_IDS_SOURCE_PATH = 'source/packages/constants/agent-store-ids.ts'
+AGENT_STORE_IDS_RESPONSIBILITY_ID = 'REMOTE-BOX-STORE-SYNC-ANDROID-001'
+AGENT_STORE_IDS_PRODUCTION_STEP = 'Verify exact-HEAD agent-store id production owner'
+AGENT_STORE_IDS_TEST_STEP = 'Test exact-HEAD agent-store id production owner'
+AGENT_STORE_IDS_SOURCE_SPEC = {
+    'symbols': [
+        'parseUserAgentStoreSourceId',
+        'parseTeamAgentStoreSourceId',
+        'isValidBareUuid',
+        'isCloudAgentStoreId',
+        'isAgentStoreId',
+        'isAgentStoreSourceId',
+        'isAgentStoreShareMountKey',
+    ],
+    'source_owner': (
+        'Desktop canonical Agent Store identifier contract consumed by agent-store-sync paths, '
+        'summary metrics and token mint targeting, with the shipping Rust BoxStoreSync owner '
+        'enforcing the same bare-UUID/cloud-source subset'
+    ),
+    'android_owner': (
+        'Existing fabushi-constants Agent Store identifier contract consumed directly by the '
+        'existing Rust Host durable BoxStore journal, typed Remote Runner BoxStore service and '
+        'external RemoteBoxStoreBackend; no second store or sync owner'
+    ),
+    'android_targets': [
+        'source/packages/constants/src/agent_store_ids.rs',
+        'source/host/src/remote_box_store_sync.rs',
+        'source/box-exec-daemon/src/box_store_sync_backend.rs',
+        'source/box-exec-daemon/src/box_store_backend.rs',
+    ],
+    'production_target': 'source/box-exec-daemon/src/box_store_backend.rs',
+    'test_target': 'source/host/src/remote_box_store_sync.rs',
+    'focused_tests': [
+        'source/packages/constants/src/agent_store_ids.rs::tests::validates_store_identifiers_fail_closed',
+        'source/host/src/remote_box_store_sync.rs::tests::store_id_uses_canonical_agent_store_source_contract',
+        'source/box-exec-daemon/src/box_store_sync_backend.rs::tests::rejects_noncanonical_agent_store_source_id_before_executor',
+        'source/box-exec-daemon/src/box_store_backend.rs::tests::store_id_must_match_canonical_agent_store_source_contract',
+    ],
+    'disposition': 'android-adapted',
+}
+
+
 BACKGROUND_COMPLETION_RESPONSIBILITY_ID = 'AGENT-GENERATED-SUBAGENT-001'
 BACKGROUND_COMPLETION_PRODUCTION_STEP = 'Verify exact-HEAD background completion production owner'
 BACKGROUND_COMPLETION_TEST_STEP = 'Test exact-HEAD background completion production owner'
@@ -2072,6 +2114,75 @@ def load_predecessor_responsibility_mapping(responsibility_path: Path) -> tuple[
     return _merge_responsibility_sources(candidate,predecessor),source_rows,'current-responsibility-ledger+pin-predecessor-coverage',provenance
 
 
+def _ensure_agent_store_ids_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach the canonical Agent Store source-id contract to the existing BoxStore owner."""
+    source_object = new_by_path.get(AGENT_STORE_IDS_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop Agent Store id constant has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == AGENT_STORE_IDS_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'Agent Store id semantic mapping requires exactly one '
+        + AGENT_STORE_IDS_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(AGENT_STORE_IDS_SOURCE_PATH, {})
+    source.update({
+        'path': AGENT_STORE_IDS_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(AGENT_STORE_IDS_SOURCE_SPEC['symbols']),
+        'focused_tests': list(AGENT_STORE_IDS_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(AGENT_STORE_IDS_SOURCE_SPEC['android_targets']),
+        'source_owner': AGENT_STORE_IDS_SOURCE_SPEC['source_owner'],
+        'android_owner': AGENT_STORE_IDS_SOURCE_SPEC['android_owner'],
+    })
+    existing_sources[AGENT_STORE_IDS_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda value: value.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in AGENT_STORE_IDS_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Desktop Agent Store source-id parsing is semantically mapped to the existing BoxStore '
+        'owner. Android reuses the shared Rust constants contract at Host and Remote Runner '
+        'admission boundaries instead of adding another canonical Agent Store owner.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
 def _ensure_constants_composer_semantic_mapping(
     responsibilities: list[dict],
     new_by_path: dict[str, dict],
@@ -2808,6 +2919,8 @@ def merge_responsibility_mapping(
         _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
     if any(path in new_by_path for path in BACKGROUND_COMPLETION_SOURCE_SPECS):
         _ensure_background_completion_semantic_mapping(responsibilities, new_by_path, current)
+    if AGENT_STORE_IDS_SOURCE_PATH in new_by_path:
+        _ensure_agent_store_ids_semantic_mapping(responsibilities, new_by_path, current)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_constants_composer_semantic_mapping(responsibilities, new_by_path, current)
     if STRUCTURED_LOG_CONSTANT_SOURCE_PATH in new_by_path:
@@ -3173,6 +3286,80 @@ def merge_responsibility_mapping(
                 file=sys.stderr,
             )
 
+    if AGENT_STORE_IDS_SOURCE_PATH in new_by_path:
+        agent_store_ids_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == AGENT_STORE_IDS_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = agent_store_ids_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            agent_store_ids_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if AGENT_STORE_IDS_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        agent_store_ids_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=AGENT_STORE_IDS_PRODUCTION_STEP,
+            test_step_name=AGENT_STORE_IDS_TEST_STEP,
+            evidence_label='agent-store id',
+        )
+        if agent_store_ids_evidence is not None:
+            production_target = AGENT_STORE_IDS_SOURCE_SPEC['production_target']
+            test_target = AGENT_STORE_IDS_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'Agent Store id evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [AGENT_STORE_IDS_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': agent_store_ids_evidence['workflow_name'],
+                'workflow_id': agent_store_ids_evidence['workflow_id'],
+                'workflow_path': agent_store_ids_evidence['workflow_path'],
+                'workflow_event': agent_store_ids_evidence['workflow_event'],
+                'workflow_repository': agent_store_ids_evidence['workflow_repository'],
+                'workflow_run_id': agent_store_ids_evidence['workflow_run_id'],
+                'workflow_job_name': agent_store_ids_evidence['workflow_job_name'],
+                'workflow_job_id': agent_store_ids_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': agent_store_ids_evidence['workflow_job_run_attempt'],
+                'run_attempt': agent_store_ids_evidence['run_attempt'],
+                'run_conclusion': agent_store_ids_evidence['run_conclusion'],
+                'result': 'passed',
+            }
+            agent_store_ids_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': agent_store_ids_evidence['production_step_name'],
+                'workflow_step_number': agent_store_ids_evidence['production_step_number'],
+                'evidence_ref': production_target + '#canonical-agent-store-source-id-admission',
+            })
+            agent_store_ids_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': agent_store_ids_evidence['test_step_name'],
+                'workflow_step_number': agent_store_ids_evidence['test_step_number'],
+                'evidence_ref': test_target + '#canonical-agent-store-source-id-focused-tests',
+                'focused_tests': list(AGENT_STORE_IDS_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head agent-store id evidence; '
+                'Agent Store id package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
+
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         composer_responsibility = next(
             item for item in responsibilities
@@ -3413,6 +3600,8 @@ def merge_responsibility_mapping(
             row['disposition'] = agent_kv_spec['disposition']
         elif path in BACKGROUND_COMPLETION_SOURCE_SPECS:
             row['disposition'] = BACKGROUND_COMPLETION_SOURCE_SPECS[path]['disposition']
+        elif path == AGENT_STORE_IDS_SOURCE_PATH:
+            row['disposition'] = AGENT_STORE_IDS_SOURCE_SPEC['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
             row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
         elif path == STRUCTURED_LOG_CONSTANT_SOURCE_PATH:

@@ -2,6 +2,7 @@ use crate::host_runner_composition::AuthenticatedRemoteHostRunner;
 use crate::remote_execution::RemoteExecutionState;
 use fabushi_android_box_exec_daemon::{RemoteExecutionContext, RemoteExecutionTransport};
 use fabushi_android_shared::{ExecutionError, ExecutionRequest, ExecutionResult};
+use fabushi_constants::agent_store_ids::is_agent_store_source_id;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -100,6 +101,9 @@ impl RemoteBoxStoreSyncRecord {
         validate_identity("account fence", &self.account_fence)?;
         validate_identity("device", &self.device_id)?;
         validate_bounded("store id", &self.store_id, MAX_STORE_ID_BYTES)?;
+        if !is_agent_store_source_id(&self.store_id) {
+            return Err("box-store sync store id is not a canonical Agent Store source id".into());
+        }
         if self.account_epoch == 0 {
             return Err("box-store sync account epoch must be positive".into());
         }
@@ -557,12 +561,30 @@ mod tests {
             "account-a:epoch-7",
             7,
             "device-a",
-            "store-a",
+            "123e4567-e89b-42d3-a456-426614174000",
             action,
             Some("etag-1".into()),
             1,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn store_id_uses_canonical_agent_store_source_contract() {
+        let valid = record(RemoteBoxStoreSyncAction::Snapshot, "op-valid", "req-valid");
+        assert!(valid.validate().is_ok());
+        assert!(RemoteBoxStoreSyncRecord::prepared(
+            "op-invalid",
+            "req-invalid",
+            "account-a:epoch-7",
+            7,
+            "device-a",
+            "store-a",
+            RemoteBoxStoreSyncAction::Snapshot,
+            None,
+            1,
+        )
+        .is_err());
     }
 
     #[test]

@@ -15,6 +15,7 @@ use crate::server::{
     RemoteExecutionBackend, RemoteRequestIdentity,
 };
 use fabushi_android_shared::{ExecutionError, ExecutionRequest};
+use fabushi_constants::agent_store_ids::is_agent_store_source_id;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -1299,7 +1300,8 @@ fn validate_manifest_entries(entries: &[ManifestEntry]) -> Result<(), ActionErro
 }
 
 fn validate_store_id(store_id: &str) -> Result<(), ExecutionError> {
-    if store_id.is_empty()
+    if !is_agent_store_source_id(store_id)
+        || store_id.is_empty()
         || store_id.len() > MAX_STORE_ID_BYTES
         || store_id == "."
         || store_id == ".."
@@ -1571,7 +1573,7 @@ mod tests {
             input_json: serde_json::json!({
                 "version": 1,
                 "action": action,
-                "storeId": "store-a",
+                "storeId": "123e4567-e89b-42d3-a456-426614174000",
                 "baseManifestEtag": base,
             })
             .to_string(),
@@ -1747,7 +1749,7 @@ mod tests {
                 .start(&identity("op-ignore", "req-ignore"), &request("op-ignore", "snapshot", None))
                 .unwrap(),
         );
-        let (manifest, _) = backend.load_manifest("store-a").unwrap();
+        let (manifest, _) = backend.load_manifest("123e4567-e89b-42d3-a456-426614174000").unwrap();
         let paths = manifest
             .unwrap()
             .entries
@@ -1817,6 +1819,14 @@ mod tests {
     }
 
     #[test]
+    fn store_id_must_match_canonical_agent_store_source_contract() {
+        assert!(validate_store_id("123e4567-e89b-42d3-a456-426614174000").is_ok());
+        assert!(validate_store_id("bc-us-123e4567-e89b-42d3-a456-426614174000").is_ok());
+        assert!(validate_store_id("store-a").is_err());
+        assert!(validate_store_id("store-123e4567-e89b-42d3-a456-426614174000").is_err());
+    }
+
+    #[test]
     fn store_id_and_manifest_paths_fail_closed() {
         let config = config("validation");
         let root = config.store_root.parent().unwrap().to_path_buf();
@@ -1835,7 +1845,7 @@ mod tests {
     #[test]
     fn hydrate_accepts_frozen_desktop_v2_manifest_on_shipping_backend() {
         let config = config("frozen-v2");
-        let store = config.store_root.join("store-a");
+        let store = config.store_root.join("123e4567-e89b-42d3-a456-426614174000");
         fs::create_dir_all(store.join("blobs")).unwrap();
         let payload = b"desktop-v2-copy-in\n";
         let digest = sha256_bytes(payload);
@@ -1909,7 +1919,7 @@ mod tests {
         let payload = b"legacy-agent-store\n";
         write_frozen_file_entry(
             &legacy_root,
-            "store-a",
+            "123e4567-e89b-42d3-a456-426614174000",
             "home/box/sand-data/agents/agent-a/store.db",
             payload,
             true,
@@ -1939,7 +1949,7 @@ mod tests {
             payload
         );
         let primary: serde_json::Value = serde_json::from_slice(
-            &fs::read(config.store_root.join("store-a/manifest.json")).unwrap(),
+            &fs::read(config.store_root.join("123e4567-e89b-42d3-a456-426614174000/manifest.json")).unwrap(),
         )
         .unwrap();
         assert_eq!(primary["fullyHydrated"], false);
@@ -1955,12 +1965,12 @@ mod tests {
 
         write_frozen_file_entry(
             &config.store_root,
-            "store-a",
+            "123e4567-e89b-42d3-a456-426614174000",
             "home/box/sand-data/agents/agent-a/store.db",
             b"a",
             false,
         );
-        let legacy_store = legacy_root.join("store-a");
+        let legacy_store = legacy_root.join("123e4567-e89b-42d3-a456-426614174000");
         fs::create_dir_all(legacy_store.join("blobs")).unwrap();
         let digest_a = sha256_bytes(b"a");
         let digest_b = sha256_bytes(b"b");
@@ -2012,14 +2022,14 @@ mod tests {
 
         write_frozen_file_entry(
             &config.store_root,
-            "store-a",
+            "123e4567-e89b-42d3-a456-426614174000",
             "home/box/sand-data/agents/agent-a/store.db",
             b"a",
             false,
         );
         write_frozen_file_entry(
             &legacy_root,
-            "store-a",
+            "123e4567-e89b-42d3-a456-426614174000",
             "workspace/readme.txt",
             b"legacy",
             true,
@@ -2045,7 +2055,7 @@ mod tests {
         use flate2::{Compression, write::GzEncoder};
         use std::io::Write as _;
         let config = config("frozen-pack-only");
-        let store = config.store_root.join("store-a");
+        let store = config.store_root.join("123e4567-e89b-42d3-a456-426614174000");
         fs::create_dir_all(store.join("packs")).unwrap();
         let payload = b"packed-desktop-member\n";
         let digest = sha256_bytes(payload);
@@ -2073,7 +2083,7 @@ mod tests {
     #[test]
     fn frozen_v2_missing_pack_falls_back_to_loose_blob() {
         let config=config("frozen-pack-fallback");
-        let store=config.store_root.join("store-a");
+        let store=config.store_root.join("123e4567-e89b-42d3-a456-426614174000");
         fs::create_dir_all(store.join("blobs")).unwrap();
         fs::create_dir_all(store.join("packs")).unwrap();
         let payload=b"loose-fallback\n";

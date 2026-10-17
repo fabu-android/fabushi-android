@@ -78,6 +78,20 @@ jobs:
           cargo test -p fabushi-mahayana-host --test android_background_completion_shipping_contract -- --nocapture
           cargo test -p fabushi-android-host-jni tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host -- --exact
 
+      - name: Verify exact-HEAD agent-store id production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::agent_store_ids::is_agent_store_source_id' source/host/src/remote_box_store_sync.rs
+          grep -Fq 'fabushi_constants::agent_store_ids::is_agent_store_source_id' source/box-exec-daemon/src/box_store_sync_backend.rs
+          grep -Fq 'fabushi_constants::agent_store_ids::is_agent_store_source_id' source/box-exec-daemon/src/box_store_backend.rs
+      - name: Test exact-HEAD agent-store id production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants agent_store_ids::tests::validates_store_identifiers_fail_closed -- --exact
+          cargo test -p fabushi-mahayana-host remote_box_store_sync::tests::store_id_uses_canonical_agent_store_source_contract -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_sync_backend::tests::rejects_noncanonical_agent_store_source_id_before_executor -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::store_id_must_match_canonical_agent_store_source_contract -- --exact
       - name: Verify exact-HEAD constants composer production owner
         run: |
           set -euo pipefail
