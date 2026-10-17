@@ -1219,6 +1219,43 @@ def merge_responsibility_mapping(
     has_agent_kv_inventory = any(path in new_by_path for path in AGENT_KV_SOURCE_SPECS)
     rejected_android_targets = []
     source_targets_by_path: dict[str, list[str]] = {}
+    ids = {item.get('responsibility_id') for item in responsibilities}
+    require(len(ids) == len(responsibilities),
+            'responsibility mapping contains duplicate responsibility IDs')
+    for item in responsibilities:
+        rid = item['responsibility_id']
+        raw_targets = item.get('android_target')
+        filtered_targets, rejected = _filter_android_targets(raw_targets, tracked_android_paths)
+        if raw_targets is not None and raw_targets != filtered_targets:
+            item['android_target'] = filtered_targets
+        if rejected:
+            item['android_target_rejections'] = rejected
+            rejected_android_targets.extend({
+                'responsibility_id': rid,
+                'target': entry['target'],
+                'reason': entry['reason'],
+            } for entry in rejected)
+            note = (
+                'Rejected Android target labels or paths absent from the current tracked Android file tree; '
+                'see generated/rejected-android-targets.json. Rejections are diagnostic and are not parity evidence.'
+            )
+            notes = item.get('notes')
+            if isinstance(notes, str):
+                if note not in notes:
+                    item['notes'] = notes + ' ' + note
+            elif isinstance(notes, list):
+                if note not in notes:
+                    notes.append(note)
+            else:
+                item['notes'] = note
+        else:
+            item.pop('android_target_rejections', None)
+    targets_by_rid = {
+        item['responsibility_id']: _real_android_targets(
+            item.get('android_target'), tracked_android_paths
+        )
+        for item in responsibilities
+    }
     if has_agent_kv_inventory:
         for path, spec in AGENT_KV_SOURCE_SPECS.items():
             missing_targets = [target for target in spec['android_targets'] if target not in tracked_android_paths]
@@ -1234,43 +1271,7 @@ def merge_responsibility_mapping(
                     'target': rejected['target'],
                     'reason': rejected['reason'],
                 })
-        ids = {item.get('responsibility_id') for item in responsibilities}
-        require(len(ids) == len(responsibilities),
-                'responsibility mapping contains duplicate responsibility IDs')
-        for item in responsibilities:
-            rid = item['responsibility_id']
-            raw_targets = item.get('android_target')
-            filtered_targets, rejected = _filter_android_targets(raw_targets, tracked_android_paths)
-            if raw_targets is not None and raw_targets != filtered_targets:
-                item['android_target'] = filtered_targets
-            if rejected:
-                item['android_target_rejections'] = rejected
-                rejected_android_targets.extend({
-                    'responsibility_id': rid,
-                    'target': entry['target'],
-                    'reason': entry['reason'],
-                } for entry in rejected)
-                note = (
-                    'Rejected Android target labels or paths absent from the current tracked Android file tree; '
-                    'see generated/rejected-android-targets.json. Rejections are diagnostic and are not parity evidence.'
-                )
-                notes = item.get('notes')
-                if isinstance(notes, str):
-                    if note not in notes:
-                        item['notes'] = notes + ' ' + note
-                elif isinstance(notes, list):
-                    if note not in notes:
-                        notes.append(note)
-                else:
-                    item['notes'] = note
-            else:
-                item.pop('android_target_rejections', None)
-        targets_by_rid = {
-            item['responsibility_id']: _real_android_targets(
-                item.get('android_target'), tracked_android_paths
-            )
-            for item in responsibilities
-        }
+
 
         ci_evidence = _latest_exact_head_android_ci_evidence(android['android_pr_head_sha'])
         agent_kv_responsibility = next(
