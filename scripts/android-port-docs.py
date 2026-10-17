@@ -1115,10 +1115,10 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
         isinstance(tree_entries, list) and len(tree_entries) == PREDECESSOR_TREE_ENTRY_COUNT,
         f'predecessor recursive tree must contain {PREDECESSOR_TREE_ENTRY_COUNT} entries',
     )
-    canonical_tree_objects = [
+    canonical_tree_objects = sorted(
         (item.get('path'), item.get('sha'), item.get('mode'), item.get('type'))
         for item in tree_entries if isinstance(item, dict)
-    ]
+    )
     for duplicate_tree_doc in tree_docs[1:]:
         require(
             duplicate_tree_doc.get('sha') == PREDECESSOR_DESKTOP_TREE
@@ -1131,10 +1131,10 @@ def _load_pinned_responsibility_mapping() -> tuple[dict, dict[str, dict], dict]:
             and len(duplicate_entries) == PREDECESSOR_TREE_ENTRY_COUNT,
             'duplicate predecessor recursive tree evidence has the wrong entry count',
         )
-        duplicate_objects = [
+        duplicate_objects = sorted(
             (item.get('path'), item.get('sha'), item.get('mode'), item.get('type'))
             for item in duplicate_entries if isinstance(item, dict)
-        ]
+        )
         require(
             duplicate_objects == canonical_tree_objects,
             'predecessor recursive tree evidence files disagree on path/object/mode/type',

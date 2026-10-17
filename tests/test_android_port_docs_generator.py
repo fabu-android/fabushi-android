@@ -128,6 +128,9 @@ def pinned_predecessor_zip_bytes(module, responsibilities=2, anchors=1):
         archive.writestr("docs/android-port/authority/source-inventory-ledger.jsonl", ledger_text)
         archive.writestr("docs/android-port/authority/responsibility-ledger.json", json.dumps(responsibility))
         archive.writestr("docs/android-port/generated/desktop-recursive-api.json", json.dumps(tree))
+        complete_tree = dict(tree)
+        complete_tree["tree"] = list(reversed(tree["tree"]))
+        archive.writestr("docs/android-port/generated/desktop-complete-tree.json", json.dumps(complete_tree))
     return output.getvalue(), {
         "predecessor_commit": predecessor_commit, "predecessor_tree": predecessor_tree,
         "current_commit": current_commit, "current_tree": current_tree,
