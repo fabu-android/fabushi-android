@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "sourceAuthority": {
+    "repository": "bhrumom/fabushi-desktop",
+    "commit": "3bc92400826cc4ca7ac665b467708e22261edc61",
+    "path": "contracts/automation/cross-platform-journeys.json"
+  },
+  "platform": "android",
+  "features": [
+    {
+      "id": "auth.login",
+      "label": "账号登录",
+      "steps": [
+        {
+          "action": "oauthLogin",
+          "provider": "google",
+          "androidOwner": "typed auth coordinator + system browser"
+        }
+      ]
+    },
+    {
+      "id": "runtime.boot",
+      "label": "Runtime 启动",
+      "steps": [
+        {
+          "action": "expectReady",
+          "androidOwner": "AndroidCoordinatorRuntime"
+        }
+      ]
+    },
+    {
+      "id": "chat.send",
+      "label": "聊天发送与响应",
+      "steps": [
+        {
+          "action": "sendChat",
+          "text": "验证极速自动化测试",
+          "expectedReply": "收到：验证极速自动化测试",
+          "androidOwner": "AndroidJsonHost + ProductionTurnAgentOwner"
+        }
+      ]
+    },
+    {
+      "id": "marketplace.install",
+      "label": "Marketplace 安装",
+      "steps": [
+        {
+          "action": "installMiniApp",
+          "miniAppId": "global-dharma",
+          "androidOwner": "MarketplaceViewModel + Host plugin runtime"
+        }
+      ]
+    },
+    {
+      "id": "miniapp.open",
+      "label": "MiniApp 打开",
+      "steps": [
+        {
+          "action": "openMiniApp",
+          "miniAppId": "global-dharma",
+          "androidOwner": "MiniAppWebMcpSurface"
+        }
+      ]
+    },
+    {
+      "id": "capability.approval",
+      "label": "敏感能力审批",
+      "steps": [
+        {
+          "action": "approveCapability",
+          "miniAppId": "global-dharma",
+          "capability": "microphone.request",
+          "decision": "allow-once",
+          "androidOwner": "CapabilityBroker"
+        }
+      ]
+    },
+    {
+      "id": "operation.interrupt",
+      "label": "长任务中断",
+      "steps": [
+        {
+          "action": "interruptOperation",
+          "label": "长任务测试",
+          "androidOwner": "AndroidCoordinatorRuntime -> AndroidJsonHost"
+        }
+      ]
+    },
+    {
+      "id": "session.clear",
+      "label": "安全会话清除",
+      "steps": [
+        {
+          "action": "clearSession",
+          "androidOwner": "typed auth coordinator"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,339 @@
+name: Android migration documentation
+on:
+  push:
+    branches:
+      - 'spec/grok-bot-018-android-parity-20260922'
+    paths:
+      - 'source/**'
+      - 'native/**'
+      - 'frontend/**'
+      - 'contracts/**'
+      - 'projects/**'
+      - 'desktop/**'
+      - 'tests/**'
+      - 'scripts/android-port-docs.py'
+      - 'scripts/check_grok_android_parity.py'
+      - 'scripts/test-android-port-*.py'
+      - '.github/workflows/android-port-docs.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.gradle'
+      - 'build.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
+  pull_request:
+    branches:
+      - 'main'
+    paths:
+      - 'source/**'
+      - 'native/**'
+      - 'frontend/**'
+      - 'contracts/**'
+      - 'projects/**'
+      - 'desktop/**'
+      - 'tests/**'
+      - 'scripts/android-port-docs.py'
+      - 'scripts/check_grok_android_parity.py'
+      - 'scripts/test-android-port-*.py'
+      - '.github/workflows/android-port-docs.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.gradle'
+      - 'build.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  # Source authority is exact-head evidence: never let a stale SHA hold the queue while the latest PR HEAD waits.
+  group: android-port-docs-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+jobs:
+  source-inventory:
+    name: Pinned Desktop complete source inventory
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact Android checkout provenance
+        env:
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ANDROID_PR_HEAD_SHA"
+      - name: Run Android source-authority generator regression
+        run: python3 -m unittest tests.test_android_port_docs_generator
+      - name: Rebaseline persistent source authority in Actions worktree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '3600'
+          ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          ANDROID_PR_BASE_REF: 'main'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
+        run: python3 scripts/android-port-docs.py rebaseline
+      - name: Enumerate source and verify authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '3600'
+          ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          ANDROID_PR_BASE_REF: 'main'
+        run: python3 scripts/android-port-docs.py inventory
+      - name: Verify generated exact authority bookkeeping
+        run: |
+          set -euo pipefail
+          EXPECTED_ANDROID_HEAD="$(git rev-parse HEAD)"
+          test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8272
+          python3 - "$EXPECTED_ANDROID_HEAD" <<'PY'
+          import hashlib, json, sys
+          from pathlib import Path
+          expected=sys.argv[1]
+          m=json.loads(Path('docs/android-port/authority/source-inventory-manifest.json').read_text(encoding='utf-8'))
+          ledger_bytes=Path('docs/android-port/authority/source-inventory-ledger.jsonl').read_bytes()
+          rows=[json.loads(line) for line in ledger_bytes.decode('utf-8').splitlines() if line.strip()]
+          assert hashlib.sha256(ledger_bytes).hexdigest()==m['ledger_sha256']
+          assert m['desktop_commit']=='ca618ae19add78872fcac7cb86bf8754a4ad7a55'
+          assert m['source_commit']==m['desktop_commit']
+          assert m['desktop_root_tree']=='b0337f9bd17e5dc0c7165e89331aaf2748f52a74'
+          assert m['tracked_non_tree_entries']==8272 and len(rows)==8272
+          assert m['tree_entries']==9427
+          for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
+            assert m[field]==expected, (field,m[field],expected)
+          assert len({row['source_path'] for row in rows})==8272
+          for row in rows:
+            assert row['source_commit']==m['desktop_commit']
+            assert row['source_blob_sha'] and row['source_mode'] and row['source_type']
+            assert row['android_pr_head_sha']==expected
+            assert row['android_tested_checkout_sha']==expected
+            assert row['workflow_sha']==expected
+            assert row['implementation_status']=='unreviewed'
+            assert row['verification_status']=='not-verified'
+          r=json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
+          assert r['source_commit']==m['desktop_commit']
+          for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
+            assert r[field]==expected, (field,r[field],expected)
+          responsibilities=r.get('responsibilities',[])
+          ids=[item.get('responsibility_id') for item in responsibilities]
+          assert len(responsibilities)==306 and len(set(ids))==306
+          for item in responsibilities:
+            assert item['source_commit']==m['desktop_commit']
+            assert item['android_head_at_update']==expected
+            assert item['implementation_status']=='unreviewed'
+            assert item['verification_status']=='not-verified'
+            for source in item.get('desktop_sources',[]):
+              row=next(row for row in rows if row['source_path']==source['path'])
+              assert source['source_commit']==m['desktop_commit']
+              assert source['blob_sha']==row['source_blob_sha']
+              assert source['source_mode']==row['source_mode']
+              assert source['source_type']==row['source_type']
+          coverage=json.loads(Path('docs/android-port/generated/packages-semantic-coverage.json').read_text(encoding='utf-8'))
+          package_rows=[row for row in rows if row['source_path'].startswith('source/packages/')]
+          assert len(package_rows)==852
+          assert coverage['expected_source_rows']==852 and coverage['observed_source_rows']==852
+          assert coverage['complete_rows'] + coverage['strict_incomplete_rows'] == 852
+          assert coverage['strict_incomplete_rows'] == sum(row.get('package_semantic_coverage_status') == 'incomplete' for row in package_rows)
+          assert coverage['complete_rows'] == sum(row.get('package_semantic_coverage_status') == 'complete' for row in package_rows)
+          assert all(row.get('package_semantic_coverage_status') in ('complete','incomplete') for row in package_rows)
+          assert coverage['status'] == ('passed' if coverage['strict_incomplete_rows'] == 0 else 'incomplete')
+          for key in ('semantic_responsibility_rows','real_source_owner_rows','real_android_owner_rows','valid_android_target_rows','valid_disposition_rows'):
+            assert 0 <= coverage[key] <= 852, (key,coverage[key])
+          rejected=json.loads(Path('docs/android-port/generated/rejected-android-targets.json').read_text(encoding='utf-8'))
+          assert rejected['count']==len(rejected['rejected_targets'])
+          assert rejected['status']==('incomplete' if rejected['count'] else 'passed')
+          agent_kv_paths = [
+            'source/packages/agent-kv/agent-store.ts',
+            'source/packages/agent-kv/blob-store.ts',
+            'source/packages/agent-kv/blob-not-found-error.ts',
+            'source/packages/agent-kv/reference.ts',
+            'source/packages/agent-kv/serde.ts',
+            'source/packages/agent-kv/subagent-states.ts',
+            'source/packages/agent-kv/typed-blob-store.ts',
+          ]
+          agent_kv_rows = {
+            row['source_path']: row for row in package_rows
+            if row['source_path'] in agent_kv_paths
+          }
+          assert set(agent_kv_rows) == set(agent_kv_paths), sorted(set(agent_kv_paths) - set(agent_kv_rows))
+          coverage_gaps = {gap['source_path']: gap['reasons'] for gap in coverage.get('gaps', [])}
+          agent_kv_owner = next(item for item in responsibilities
+                                if item['responsibility_id'] == 'AGENT-RUN-LIFECYCLE-001')
+          for path, row in agent_kv_rows.items():
+            assert row['mapping_status'] == 'semantic', (path, row.get('mapping_status'))
+            assert row['responsibilities'] == ['AGENT-RUN-LIFECYCLE-001'], (path, row.get('responsibilities'))
+            assert row['disposition'] == 'android-adapted', (path, row.get('disposition'))
+            assert row['android_targets'], (path, 'missing Android targets')
+            assert row['package_semantic_coverage_status'] == 'complete', (path, row.get('package_semantic_coverage_reasons'))
+            assert path not in coverage_gaps, (path, coverage_gaps.get(path))
+            assert row['implementation_status'] == 'unreviewed'
+            assert row['verification_status'] == 'not-verified'
+            anchor = next(source for source in agent_kv_owner['desktop_sources'] if source['path'] == path)
+            assert anchor['source_commit'] == m['desktop_commit']
+            assert anchor['blob_sha'] == row['source_blob_sha']
+            assert anchor['source_mode'] == row['source_mode']
+            assert anchor['source_type'] == row['source_type']
+            assert anchor['focused_tests'] and anchor['android_targets']
+            for evidence_key, step_name in (
+              ('production_evidence', 'Build exact-HEAD agent-kv production owners'),
+              ('test_evidence', 'Test exact-HEAD agent-kv production owners'),
+            ):
+              candidates = [
+                evidence for evidence in agent_kv_owner.get(evidence_key, [])
+                if path in evidence.get('source_paths', [])
+              ]
+              assert any(
+                evidence.get('result') == 'passed'
+                and evidence.get('workflow_name') == 'Grok Android Architecture'
+                and evidence.get('workflow_id') == 364026685
+                and evidence.get('workflow_path') == '.github/workflows/grok-android-architecture.yml'
+                and evidence.get('workflow_event') == 'pull_request'
+                and evidence.get('workflow_repository') == 'fabu-android/fabushi-android'
+                and evidence.get('workflow_job_name') == 'agent-kv-exact-head-evidence'
+                and evidence.get('workflow_step_name') == step_name
+                and evidence.get('workflow_run_id')
+                and evidence.get('workflow_job_id')
+                and evidence.get('run_conclusion') == 'success'
+                and evidence.get('android_pr_head_sha') == expected
+                and evidence.get('android_tested_checkout_sha') == expected
+                and evidence.get('workflow_sha') == expected
+                and evidence.get('desktop_commit') == m['desktop_commit']
+                and evidence.get('source_commit') == m['desktop_commit']
+                and (evidence.get('evidence_ref') or '').split('#', 1)[0] in row['android_targets']
+                for evidence in candidates
+              ), (path, evidence_key, step_name)
+          agent_store_ids_path = 'source/packages/constants/agent-store-ids.ts'
+          agent_store_ids_row = next(row for row in package_rows if row['source_path'] == agent_store_ids_path)
+          assert agent_store_ids_row['mapping_status'] == 'semantic'
+          assert agent_store_ids_row['responsibilities'] == ['REMOTE-BOX-STORE-SYNC-ANDROID-001']
+          assert agent_store_ids_row['disposition'] == 'android-adapted'
+          assert agent_store_ids_row['package_semantic_coverage_status'] == 'complete', agent_store_ids_row.get('package_semantic_coverage_reasons')
+          assert agent_store_ids_path not in coverage_gaps, coverage_gaps.get(agent_store_ids_path)
+          agent_store_ids_owner = next(item for item in responsibilities
+                                       if item['responsibility_id'] == 'REMOTE-BOX-STORE-SYNC-ANDROID-001')
+          agent_store_ids_anchor = next(source for source in agent_store_ids_owner['desktop_sources']
+                                        if source['path'] == agent_store_ids_path)
+          assert agent_store_ids_anchor['source_commit'] == m['desktop_commit']
+          assert agent_store_ids_anchor['blob_sha'] == agent_store_ids_row['source_blob_sha']
+          assert agent_store_ids_anchor['focused_tests'] and agent_store_ids_anchor['android_targets']
+          for expected_target in (
+            'source/packages/constants/src/agent_store_ids.rs',
+            'source/host/src/remote_box_store_sync.rs',
+            'source/box-exec-daemon/src/box_store_sync_backend.rs',
+            'source/box-exec-daemon/src/box_store_backend.rs',
+          ):
+            assert expected_target in agent_store_ids_row['android_targets'], expected_target
+          for evidence_key, step_name in (
+            ('production_evidence', 'Verify exact-HEAD agent-store id production owner'),
+            ('test_evidence', 'Test exact-HEAD agent-store id production owner'),
+          ):
+            candidates = [
+              evidence for evidence in agent_store_ids_owner.get(evidence_key, [])
+              if agent_store_ids_path in evidence.get('source_paths', [])
+            ]
+            assert any(
+              evidence.get('result') == 'passed'
+              and evidence.get('workflow_name') == 'Grok Android Architecture'
+              and evidence.get('workflow_id') == 364026685
+              and evidence.get('workflow_path') == '.github/workflows/grok-android-architecture.yml'
+              and evidence.get('workflow_event') == 'pull_request'
+              and evidence.get('workflow_repository') == 'fabu-android/fabushi-android'
+              and evidence.get('workflow_job_name') == 'agent-kv-exact-head-evidence'
+              and evidence.get('workflow_step_name') == step_name
+              and evidence.get('workflow_run_id')
+              and evidence.get('workflow_job_id')
+              and evidence.get('run_conclusion') == 'success'
+              and evidence.get('android_pr_head_sha') == expected
+              and evidence.get('android_tested_checkout_sha') == expected
+              and evidence.get('workflow_sha') == expected
+              and evidence.get('desktop_commit') == m['desktop_commit']
+              and evidence.get('source_commit') == m['desktop_commit']
+              and (evidence.get('evidence_ref') or '').split('#', 1)[0] in agent_store_ids_row['android_targets']
+              for evidence in candidates
+            ), (agent_store_ids_path, evidence_key, step_name)
+          print(json.dumps({
+            'android_head':expected,
+            'desktop_commit':m['desktop_commit'],
+            'tree_entries':m['tree_entries'],
+            'tracked_non_tree_entries':m['tracked_non_tree_entries'],
+            'ledger_sha256':m['ledger_sha256'],
+            'responsibility_count':len(responsibilities),
+            'package_semantic_coverage':{k:v for k,v in coverage.items() if k!='gaps'},
+            'rejected_android_target_count':rejected['count'],
+          }, sort_keys=True))
+          PY
+      - name: Generate independent audit receipt in RUNNER_TEMP
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
+        run: python3 scripts/android-port-docs.py receipt
+      - name: Upload independent audit receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-audit-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/android-port-audit-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Package documentation and source evidence
+        if: always()
+        run: python3 scripts/android-port-docs.py bundle
+      - name: Upload source inventory and documentation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-source-and-docs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            docs/android-port/authority/baseline.json
+            docs/android-port/authority/source-inventory-manifest.json
+            docs/android-port/authority/source-inventory-ledger.jsonl
+            docs/android-port/authority/responsibility-ledger.json
+            docs/android-port/generated/
+            android-port-documentation.zip
+            android-port-documentation.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+  documentation-contract:
+    name: Documentation completeness and links
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Validate documentation completeness
+        run: python3 scripts/android-port-docs.py validate
+      - name: Assert documentation validation report exists
+        run: test -s docs/android-port/generated/docs-validation.json
+      - name: Upload documentation validation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-docs-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: docs/android-port/generated/docs-validation.json
+          if-no-files-found: error
+          retention-days: 30

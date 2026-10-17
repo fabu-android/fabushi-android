@@ -1,0 +1,6 @@
+{
+  "status": "passed",
+  "count": 0,
+  "rejected_targets": [],
+  "policy": "Rejected targets are retained for diagnosis and never count as Android parity evidence."
+}

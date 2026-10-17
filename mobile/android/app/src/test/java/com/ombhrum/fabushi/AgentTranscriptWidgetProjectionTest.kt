@@ -1,0 +1,140 @@
+package com.ombhrum.fabushi
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class AgentTranscriptWidgetProjectionTest {
+    private fun widget(
+        id: String,
+        agentId: String,
+        respondedValue: String? = null,
+        dismissed: Boolean = false,
+    ): JSONObject =
+        JSONObject()
+            .put("id", id)
+            .put("kind", "send-message")
+            .put("agentId", agentId)
+            .put(
+                "message",
+                JSONObject()
+                    .put("type", "widget")
+                    .put(
+                        "widget",
+                        JSONObject()
+                            .put("prompt", "Choose")
+                            .put("helpText", "Pick one")
+                            .put(
+                                "options",
+                                JSONArray()
+                                    .put(JSONObject().put("label", "Alpha").put("value", "a"))
+                                    .put(JSONObject().put("label", "Beta")),
+                            )
+                            .put("allowCustom", true)
+                            .put("dismissOnMoveOn", true),
+                    ),
+            )
+            .apply {
+                respondedValue?.let { put("respondedValue", it) }
+                if (dismissed) put("widgetDismissed", true)
+            }
+
+    @Test
+    fun projectsOnlyExplicitAgentWidgetScopeAndCanonicalSettlement() {
+        val entries = JSONArray()
+            .put(widget("w-a", "agent-a", respondedValue = "a"))
+            .put(widget("w-b", "agent-b"))
+            .put(widget("w-c", "agent-a", dismissed = true))
+        val projected = canonicalMobileTranscriptForAgent(entries, "agent-a")
+        assertEquals(listOf("w-a", "w-c"), projected.map { it.id })
+        val answered = projected.first().widget!!
+        assertEquals("Choose", answered.prompt)
+        assertEquals("Pick one", answered.helpText)
+        assertEquals(listOf("a", "Beta"), answered.options.map { it.value })
+        assertEquals("a", answered.respondedValue)
+        assertTrue(answered.allowCustom)
+        assertTrue(answered.dismissOnMoveOn)
+        assertTrue(projected.last().widget!!.dismissed)
+    }
+
+    @Test
+    fun zeroOptionWidgetRemainsValidAndBlankPromptFailsClosed() {
+        val customOnly = widget("w-a", "agent-a")
+        customOnly.getJSONObject("message")
+            .getJSONObject("widget")
+            .put("options", JSONArray())
+        val projectedCustomOnly = canonicalMobileTranscriptForAgent(
+            JSONArray().put(customOnly),
+            "agent-a",
+        )
+        assertEquals(1, projectedCustomOnly.size)
+        assertTrue(projectedCustomOnly.single().widget!!.options.isEmpty())
+
+        val malformed = widget("w-b", "agent-a")
+        malformed.getJSONObject("message")
+            .getJSONObject("widget")
+            .put("prompt", "   ")
+        val projectedMalformed = canonicalMobileTranscriptForAgent(
+            JSONArray().put(malformed),
+            "agent-a",
+        )
+        assertTrue(projectedMalformed.isEmpty())
+    }
+
+    @Test
+    fun unresolvedWidgetRemainsActionableProjectionOnlyUntilCanonicalReplyArrives() {
+        val unresolved = canonicalMobileTranscriptForAgent(
+            JSONArray().put(widget("w-a", "agent-a")),
+            "agent-a",
+        ).single().widget!!
+        assertEquals(null, unresolved.respondedValue)
+        assertFalse(unresolved.dismissed)
+
+        val settled = canonicalMobileTranscriptForAgent(
+            JSONArray().put(widget("w-a", "agent-a", respondedValue = "Beta")),
+            "agent-a",
+        ).single().widget!!
+        assertEquals("Beta", settled.respondedValue)
+    }
+    @Test
+    fun secretRequestProjectsWithoutSecretValueAndSettlesFromCanonicalFlag() {
+        val entry = JSONObject()
+            .put("id", "secret-a")
+            .put("kind", "send-message")
+            .put("agentId", "agent-a")
+            .put("secretProvided", false)
+            .put(
+                "message",
+                JSONObject()
+                    .put("type", "secret-request")
+                    .put(
+                        "secretRequest",
+                        JSONObject()
+                            .put("label", "Discord token")
+                            .put("description", "Connect this Agent to Discord")
+                            .put("value", "must-never-project")
+                            .put(
+                                "target",
+                                JSONObject()
+                                    .put("kind", "channel-credential")
+                                    .put("platform", "discord")
+                                    .put("field", "token"),
+                            ),
+                    ),
+            )
+        val projected = canonicalMobileTranscriptForAgent(JSONArray().put(entry), "agent-a").single()
+        assertEquals(MobileChatEntryKind.SECRET_REQUEST, projected.kind)
+        assertEquals("Discord token", projected.secretRequest!!.label)
+        assertEquals("Connect this Agent to Discord", projected.secretRequest!!.description)
+        assertFalse(projected.secretRequest!!.provided)
+        assertFalse(projected.toString().contains("must-never-project"))
+
+        entry.put("secretProvided", true)
+        val settled = canonicalMobileTranscriptForAgent(JSONArray().put(entry), "agent-a").single()
+        assertTrue(settled.secretRequest!!.provided)
+    }
+
+}

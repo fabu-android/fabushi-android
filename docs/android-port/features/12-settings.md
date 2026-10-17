@@ -1,0 +1,75 @@
+# 12 — 设置、通知、隐私、诊断与持续维护
+
+## Current authority
+
+bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+
+## 责任清单
+
+设置必须覆盖 Desktop 当前已承载的账户、模型/提供者、语言、外观、语音、通知、存储、设备、插件授权、数据管理、更新和诊断入口；是否存在某项具体开关仍以 pinned source 和真实 UI 审计为准。未知设置不能因为没有列入本文就被默认为可删。
+
+先建立 setting register：稳定 key、作用域（设备/账户/workspace/会话）、默认值、数据类型、验证条件、持久化 owner、迁移版本、敏感度、立即生效或需重启、导出规则。不要把所有状态塞进一个无版本 preference map；会话真相和密钥也不属于普通设置。
+
+## 状态 owner 与更新
+
+Kotlin 平台设置适配管理系统显示和权限状态，Host 管理账户/产品设置与授权；Compose 发更新命令、显示 owner 回执。更新使用版本或明确合并策略防止旧页面覆盖新值。账户切换重新绑定 scope，不把 A 的 provider key、语音偏好或设备授权自动带给 B。
+
+用户保存失败时保留编辑内容并提示原因；不得 UI 先显示成功、后台静默丢弃。涉及执行中的模型、工作流或插件版本的设置需明确从下一次 run 生效或经安全的重配置事务，不让当前 run 混用旧新配置。
+
+## 通知的数据路径
+
+远端推送/本地事件 → 账户与来源校验 → canonical owner 更新 → 去重/用户策略 → 系统通知投影。通知不是消息数据库或权益真相；没有推送也要能在前台同步到真实状态。
+
+内部去重身份至少关联账户、会话/任务、事件版本与通知类型。分别处理新消息、Agent 完成、待审批、下载/媒体和需要用户关注的失败；不要把所有流式 token 发成单独通知。设备推送 token 轮换、退出账户、解绑和重新登录有注册/撤销流程，后台回调不能串到新账户。
+
+Android 13+ 的非豁免通知有运行时权限要求，权限被拒时保留产品内部未读/待办入口，清楚说明外部通知不可用。前台服务、通话或媒体通知的特殊规则要根据具体系统和实现检查，不能错误地把所有通知权限等同于服务启动资格。
+
+## 深链与通知动作
+
+点击通知验证账户、资源和事件状态后打开目标。用户未登录时暂存非敏感导航意图并在认证后重新校验。已经删除的消息、失效的审批、另一账户任务给出明确结果，不执行旧动作。
+
+快速回复、批准、取消等带副作用动作必须到同一个 owner 重新核对权限和当前状态；PendingIntent 不携带秘密，不信任外部可修改的业务参数。重复点击同一通知不会重复发消息或重复批准。锁屏内容遵守用户隐私偏好，敏感信息不默认直接展示。
+
+## 数据、存储与隐私
+
+清缓存、清会话、退出、删除账户和撤销远程连接是不同操作，分别说明影响、是否可逆和同步范围。清缓存不能删除尚未上传的附件或唯一的 pending run 记录；删除数据须同时处理索引、缩略图、临时文件与引用，保留必要的失败重试状态。
+
+导出用受授权的系统位置，默认排除凭据、私钥和不属于该账户的数据。备份与恢复须按数据库版本、加密密钥可用性与账户验证处理；不能把恢复旧备份当成撤销失效授权的手段。存储配额触顶要在操作前可预测，清理后能核对释放对象，而不是粗暴删除应用全部数据。
+
+## 日志、诊断与崩溃
+
+日志只记录必要的事件类型、脱敏关联身份、状态和耗时；错误报告避免原始 prompt、消息正文、附件路径、屏幕、支付 token、cookie 和 bearer。用户主动导出的诊断包先脱敏并展示类别，不把诊断开关变成无限收集权限。
+
+内置诊断可以展示 source SHA、版本、渠道、数据库 schema、native ABI、能力可用性与最近失败类别；不得显示密钥。telemetry 有稳定事件 schema、退出/删除语义、保留期与采样策略。日志丢失不影响业务事务正确性。
+
+## 安装升级与维护
+
+设置迁移与业务数据库迁移均带版本；新增字段有明确默认，删除字段不悄悄重启危险能力。渠道更新、签名、版本单调性和 rollback 规则见 release/distribution。生产 release 禁止开启测试会话注入；githubRelease 当前开关风险已列入安全手册，须用真实产物验收关闭。
+
+## Android 应用更新的空闲策略与遥测
+
+历史 Desktop predecessor `371b72f1cd20de03dc4dff9a15ed761054968093` 的更新责任（仅 provenance；当前源事实已锁定到 `12a4e298...`）。由 `source/electron-main/update/update-wiring.ts`、`sand-update-service.ts`、`idle-relaunch-apply.ts`、`safe-relaunch-gate.ts` 和 `update-telemetry.ts` 联合定义。Android 必须保留同一组安全决策输入：用户设备级 opt-in、Statsig `sand_auto_update_when_idle` gate、真实签名包 transport、canonical Host idle、用户离开状态，以及更新下载/暂存/申请安装/恢复的结构化 telemetry；Compose 不能自己判定 Host 是否空闲。
+
+普通 Android 应用不能绕过系统 Package Installer 静默完成 APK 升级，因此 Desktop 的“safe relaunch + quitAndInstall”在 Android 上采用 `android-adapted` 替代：只有 opt-in 与 gate 同时为真、设备已锁定或非交互并持续至少 10 分钟、Host canonical Agent roster 没有任何 running Agent、且当前 effective track 有真实签名 package transport 时，进程存活期间才允许自动下载、校验并把包持久化为 `STAGED`。后台不得启动系统安装 Activity，不得把 opt-in 当成绕过平台安装确认的授权；恢复到前台后仍需用户显式继续。进程死亡后由 durable apply marker 恢复同一 staged/requested 状态；`REQUESTED` 且无法证明结果时保持 `OUTCOME_UNKNOWN`，绝不自动重放安装。
+
+当前 GitHub signed APK transport 只覆盖 stable；Rust policy 投影出的 nightly/dogfood 在没有独立签名 manifest/feed/包证据前必须 fail closed。空闲任务是 opportunistic，不得为了保证定时执行而滥用前台服务、AlarmManager 或要求关闭省电；OS 杀进程后下次正常启动再从 durable marker / release truth 恢复。
+
+Updater telemetry 仅记录稳定事件 schema 与低敏元数据，例如 check/stage/apply/recovery/idle-gate 的 action、result、trigger、track、版本、phase、耗时和 error class；禁止记录 bearer、cookie、账户邮箱、消息正文、文件绝对路径、release notes 或下载 URL。遥测 sink 故障不得改变更新状态机结果。
+
+Focused Actions 至少覆盖：opt-in=false、gate=false、未离开 10 分钟、Host busy、Host unavailable、signed stable 可用、non-stable 无 transport、自动暂存但不后台拉起 installer、process-death staged recovery、requested outcome-unknown、spawn failure 可显式重试、以及 telemetry 脱敏/容量边界。最终 `verified` 仍要求同 exact HEAD 的 release/R8、签名 package 与设备升级证据。
+
+## Actions 必须验证
+
+通知允许/拒绝/渠道关闭、push 重复和乱序、token 轮换、退出后旧推送、冷启动目标恢复、已经处理的审批通知、锁屏隐藏内容、设置跨账户隔离、存储不足、清理不删 pending 上传、导出不含秘密、旧 schema 升级、损坏备份恢复、日志负例检测和公开 release 不含测试入口。
+
+测试既检查页面也检查真实持久状态；仅检查按钮出现不够。最终证据保留 exact Android/源 SHA、实际包渠道与摘要、测试设备/API 和具体断言。
+
+## 参考
+
+[通知运行时权限](https://developer.android.com/develop/ui/compose/notifications/notification-permission)、[Android 13 行为](https://developer.android.com/about/versions/13/behavior-changes-all)、[当前 Android 包配置](https://github.com/fabu-android/fabushi-android/blob/5d049353e167d9b91b5c765e1686f1ac8670f2ff/mobile/android/app/build.gradle)。本文给出产品实现约束，不是已经完成隐私/商店合规审查的声明。
+
+## 状态、追溯与使用规则
+
+本文件原写于 2026-10-09，现作为 Android 原生迁移实施规范入库。内部 owner、状态和功能约束不是 Android 产品已实现的事实；必须绑定当前 Desktop main 的真实 shipping 责任并有 exact-HEAD 证据。构建、校验及真机测试通过 GitHub Actions，不在 bhrum2 或 Mac 本地执行。
+
+当前 Desktop 源：`12a4e29819592e3a7e32f7435cb0cf2e3cc53848` / tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`；完整源码条目仍需逐职责审核。
