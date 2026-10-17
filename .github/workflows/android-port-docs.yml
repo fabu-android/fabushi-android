@@ -5,8 +5,8 @@ on:
       - 'spec/grok-bot-018-android-parity-20260922'
   workflow_dispatch:
 permissions:
-  contents: write
-  actions: write
+  contents: read
+  actions: read
 concurrency:
   group: android-port-docs-${{ github.ref_name }}
   cancel-in-progress: false
@@ -120,41 +120,9 @@ jobs:
             'rejected_android_target_count':rejected['count'],
           }, sort_keys=True))
           PY
-      - name: Commit regenerated exact-main authority to PR branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          if [[ "$(git log -1 --format=%s)" == "chore(android): persist exact Desktop main authority evidence" ]]; then
-            echo "Persistence commit detected; exact-current-head evidence is retained in this run artifact without creating a commit loop."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add docs/android-port/authority/baseline.json \
-            docs/android-port/authority/source-inventory-manifest.json \
-            docs/android-port/authority/responsibility-ledger.json \
-            docs/android-port/authority/source-inventory-ledger.jsonl \
-            docs/android-port/generated/packages-semantic-coverage.json \
-            docs/android-port/generated/rejected-android-targets.json \
-            docs/android-port/generated/responsibility-mapping-summary.json \
-            docs/android-port/generated/unmapped-source-rows.json \
-            docs/android-port/generated/source-manifest.json \
-            docs/android-port/generated/rebaseline-summary.json
-          if git diff --cached --quiet; then
-            echo "No regenerated authority changes to commit."
-            exit 0
-          fi
-          git commit -m "chore(android): persist exact Desktop main authority evidence"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
-          NEW_HEAD="$(git rev-parse HEAD)"
-          echo "Persisted authority at exact Android HEAD ${NEW_HEAD}"
-          gh workflow run grok-android-architecture.yml --ref "${GITHUB_REF_NAME}"
-          gh workflow run android-parity-full-ci.yml --ref "${GITHUB_REF_NAME}"
-          # GITHUB_TOKEN pushes do not trigger another push workflow. Explicitly re-run
-          # documentation on the persistence commit so its artifact captures that exact
-          # checkout. The next run sees this persistence commit and skips another commit.
-          gh workflow run android-port-docs.yml --ref "${GITHUB_REF_NAME}"
+      - name: Keep regenerated authority in this run artifact only
+        if: false
+        run: echo "Generated authority is delivered as an artifact and is never committed by this workflow."
       - name: Package documentation and source evidence
         if: always()
         run: python3 scripts/android-port-docs.py bundle
