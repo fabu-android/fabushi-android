@@ -72,7 +72,7 @@ jobs:
         run: |
           set -euo pipefail
           EXPECTED_ANDROID_HEAD="$(git rev-parse HEAD)"
-          test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8258
+          test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8260
           python3 - "$EXPECTED_ANDROID_HEAD" <<'PY'
           import hashlib, json, sys
           from pathlib import Path
@@ -81,14 +81,14 @@ jobs:
           ledger_bytes=Path('docs/android-port/authority/source-inventory-ledger.jsonl').read_bytes()
           rows=[json.loads(line) for line in ledger_bytes.decode('utf-8').splitlines() if line.strip()]
           assert hashlib.sha256(ledger_bytes).hexdigest()==m['ledger_sha256']
-          assert m['desktop_commit']=='12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
+          assert m['desktop_commit']=='dc81eac2df50f6c08ae4daf98988076bfdc956d9'
           assert m['source_commit']==m['desktop_commit']
-          assert m['desktop_root_tree']=='72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
-          assert m['tracked_non_tree_entries']==8258 and len(rows)==8258
-          assert m['tree_entries']==9412
+          assert m['desktop_root_tree']=='04473e188c5088b66a7f984e5e89e6d47e75eafb'
+          assert m['tracked_non_tree_entries']==8260 and len(rows)==8260
+          assert m['tree_entries']==9415
           for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
             assert m[field]==expected, (field,m[field],expected)
-          assert len({row['source_path'] for row in rows})==8258
+          assert len({row['source_path'] for row in rows})==8260
           for row in rows:
             assert row['source_commit']==m['desktop_commit']
             assert row['source_blob_sha'] and row['source_mode'] and row['source_type']
