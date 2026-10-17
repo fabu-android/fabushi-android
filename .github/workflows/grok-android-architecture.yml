@@ -89,6 +89,9 @@ jobs:
           grep -Fq 'internal val OfficialToolNames = listOf(FabushiAppAgentSurface.StatusTool)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
           grep -Fq '.put("capabilities", JSONArray(OfficialToolNames))' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
           grep -Fq 'require(toolName in OfficialToolNames)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'parseAgentSession(coordinator.authDeviceAgentSession())' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'isReadOnlyOfficialPreflight(message)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'account-changed-during-device-call' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
       - name: Test exact-HEAD official-device registration owner
         working-directory: mobile/android
         run: |

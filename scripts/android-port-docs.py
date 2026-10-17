@@ -292,7 +292,7 @@ OFFICIAL_DEVICE_SOURCE_SPECS = {
         'responsibility_id': 'REMOTE-COMPUTER-001',
         'symbols': ['FabushiOfficialDeviceRegistryService', 'resolveFabushiDeviceGatewayUrl', 'FABUSHI_APP_AGENT_STATUS_TOOL'],
         'source_owner': 'Desktop official-device WSS registration owner with account/revoke fencing and read-only status admission',
-        'android_owner': 'FabushiRemoteDeviceGateway plus FabushiAppAgentSurface; current Android surface requires fresh parity review because it is broader than Desktop status-only registration',
+        'android_owner': 'FabushiRemoteDeviceGateway plus FabushiAppAgentSurface; official gateway is status-only while full WSS/account fencing remains independently reviewable',
         'android_targets': [
             'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
             'source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt',
@@ -2043,9 +2043,10 @@ def _ensure_official_device_registration_semantic_mapping(
         note = (
             'Desktop official-device registration authority was added at ' + desktop_commit
             + '; this source mapping is provenance-only and remains unreviewed/not-verified. '
-            'Android currently has a real FabushiRemoteDeviceGateway production owner, but its '
-            'published tool surface is broader than the new Desktop status-only/read-only registry, '
-            'so exact semantic parity must be reviewed and proven before verification.'
+            'Android has a real FabushiRemoteDeviceGateway production owner whose official published '
+            'tool surface is now status-only/read-only like Desktop. This mapping remains provenance-only '
+            'and not verified until WSS lifecycle, session expiry, account-switch/revoke fencing, token '
+            'boundary, read-only preflight, non-retry behavior and exact-head tests are all proven.'
         )
         notes = item.get('notes')
         if isinstance(notes, str):

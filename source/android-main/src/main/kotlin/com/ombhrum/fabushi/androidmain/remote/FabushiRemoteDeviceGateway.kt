@@ -41,12 +41,46 @@ internal class FabushiRemoteDeviceGateway(
         private const val OfficialGatewayUrl = "wss://fabushi-mcp.ombhrum.com/agent"
         private const val LeaseSeconds = 14_400
         private const val MaxMessageBytes = 32 * 1024 * 1024
+        private const val MaxStatusResultBytes = 64 * 1024
+        private const val SessionExpiryLeewayMs = 30_000L
 
         // Canonical Desktop b614 official-device registration exposes only the
         // bounded read-only status tool. Richer Android semantic tools remain
         // local product capabilities until the shared authority explicitly
         // admits them to the official same-account device gateway.
         internal val OfficialToolNames = listOf(FabushiAppAgentSurface.StatusTool)
+
+        internal fun isUsableOfficialSession(
+            accessToken: String,
+            deviceId: String,
+            sessionId: String,
+            accessTokenExpiresAt: Long,
+            nowMs: Long,
+        ): Boolean =
+            accessToken.length in 24..(16 * 1024) &&
+                accessToken.none(Char::isWhitespace) &&
+                deviceId.matches(Regex("^[A-Za-z0-9._:-]{1,128}$")) &&
+                sessionId.isNotBlank() &&
+                sessionId.length <= 200 &&
+                accessTokenExpiresAt > nowMs + SessionExpiryLeewayMs
+
+        internal fun isSameOfficialSession(
+            expectedDeviceId: String,
+            expectedSessionId: String,
+            expectedAccessToken: String,
+            currentDeviceId: String,
+            currentSessionId: String,
+            currentAccessToken: String,
+        ): Boolean =
+            expectedDeviceId == currentDeviceId &&
+                expectedSessionId == currentSessionId &&
+                expectedAccessToken == currentAccessToken
+
+        internal fun isReadOnlyOfficialPreflight(message: JSONObject): Boolean {
+            val preflight = message.optJSONObject("diskPreflight") ?: return false
+            val targets = preflight.optJSONArray("targets") ?: return false
+            return preflight.optString("impact") == "none" && targets.length() == 0
+        }
     }
 
     private data class AgentSession(
@@ -97,9 +131,15 @@ internal class FabushiRemoteDeviceGateway(
         }.onSuccess { candidate ->
             val current = synchronized(stateLock) { activeSession }
             val stillUsable = synchronized(stateLock) {
-                current?.deviceId == candidate.deviceId &&
-                    current.sessionId == candidate.sessionId &&
-                    current.accessToken == candidate.accessToken &&
+                current != null &&
+                    isSameSession(current, candidate) &&
+                    isUsableOfficialSession(
+                        current.accessToken,
+                        current.deviceId,
+                        current.sessionId,
+                        current.accessTokenExpiresAt,
+                        System.currentTimeMillis(),
+                    ) &&
                     registered && socket != null
             }
             if (!stillUsable) connect(candidate)
@@ -122,6 +162,13 @@ internal class FabushiRemoteDeviceGateway(
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 synchronized(stateLock) { socket = webSocket }
+                val current = runCatching {
+                    parseAgentSession(coordinator.authDeviceAgentSession())
+                }.getOrNull()
+                if (current == null || !isSameSession(session, current)) {
+                    stopConnection("stale-account-before-registration")
+                    return
+                }
                 val registration = JSONObject()
                     .put("type", "register")
                     .put("deviceId", session.deviceId)
@@ -129,6 +176,8 @@ internal class FabushiRemoteDeviceGateway(
                     .put("platform", "android")
                     .put("capabilities", JSONArray(OfficialToolNames))
                     .put("tools", toolDescriptors())
+                    .put("toolSchemaVersion", "fabushi-app-status-v1")
+                    .put("generation", session.sessionId)
                     .put("leaseSeconds", LeaseSeconds)
                     .put("metadata", JSONObject(metadata))
                 if (!webSocket.send(registration.toString())) {
@@ -200,6 +249,17 @@ internal class FabushiRemoteDeviceGateway(
         val arguments = message.optJSONObject("arguments") ?: JSONObject()
         val session = synchronized(stateLock) { activeSession }
             ?: return sendRemoteError(webSocket, requestId, "device_agent_session_unavailable")
+        val currentBefore = runCatching {
+            parseAgentSession(coordinator.authDeviceAgentSession())
+        }.getOrNull()
+        if (currentBefore == null || !isSameSession(session, currentBefore)) {
+            stopConnection("account-revoked-before-device-call")
+            return
+        }
+        if (!isReadOnlyOfficialPreflight(message)) {
+            sendRemoteError(webSocket, requestId, "device_call_requires_read_only_preflight")
+            return
+        }
 
         val admission = runCatching {
             commandJournal.begin(requestId, session.deviceId, session.sessionId, toolName)
@@ -221,8 +281,25 @@ internal class FabushiRemoteDeviceGateway(
         }
 
         appendTrace("call-started", mapOf("requestId" to requestId, "toolName" to toolName, "sessionId" to session.sessionId.take(96)))
-        runCatching { invokeTool(toolName, arguments) }
+        runCatching {
+            val structured = invokeTool(toolName, arguments)
+            val encoded = structured.toString()
+            require(encoded.toByteArray(Charsets.UTF_8).size <= MaxStatusResultBytes) {
+                "device_status_result_too_large"
+            }
+            require(!encoded.contains(session.accessToken)) {
+                "device_status_result_contains_account_token"
+            }
+            structured
+        }
             .onSuccess { structured ->
+                val currentAfter = runCatching {
+                    parseAgentSession(coordinator.authDeviceAgentSession())
+                }.getOrNull()
+                if (currentAfter == null || !isSameSession(session, currentAfter)) {
+                    stopConnection("account-changed-during-device-call")
+                    return@onSuccess
+                }
                 val result = JSONObject()
                     .put("structuredContent", structured)
                     .put(
@@ -376,15 +453,34 @@ internal class FabushiRemoteDeviceGateway(
             value.optJSONObject("user")?.optString("username").orEmpty()
         }.take(200)
         val expiresAt = value.optLong("accessTokenExpiresAt", 0)
-        require(accessToken.length in 24..(16 * 1024) && accessToken.none(Char::isWhitespace)) { "invalid_device_agent_session" }
-        require(deviceId.matches(Regex("^[A-Za-z0-9._:-]{1,128}$"))) { "invalid_device_agent_session" }
-        require(sessionId.isNotBlank() && sessionId.length <= 200) { "invalid_device_agent_session" }
+        require(
+            isUsableOfficialSession(
+                accessToken,
+                deviceId,
+                sessionId,
+                expiresAt,
+                System.currentTimeMillis(),
+            ),
+        ) { "invalid_device_agent_session" }
         return AgentSession(accessToken, deviceId, sessionId, username, expiresAt)
     }
 
+    private fun isSameSession(expected: AgentSession, current: AgentSession): Boolean =
+        isSameOfficialSession(
+            expected.deviceId,
+            expected.sessionId,
+            expected.accessToken,
+            current.deviceId,
+            current.sessionId,
+            current.accessToken,
+        )
+
     private fun toolDescriptors(): JSONArray {
         fun schema(vararg properties: Pair<String, Any>, required: List<String> = emptyList()): JSONObject {
-            val objectValue = JSONObject().put("type", "object").put("properties", JSONObject())
+            val objectValue = JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject())
+                .put("additionalProperties", false)
             properties.forEach { (name, value) -> objectValue.getJSONObject("properties").put(name, value) }
             if (required.isNotEmpty()) objectValue.put("required", JSONArray(required))
             return objectValue
@@ -400,7 +496,14 @@ internal class FabushiRemoteDeviceGateway(
                 .put("title", title)
                 .put("description", description)
                 .put("inputSchema", input)
-                .put("annotations", JSONObject().put("readOnlyHint", readOnly))
+                .put(
+                    "annotations",
+                    JSONObject()
+                        .put("readOnlyHint", readOnly)
+                        .put("destructiveHint", false)
+                        .put("idempotentHint", true)
+                        .put("openWorldHint", false),
+                )
         val stateProperties = arrayOf<Pair<String, Any>>(
             "route" to stringSchema(), "screen" to stringSchema(), "agentId" to stringSchema(),
             "role" to stringSchema(), "name" to stringSchema(), "text" to stringSchema(),
@@ -453,7 +556,9 @@ internal class FabushiRemoteDeviceGateway(
         "stale_app_surface_generation", "app_surface_element_not_found",
         "remote_command_identity_session_mismatch", "remote_command_identity_tool_mismatch",
         "remote_command_already_pending", "remote_command_outcome_unknown_reconcile_required",
-        "device_agent_session_unavailable", "remote_command_failed",
+        "device_agent_session_unavailable", "device_call_requires_read_only_preflight",
+        "device_status_result_too_large", "device_status_result_contains_account_token",
+        "remote_command_failed",
         "app_surface_target_hidden", "app_surface_target_disabled", "sensitive_app_surface_input_requires_secure_input",
         "app_surface_value_too_large", "app_surface_action_unavailable", "unsupported_app_surface_action" -> message
         else -> "transport_error:${error::class.java.simpleName.take(80)}"
