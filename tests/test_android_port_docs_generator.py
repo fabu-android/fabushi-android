@@ -9,67 +9,12 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
-CURRENT_DESKTOP_COMMIT = "12a4e29819592e3a7e32f7435cb0cf2e3cc53848"
-CURRENT_DESKTOP_TREE = "72fc5f777012f6e7bf5f5f471b6f121fd3612bb2"
+CURRENT_DESKTOP_COMMIT = "dc81eac2df50f6c08ae4daf98988076bfdc956d9"
+CURRENT_DESKTOP_TREE = "04473e188c5088b66a7f984e5e89e6d47e75eafb"
 
 
-def write_local_snapshot(root, *, duplicate_path=False, stale_source_commit=False, reverse_paths=False):
-    source_commit = CURRENT_DESKTOP_COMMIT
-    source_tree = CURRENT_DESKTOP_TREE
-    rows = []
-    for index in range(8258):
-        rows.append({
-            "source_path": f"source/generated-{index:04d}.rs",
-            "source_commit": source_commit,
-            "source_blob_sha": f"{index + 1:040x}",
-            "source_type": "blob",
-            "source_mode": "100644",
-            "responsibilities": [],
-            "android_targets": [],
-            "disposition": None,
-            "implementation_status": "unreviewed",
-            "evidence": [],
-        })
-    if duplicate_path:
-        rows[1]["source_path"] = rows[0]["source_path"]
-    if stale_source_commit:
-        rows[-1]["source_commit"] = "e" * 40
-    if reverse_paths:
-        rows.reverse()
-    ledger_text = "".join(
-        json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
-        for row in rows
-    )
-    (root / "source-inventory-ledger.jsonl").write_text(ledger_text, encoding="utf-8")
-    manifest = {
-        "authority_current": True,
-        "desktop_commit": source_commit,
-        "desktop_root_tree": source_tree,
-        "tree_entries": 9412,
-        "tracked_non_tree_entries": 8258,
-        "authority_ledger_rows": 8258,
-        "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
-        "workflow_run_id": 456,
-        "android_pr_head_sha": "h" * 40,
-    }
-    (root / "source-inventory-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    candidate = {
-        "authority": {"desktop_commit": source_commit, "desktop_root_tree": source_tree},
-        "responsibilities": padded_responsibilities({
-            "responsibility_id": "RESP-001",
-            "desktop_sources": [{
-                "path": rows[0]["source_path"],
-                "blob_sha": rows[0]["source_blob_sha"],
-                "source_mode": "100644",
-                "source_type": "blob",
-            }],
-        }),
-    }
-    responsibility_path = root / "responsibility-ledger.json"
-    responsibility_path.write_text(json.dumps(candidate), encoding="utf-8")
-    return responsibility_path, rows, ledger_text, manifest
 
-
+def load_generator()
 def load_generator():
     spec = importlib.util.spec_from_file_location("android_port_docs", SCRIPT)
     module = importlib.util.module_from_spec(spec)
@@ -544,149 +489,20 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             self.assertEqual(source["source_type"], "blob")
             self.assertEqual(result["authority"]["semantic_source_anchor_unique_paths"], 1)
 
-    def test_local_snapshot_fallback_is_digest_verified_and_not_parity_evidence(self):
-        module = load_generator()
+    def test_predecessor_artifact_missing_http_error_and_digest_mismatch_fail_closed(self):
+        module=load_generator()
         with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            responsibility_path = root / "responsibility-ledger.json"
-            source_commit = CURRENT_DESKTOP_COMMIT
-            source_tree = CURRENT_DESKTOP_TREE
-            rows = []
-            for index in range(8258):
-                rows.append({
-                    "source_path": f"source/generated-{index:04d}.rs",
-                    "source_commit": source_commit,
-                    "source_blob_sha": f"{index + 1:040x}",
-                    "source_type": "blob",
-                    "source_mode": "100644",
-                    "responsibilities": [],
-                    "android_targets": [],
-                    "disposition": None,
-                    "implementation_status": "unreviewed",
-                    "evidence": [],
-                })
-            ledger_text = "".join(
-                json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
-                for row in rows
-            )
-            (root / "source-inventory-ledger.jsonl").write_text(ledger_text, encoding="utf-8")
-            manifest = {
-                "authority_current": True,
-                "desktop_commit": source_commit,
-                "desktop_root_tree": source_tree,
-                "tree_entries": 9412,
-                "tracked_non_tree_entries": 8258,
-                "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
-                "workflow_run_id": 456,
-                "android_pr_head_sha": "h" * 40,
-            }
-            (root / "source-inventory-manifest.json").write_text(
-                json.dumps(manifest), encoding="utf-8"
-            )
-            candidate = {
-                "authority": {
-                    "desktop_commit": source_commit,
-                    "desktop_root_tree": source_tree,
-                },
-                "responsibilities": padded_responsibilities({
-                    "responsibility_id": "RESP-001",
-                    "desktop_sources": [{
-                        "path": "source/generated-0000.rs",
-                        "blob_sha": rows[0]["source_blob_sha"],
-                        "source_mode": "100644",
-                        "source_type": "blob",
-                    }],
-                }),
-            }
-            responsibility_path.write_text(json.dumps(candidate), encoding="utf-8")
-            with patch.object(
-                module,
-                "_load_pinned_responsibility_mapping",
-                side_effect=RuntimeError(
-                    "failed to recover predecessor responsibility artifact 12053467058 (HTTP 404)"
-                ),
-            ):
-                recovered, source_rows, origin, provenance = (
-                    module.load_predecessor_responsibility_mapping(responsibility_path)
-                )
-
-            self.assertEqual(origin, "current-responsibility-ledger+validated-local-coverage")
-            self.assertEqual(8258, len(source_rows))
-            self.assertEqual("validated-local-persisted-snapshot", provenance["mapping_source"])
-            self.assertIsNone(provenance["artifact_id"])
-            self.assertIsNone(provenance["artifact_digest"])
-            self.assertEqual("unreviewed", source_rows["source/generated-0000.rs"]["implementation_status"])
-            self.assertEqual(306, len(recovered["responsibilities"]))
-            self.assertEqual(CURRENT_DESKTOP_COMMIT, recovered["authority"]["desktop_commit"])
-            self.assertEqual(CURRENT_DESKTOP_TREE, recovered["authority"]["desktop_root_tree"])
-            self.assertEqual(9412, manifest["tree_entries"])
-            self.assertEqual(8258, manifest["tracked_non_tree_entries"])
-            self.assertEqual(manifest["ledger_sha256"], hashlib.sha256(ledger_text.encode("utf-8")).hexdigest())
-            self.assertEqual(sorted(source_rows), list(source_rows))
-            self.assertTrue(all(row["source_commit"] == CURRENT_DESKTOP_COMMIT for row in source_rows.values()))
-
-    def test_local_snapshot_fallback_rejects_a_stale_ledger_digest(self):
-        module = load_generator()
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            responsibility_path = root / "responsibility-ledger.json"
-            responsibility_path.write_text(json.dumps({
-                "authority": {"desktop_commit": "d" * 40, "desktop_root_tree": "t" * 40},
-                "responsibilities": padded_responsibilities({"responsibility_id": "RESP-001"}),
-            }), encoding="utf-8")
-            (root / "source-inventory-ledger.jsonl").write_text("", encoding="utf-8")
-            (root / "source-inventory-manifest.json").write_text(json.dumps({
-                "authority_current": True,
-                "desktop_commit": "d" * 40,
-                "desktop_root_tree": "t" * 40,
-                "tree_entries": 9412,
-                "tracked_non_tree_entries": 8258,
-                "ledger_sha256": "0" * 64,
-            }), encoding="utf-8")
-            with patch.object(
-                module,
-                "_load_pinned_responsibility_mapping",
-                side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12053467058"),
-            ):
-                with self.assertRaisesRegex(ValueError, "ledger digest"):
-                    module.load_predecessor_responsibility_mapping(responsibility_path)
-
-
-    def test_local_snapshot_fallback_rejects_duplicate_paths(self):
-        module = load_generator()
-        with tempfile.TemporaryDirectory() as temp:
-            responsibility_path, _, _, _ = write_local_snapshot(Path(temp), duplicate_path=True)
-            with patch.object(
-                module,
-                "_load_pinned_responsibility_mapping",
-                side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12053467058 (HTTP 404)"),
-            ):
-                with self.assertRaisesRegex(ValueError, "duplicate path"):
-                    module.load_predecessor_responsibility_mapping(responsibility_path)
-
-    def test_local_snapshot_fallback_rejects_a_stale_source_commit(self):
-        module = load_generator()
-        with tempfile.TemporaryDirectory() as temp:
-            responsibility_path, _, _, _ = write_local_snapshot(Path(temp), stale_source_commit=True)
-            with patch.object(
-                module,
-                "_load_pinned_responsibility_mapping",
-                side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12053467058 (HTTP 404)"),
-            ):
-                with self.assertRaisesRegex(ValueError, "stale Desktop source commit"):
-                    module.load_predecessor_responsibility_mapping(responsibility_path)
-
-    def test_local_snapshot_fallback_rejects_noncanonical_persisted_order(self):
-        module = load_generator()
-        with tempfile.TemporaryDirectory() as temp:
-            responsibility_path, _, _, _ = write_local_snapshot(Path(temp), reverse_paths=True)
-            with patch.object(
-                module,
-                "_load_pinned_responsibility_mapping",
-                side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12053467058 (HTTP 404)"),
-            ):
-                with self.assertRaisesRegex(ValueError, "canonical sorted path order"):
-                    module.load_predecessor_responsibility_mapping(responsibility_path)
+            path=Path(temp)/"responsibility-ledger.json"
+            path.write_text(json.dumps({"responsibilities":[]}),encoding="utf-8")
+            with patch.dict("os.environ",{"GH_TOKEN":""}):
+                with self.assertRaisesRegex(ValueError,"GH_TOKEN is required"):
+                    module.load_predecessor_responsibility_mapping(path)
+            with patch.dict("os.environ",{"GH_TOKEN":"token"}),patch.object(module,"_download_predecessor_bytes",side_effect=RuntimeError("failed to recover predecessor responsibility artifact 12072277149 (HTTP 404)")):
+                with self.assertRaisesRegex(RuntimeError,"HTTP 404"):
+                    module.load_predecessor_responsibility_mapping(path)
+            with patch.dict("os.environ",{"GH_TOKEN":"token","ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST":"sha256:"+"0"*64}),patch.object(module,"_download_predecessor_bytes",return_value=b"PK\\x03\\x04invalid"):
+                with self.assertRaisesRegex(ValueError,"digest mismatch"):
+                    module.load_predecessor_responsibility_mapping(path)
 
     def test_inventory_serializer_is_canonical_and_digestable(self):
         module = load_generator()
