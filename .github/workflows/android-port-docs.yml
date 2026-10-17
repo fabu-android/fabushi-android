@@ -3,15 +3,6 @@ on:
   push:
     branches:
       - 'spec/grok-bot-018-android-parity-20260922'
-    paths:
-      - 'docs/android-port/**'
-      - 'docs/specs/desktop-main-android-full-parity.md'
-      - 'ANDROID_PORT.md'
-      - 'scripts/android-port-docs.py'
-      - 'scripts/check_grok_android_parity.py'
-      - 'tests/test_parity_checker.py'
-      - 'tests/test_android_port_docs_generator.py'
-      - '.github/workflows/android-port-docs.yml'
   workflow_dispatch:
 permissions:
   contents: write
