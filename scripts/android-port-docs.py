@@ -50,6 +50,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
 EXPECTED_RESPONSIBILITY_COUNT = 306
 EXPECTED_TREE_ENTRY_COUNT = 9427
 EXPECTED_TRACKED_NON_TREE_COUNT = 8272
+PRIOR_TREE_ENTRY_COUNT = 9427
+PRIOR_TRACKED_NON_TREE_COUNT = 8272
 PREDECESSOR_TREE_ENTRY_COUNT = 9412
 PREDECESSOR_TRACKED_NON_TREE_COUNT = 8258
 EXPECTED_PACKAGES_SOURCE_COUNT = 852
@@ -67,6 +69,8 @@ ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
 EXPECTED_DESKTOP_COMMIT = 'ca618ae19add78872fcac7cb86bf8754a4ad7a55'
 EXPECTED_DESKTOP_TREE = 'b0337f9bd17e5dc0c7165e89331aaf2748f52a74'
+PRIOR_DESKTOP_COMMIT = 'b6146c9d3d8da83030798334695b27c9e4884f46'
+PRIOR_DESKTOP_TREE = '2355aa184197641c6edc465d03e87a2156d626ad'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
 PREDECESSOR_DESKTOP_TREE = '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
 
@@ -1858,9 +1862,11 @@ def _validate_rebaseline_boundary(
             'baseline Desktop commit does not match current main')
     require(baseline.get('desktop_root_tree') == tree_sha,
             'baseline Desktop tree does not match current main')
-    require(baseline.get('desktop_main_before') == PREDECESSOR_DESKTOP_COMMIT
+    require(baseline.get('desktop_main_before') in {
+                PREDECESSOR_DESKTOP_COMMIT, PRIOR_DESKTOP_COMMIT
+            }
             and baseline.get('desktop_main_after') == current,
-            'baseline does not preserve predecessor-to-current Desktop main lineage')
+            'baseline does not preserve an accepted predecessor-to-current Desktop main lineage')
     require(tree_entry_count == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop tree must contain {EXPECTED_TREE_ENTRY_COUNT} recursive entries, got {tree_entry_count}')
     require(tracked_non_tree_count == EXPECTED_TRACKED_NON_TREE_COUNT,
@@ -1875,14 +1881,27 @@ def _validate_rebaseline_boundary(
         require(prior_manifest.get('desktop_main_before') == PREDECESSOR_DESKTOP_COMMIT
                 and prior_manifest.get('desktop_main_after') == PREDECESSOR_DESKTOP_COMMIT,
                 'historical source manifest Desktop main lineage mismatch')
+    elif (prior_commit, prior_tree) == (PRIOR_DESKTOP_COMMIT, PRIOR_DESKTOP_TREE):
+        prior_rows_expected = PRIOR_TRACKED_NON_TREE_COUNT
+        prior_tree_expected = PRIOR_TREE_ENTRY_COUNT
+        require(prior_manifest.get('desktop_main_after') == PRIOR_DESKTOP_COMMIT
+                and prior_manifest.get('desktop_main_before') in {
+                    PREDECESSOR_DESKTOP_COMMIT, PRIOR_DESKTOP_COMMIT
+                },
+                'prior current source manifest Desktop main lineage mismatch')
     elif (prior_commit, prior_tree) == (current, tree_sha):
         prior_rows_expected = EXPECTED_TRACKED_NON_TREE_COUNT
         prior_tree_expected = EXPECTED_TREE_ENTRY_COUNT
         require(prior_manifest.get('desktop_main_after') == current
-                and prior_manifest.get('desktop_main_before') in {PREDECESSOR_DESKTOP_COMMIT, current},
+                and prior_manifest.get('desktop_main_before') in {
+                    PREDECESSOR_DESKTOP_COMMIT, PRIOR_DESKTOP_COMMIT, current
+                },
                 'current source manifest Desktop main lineage mismatch')
     else:
-        raise ValueError('persisted source manifest is neither the pinned historical 8258/9412 predecessor nor the current 8272/9427 authority')
+        raise ValueError(
+            'persisted source manifest is neither the pinned historical predecessor, '
+            'the exact prior accepted authority, nor the current authority'
+        )
     require(prior_manifest.get('source_commit') == prior_commit,
             'persisted source manifest source_commit does not match its Desktop commit')
     require(prior_manifest.get('tree_entries') == prior_tree_expected,

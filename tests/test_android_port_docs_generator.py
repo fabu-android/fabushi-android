@@ -1072,6 +1072,60 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                     baseline, current_manifest, current_text + " ", current_commit, current_tree, 3, 2
                 )
 
+    def test_rebaseline_boundary_accepts_exact_prior_current_authority(self):
+        module = load_generator()
+        current_commit, current_tree = "d" * 40, "e" * 40
+        prior_commit, prior_tree = "c" * 40, "b" * 40
+        predecessor_commit, predecessor_tree = "a" * 40, "9" * 40
+        with patch.object(module, "EXPECTED_DESKTOP_COMMIT", current_commit), \
+             patch.object(module, "EXPECTED_DESKTOP_TREE", current_tree), \
+             patch.object(module, "PRIOR_DESKTOP_COMMIT", prior_commit), \
+             patch.object(module, "PRIOR_DESKTOP_TREE", prior_tree), \
+             patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", predecessor_commit), \
+             patch.object(module, "PREDECESSOR_DESKTOP_TREE", predecessor_tree), \
+             patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \
+             patch.object(module, "EXPECTED_TREE_ENTRY_COUNT", 3), \
+             patch.object(module, "PRIOR_TRACKED_NON_TREE_COUNT", 2), \
+             patch.object(module, "PRIOR_TREE_ENTRY_COUNT", 3):
+            baseline = {
+                "desktop_repository": "bhrumom/fabushi-desktop",
+                "desktop_commit": current_commit,
+                "desktop_root_tree": current_tree,
+                "desktop_main_before": prior_commit,
+                "desktop_main_after": current_commit,
+            }
+            prior_rows = [
+                {"source_path": "AGENTS.md", "source_commit": prior_commit,
+                 "source_blob_sha": "1" * 40, "source_type": "blob", "source_mode": "100644"},
+                {"source_path": "source/file.rs", "source_commit": prior_commit,
+                 "source_blob_sha": "2" * 40, "source_type": "blob", "source_mode": "100755"},
+            ]
+            prior_text = "".join(json.dumps(row, sort_keys=True) + "\n" for row in prior_rows)
+            prior_manifest = {
+                "authority_current": True,
+                "desktop_commit": prior_commit,
+                "source_commit": prior_commit,
+                "desktop_root_tree": prior_tree,
+                "desktop_main_before": predecessor_commit,
+                "desktop_main_after": prior_commit,
+                "tree_entries": 3,
+                "tracked_non_tree_entries": 2,
+                "authority_ledger_rows": 2,
+                "ledger_sha256": hashlib.sha256(prior_text.encode("utf-8")).hexdigest(),
+            }
+            accepted = module._validate_rebaseline_boundary(
+                baseline, prior_manifest, prior_text, current_commit, current_tree, 3, 2
+            )
+            self.assertEqual([row["source_path"] for row in accepted], ["AGENTS.md", "source/file.rs"])
+
+            stale = dict(prior_manifest)
+            stale["desktop_root_tree"] = "8" * 40
+            with self.assertRaisesRegex(ValueError, "neither the pinned historical predecessor"):
+                module._validate_rebaseline_boundary(
+                    baseline, stale, prior_text, current_commit, current_tree, 3, 2
+                )
+
+
     def test_predecessor_redirect_does_not_forward_bearer_and_uses_real_zip_magic(self):
         module = load_generator()
         endpoint = "https://api.github.com/repos/fabu-android/fabushi-android/actions/artifacts/123/zip"
