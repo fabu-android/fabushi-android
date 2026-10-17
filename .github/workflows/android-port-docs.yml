@@ -3,6 +3,23 @@ on:
   push:
     branches:
       - 'spec/grok-bot-018-android-parity-20260922'
+    paths:
+      - 'source/**'
+      - 'native/**'
+      - 'frontend/**'
+      - 'contracts/**'
+      - 'projects/**'
+      - 'desktop/**'
+      - 'tests/**'
+      - 'scripts/android-port-docs.py'
+      - 'scripts/check_grok_android_parity.py'
+      - 'scripts/test-android-port-*.py'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.gradle'
+      - 'build.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
   workflow_dispatch:
 permissions:
   contents: read
