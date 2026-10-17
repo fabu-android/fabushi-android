@@ -141,6 +141,50 @@ def pinned_predecessor_zip_bytes(module, responsibilities=2, anchors=1):
 
 
 class AndroidPortDocsGeneratorTest(unittest.TestCase):
+
+    def test_background_completion_semantic_mapping_is_narrow_and_source_specific(self):
+        module = load_generator()
+        responsibility = {
+            "responsibility_id": module.BACKGROUND_COMPLETION_RESPONSIBILITY_ID,
+            "desktop_sources": [],
+            "android_target": [],
+            "notes": "",
+        }
+        responsibilities = padded_responsibilities(responsibility)
+        inventory = {
+            path: {"sha": str(index + 1) * 40, "mode": "100644", "type": "blob"}
+            for index, path in enumerate(module.BACKGROUND_COMPLETION_SOURCE_SPECS)
+        }
+        module._ensure_background_completion_semantic_mapping(
+            responsibilities, inventory, CURRENT_DESKTOP_COMMIT
+        )
+        mapped = next(
+            item for item in responsibilities
+            if item["responsibility_id"] == module.BACKGROUND_COMPLETION_RESPONSIBILITY_ID
+        )
+        mapped_by_path = {source["path"]: source for source in mapped["desktop_sources"]}
+        self.assertEqual(
+            set(mapped_by_path),
+            set(module.BACKGROUND_COMPLETION_SOURCE_SPECS),
+        )
+        for path, spec in module.BACKGROUND_COMPLETION_SOURCE_SPECS.items():
+            source = mapped_by_path[path]
+            self.assertEqual(source["mapping_quality"], "semantic")
+            self.assertEqual(source["source_owner"], spec["source_owner"])
+            self.assertEqual(source["android_owner"], spec["android_owner"])
+            self.assertEqual(source["android_targets"], spec["android_targets"])
+            self.assertTrue(source["focused_tests"])
+        self.assertNotIn(
+            "source/packages/agent/actions/goal-continuation-action-handler.ts",
+            mapped_by_path,
+        )
+        self.assertNotIn(
+            "source/packages/agent/actions/user-message-action/synthetic-user-message.ts",
+            mapped_by_path,
+        )
+        self.assertIn("goal-continuation", mapped["notes"])
+        self.assertIn("agent/state", mapped["notes"])
+
     def test_agent_kv_semantic_mapping_is_optional_for_generic_inventory_fixtures(self):
         module = load_generator()
         responsibilities = padded_responsibilities({"responsibility_id": "RESP-001", "desktop_sources": []})

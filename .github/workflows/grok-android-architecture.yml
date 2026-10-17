@@ -60,6 +60,24 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p fabushi-android-agent-kv --all-targets
+      - name: Verify exact-HEAD background completion production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'use fabushi_constants::system_notification::wrap_system_notification;' source/host/src/extensions/transcript/completion_revivals.rs
+          grep -Fq 'wrap_system_notification(&neutralize_background_task_detail_close_tags(&body))' source/host/src/extensions/transcript/completion_revivals.rs
+          grep -Fq '"text":build_shell_revival_prompt(completions)' source/host/src/android_json_runtime.rs
+          grep -Fq '"requestSource":"background-shell-revival"' source/host/src/android_json_runtime.rs
+          grep -Fq '"text":build_subagent_revival_prompt(completions)' source/host/src/android_json_runtime.rs
+          grep -Fq '"requestSource":"cloud-agent-revival"' source/host/src/android_json_runtime.rs
+          grep -Fq 'runtime: AndroidJsonHost' source/android-host-jni/src/lib.rs
+      - name: Test exact-HEAD background completion production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host extensions::transcript::completion_revivals::tests::revival_prompts_use_canonical_system_notification_and_neutralize_nested_tags -- --exact
+          cargo test -p fabushi-mahayana-host --test android_background_completion_shipping_contract -- --nocapture
+          cargo test -p fabushi-android-host-jni tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host -- --exact
+
       - name: Verify exact-HEAD constants composer production owner
         run: |
           set -euo pipefail

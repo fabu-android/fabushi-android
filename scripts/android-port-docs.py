@@ -150,6 +150,97 @@ AGENT_KV_SOURCE_SPECS = {
 }
 AGENT_KV_SOURCE_SPEC_BY_PATH = AGENT_KV_SOURCE_SPECS
 
+
+BACKGROUND_COMPLETION_RESPONSIBILITY_ID = 'AGENT-GENERATED-SUBAGENT-001'
+BACKGROUND_COMPLETION_PRODUCTION_STEP = 'Verify exact-HEAD background completion production owner'
+BACKGROUND_COMPLETION_TEST_STEP = 'Test exact-HEAD background completion production owner'
+BACKGROUND_COMPLETION_SOURCE_SPECS = {
+    'source/packages/agent/actions/background-task-completion.ts': {
+        'symbols': [
+            'BackgroundTaskCompletion',
+            'BackgroundCompletionsPrompt',
+            'formatBackgroundCompletions',
+            'neutralizeBackgroundTaskDetailCloseTags',
+        ],
+        'source_owner': (
+            'Desktop background-task completion formatter owns canonical system_notification '
+            'prompt formatting, completion metadata and notification acknowledgement policy'
+        ),
+        'android_owner': (
+            'Rust Host completion_revivals formatter consumed by AndroidJsonHost durable '
+            'background completion revival turns'
+        ),
+        'android_targets': [
+            'source/packages/constants/src/system_notification.rs',
+            'source/host/src/extensions/transcript/completion_revivals.rs',
+            'source/host/src/android_json_runtime.rs',
+            'source/android-host-jni/src/lib.rs',
+            'source/host/tests/android_background_completion_shipping_contract.rs',
+        ],
+        'production_target': 'source/host/src/extensions/transcript/completion_revivals.rs',
+        'test_target': 'source/host/tests/android_background_completion_shipping_contract.rs',
+        'focused_tests': [
+            'source/host/tests/android_background_completion_shipping_contract.rs::background_completion_formatter_uses_canonical_system_notification_wrapper',
+            'source/android-host-jni/src/lib.rs::tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent/actions/background-task-completion-action-handler.ts': {
+        'symbols': [
+            'BackgroundTaskCompletionActionHandler',
+            'prepareFollowupTurn',
+            'handle',
+        ],
+        'source_owner': (
+            'Desktop BackgroundTaskCompletionActionHandler owns the hidden simulated-user '
+            'completion follow-up turn and dispatch into the Agent run loop'
+        ),
+        'android_owner': (
+            'Rust AndroidJsonHost durable background completion revival queue plus canonical '
+            'ProductionTurnDispatch/turn journal; JNI only transports the Host runtime'
+        ),
+        'android_targets': [
+            'source/host/src/extensions/transcript/completion_revivals.rs',
+            'source/host/src/android_json_runtime.rs',
+            'source/host/src/runner/durable_turn_journal.rs',
+            'source/android-host-jni/src/lib.rs',
+            'source/host/tests/android_background_completion_shipping_contract.rs',
+        ],
+        'production_target': 'source/host/src/android_json_runtime.rs',
+        'test_target': 'source/host/tests/android_background_completion_shipping_contract.rs',
+        'focused_tests': [
+            'source/host/tests/android_background_completion_shipping_contract.rs::shipping_runtime_routes_completion_prompts_through_jni_host_hidden_turn_queue',
+            'source/android-host-jni/src/lib.rs::tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/constants/system-notification.ts': {
+        'symbols': ['SYSTEM_NOTIFICATION_TAG'],
+        'source_owner': (
+            'Desktop system-notification constant owns the canonical system_notification prompt tag '
+            'consumed by shipping background completion and continuation callers'
+        ),
+        'android_owner': (
+            'Rust fabushi-constants system_notification contract consumed by shipping '
+            'Host completion_revivals formatting'
+        ),
+        'android_targets': [
+            'source/packages/constants/src/system_notification.rs',
+            'source/host/src/extensions/transcript/completion_revivals.rs',
+            'source/host/src/android_json_runtime.rs',
+            'source/android-host-jni/src/lib.rs',
+            'source/host/tests/android_background_completion_shipping_contract.rs',
+        ],
+        'production_target': 'source/host/src/extensions/transcript/completion_revivals.rs',
+        'test_target': 'source/host/tests/android_background_completion_shipping_contract.rs',
+        'focused_tests': [
+            'source/host/tests/android_background_completion_shipping_contract.rs::background_completion_formatter_uses_canonical_system_notification_wrapper',
+            'source/android-host-jni/src/lib.rs::tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host',
+        ],
+        'disposition': 'android-adapted',
+    },
+}
+
 COMPOSER_CONSTANT_SOURCE_PATH = 'source/packages/constants/composer.ts'
 COMPOSER_CONSTANT_RESPONSIBILITY_ID = 'COMPOSER-DRAFT-ANDROID-001'
 COMPOSER_CONSTANT_PRODUCTION_STEP = 'Verify exact-HEAD constants composer production owner'
@@ -994,7 +1085,7 @@ def _package_semantic_coverage(
         else:
             target_rows += 1
 
-        if path in AGENT_KV_SOURCE_SPEC_BY_PATH:
+        if path in AGENT_KV_SOURCE_SPEC_BY_PATH or path in BACKGROUND_COMPLETION_SOURCE_SPECS:
             has_focused_tests = any(
                 isinstance(source.get('focused_tests'), list)
                 and bool(source.get('focused_tests'))
@@ -1148,6 +1239,91 @@ def _ensure_agent_kv_semantic_mapping(
             notes.append(note)
     else:
         item['notes'] = note
+
+
+def _ensure_background_completion_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Map only Desktop package sources proven to feed shipping Android completion revival."""
+    if not any(path in new_by_path for path in BACKGROUND_COMPLETION_SOURCE_SPECS):
+        return
+    missing = sorted(set(BACKGROUND_COMPLETION_SOURCE_SPECS) - set(new_by_path))
+    require(
+        not missing,
+        'current Desktop background-completion inventory is incomplete: ' + ', '.join(missing),
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == BACKGROUND_COMPLETION_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'background-completion semantic mapping requires exactly one '
+        + BACKGROUND_COMPLETION_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    for path, spec in BACKGROUND_COMPLETION_SOURCE_SPECS.items():
+        source_object = new_by_path.get(path)
+        require(
+            source_object is not None,
+            'background-completion Desktop source is absent from current authority tree: ' + path,
+        )
+        require(
+            source_object.get('type') == 'blob'
+            and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+            'background-completion Desktop source has invalid blob/mode/type: ' + path,
+        )
+        source = existing_sources.get(path, {})
+        source.update({
+            'path': path,
+            'blob_sha': source_object['sha'],
+            'source_mode': source_object['mode'],
+            'source_type': source_object['type'],
+            'source_commit': desktop_commit,
+            'mapping_quality': 'semantic',
+            'symbols': list(spec['symbols']),
+            'focused_tests': list(spec['focused_tests']),
+            'android_targets': list(spec['android_targets']),
+            'source_owner': spec['source_owner'],
+            'android_owner': spec['android_owner'],
+        })
+        existing_sources[path] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda source: source.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for spec in BACKGROUND_COMPLETION_SOURCE_SPECS.values():
+        for target in spec['android_targets']:
+            if target not in raw_targets:
+                raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Current-main semantic closure is intentionally narrow: only background-task completion '
+        'formatting, its hidden follow-up action handler, and the canonical system_notification tag '
+        'are mapped to the shipping AndroidJsonHost completion-revival path. goal-continuation, '
+        'synthetic-user-message classification, agent/index registration and agent/state remain '
+        'unmapped until their additional shipping responsibilities have equivalent Android owners. '
+        'Exact-head Actions evidence is required and never promotes implementation/verification status.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
 
 
 def _merge_responsibility_sources(current: dict, predecessor: dict) -> dict:
@@ -2609,6 +2785,8 @@ def merge_responsibility_mapping(
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
     if any(path.startswith('source/packages/agent-kv/') for path in new_by_path):
         _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
+    if any(path in new_by_path for path in BACKGROUND_COMPLETION_SOURCE_SPECS):
+        _ensure_background_completion_semantic_mapping(responsibilities, new_by_path, current)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_constants_composer_semantic_mapping(responsibilities, new_by_path, current)
     if STRUCTURED_LOG_CONSTANT_SOURCE_PATH in new_by_path:
@@ -3047,6 +3225,87 @@ def merge_responsibility_mapping(
                 file=sys.stderr,
             )
 
+
+    if all(path in new_by_path for path in BACKGROUND_COMPLETION_SOURCE_SPECS):
+        background_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == BACKGROUND_COMPLETION_RESPONSIBILITY_ID
+        )
+        background_paths = set(BACKGROUND_COMPLETION_SOURCE_SPECS)
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = background_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            background_responsibility[evidence_key] = [
+                entry for entry in existing_evidence
+                if not any(path in background_paths for path in (
+                    entry.get('source_paths')
+                    if isinstance(entry.get('source_paths'), list)
+                    else [entry.get('source_path')]
+                ))
+            ]
+        background_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=BACKGROUND_COMPLETION_PRODUCTION_STEP,
+            test_step_name=BACKGROUND_COMPLETION_TEST_STEP,
+            evidence_label='background completion',
+        )
+        if background_evidence is not None:
+            for path, spec in BACKGROUND_COMPLETION_SOURCE_SPECS.items():
+                production_target = spec['production_target']
+                test_target = spec['test_target']
+                missing_targets = [
+                    target for target in spec['android_targets']
+                    if target not in tracked_android_paths
+                ]
+                require(
+                    not missing_targets,
+                    'background-completion Android target is not tracked at exact HEAD for '
+                    + path + ': ' + ', '.join(missing_targets),
+                )
+                common = {
+                    'source_paths': [path],
+                    'source_commit': current,
+                    'desktop_commit': current,
+                    'desktop_root_tree': tree_sha,
+                    'android_pr_head_sha': android['android_pr_head_sha'],
+                    'android_tested_checkout_sha': android['android_checkout_sha'],
+                    'workflow_sha': android['workflow_sha'],
+                    'workflow_name': background_evidence['workflow_name'],
+                    'workflow_id': background_evidence['workflow_id'],
+                    'workflow_path': background_evidence['workflow_path'],
+                    'workflow_event': background_evidence['workflow_event'],
+                    'workflow_repository': background_evidence['workflow_repository'],
+                    'workflow_run_id': background_evidence['workflow_run_id'],
+                    'workflow_job_name': background_evidence['workflow_job_name'],
+                    'workflow_job_id': background_evidence['workflow_job_id'],
+                    'workflow_job_run_attempt': background_evidence['workflow_job_run_attempt'],
+                    'run_attempt': background_evidence['run_attempt'],
+                    'run_conclusion': background_evidence['run_conclusion'],
+                    'result': 'passed',
+                }
+                background_responsibility['production_evidence'].append({
+                    **common,
+                    'kind': 'production-wiring',
+                    'workflow_step_name': background_evidence['production_step_name'],
+                    'workflow_step_number': background_evidence['production_step_number'],
+                    'evidence_ref': production_target + '#background-completion-production-owner',
+                })
+                background_responsibility['test_evidence'].append({
+                    **common,
+                    'kind': 'contract-test',
+                    'workflow_step_name': background_evidence['test_step_name'],
+                    'workflow_step_number': background_evidence['test_step_number'],
+                    'evidence_ref': test_target + '#background-completion-focused-tests',
+                    'focused_tests': list(spec['focused_tests']),
+                })
+        else:
+            print(
+                'WARNING: no successful same-exact-head background completion evidence; '
+                'background completion package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
     ids = {item.get('responsibility_id') for item in responsibilities}
 
     unmapped_paths = []
@@ -3131,6 +3390,8 @@ def merge_responsibility_mapping(
         agent_kv_spec = AGENT_KV_SOURCE_SPEC_BY_PATH.get(path)
         if agent_kv_spec is not None:
             row['disposition'] = agent_kv_spec['disposition']
+        elif path in BACKGROUND_COMPLETION_SOURCE_SPECS:
+            row['disposition'] = BACKGROUND_COMPLETION_SOURCE_SPECS[path]['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
             row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
         elif path == STRUCTURED_LOG_CONSTANT_SOURCE_PATH:

@@ -1709,4 +1709,25 @@ mod tests {
         assert!(!callback_event.to_string().contains("secret-oauth-code"));
     }
 
+    #[test]
+    fn background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host() {
+        let runtime_source = include_str!("../../host/src/android_json_runtime.rs");
+        let formatter_source =
+            include_str!("../../host/src/extensions/transcript/completion_revivals.rs");
+
+        assert!(runtime_source.contains("\"text\":build_shell_revival_prompt(completions)"));
+        assert!(runtime_source.contains("\"requestSource\":\"background-shell-revival\""));
+        assert!(runtime_source.contains("\"text\":build_subagent_revival_prompt(completions)"));
+        assert!(runtime_source.contains("\"requestSource\":\"cloud-agent-revival\""));
+        assert!(runtime_source.contains("\"hidden\":true"));
+        assert!(runtime_source.contains("\"appendUserMessage\":false"));
+        assert!(runtime_source.contains("\"skipAckObligation\":true"));
+        assert!(formatter_source.contains(
+            "fabushi_constants::system_notification::wrap_system_notification"
+        ));
+        assert!(formatter_source.contains(
+            "wrap_system_notification(&neutralize_background_task_detail_close_tags(&body))"
+        ));
+    }
+
 }
