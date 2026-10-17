@@ -108,9 +108,9 @@ jobs:
           ledger_bytes=Path('docs/android-port/authority/source-inventory-ledger.jsonl').read_bytes()
           rows=[json.loads(line) for line in ledger_bytes.decode('utf-8').splitlines() if line.strip()]
           assert hashlib.sha256(ledger_bytes).hexdigest()==m['ledger_sha256']
-          assert m['desktop_commit']=='b6146c9d3d8da83030798334695b27c9e4884f46'
+          assert m['desktop_commit']=='ca618ae19add78872fcac7cb86bf8754a4ad7a55'
           assert m['source_commit']==m['desktop_commit']
-          assert m['desktop_root_tree']=='2355aa184197641c6edc465d03e87a2156d626ad'
+          assert m['desktop_root_tree']=='b0337f9bd17e5dc0c7165e89331aaf2748f52a74'
           assert m['tracked_non_tree_entries']==8272 and len(rows)==8272
           assert m['tree_entries']==9427
           for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
