@@ -1255,7 +1255,9 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
     def test_workflow_persists_generated_package_coverage_and_diagnostics(self):
         workflow = (ROOT / '.github' / 'workflows' / 'android-port-docs.yml').read_text(encoding='utf-8')
         generator = SCRIPT.read_text(encoding='utf-8')
-        self.assertIn("save(OUT / 'packages-semantic-coverage.json', package_coverage)", generator)
+        self.assertIn("'packages-semantic-coverage.json': package_coverage", generator)
+        self.assertIn("for filename, document in generated_outputs.items():", generator)
+        self.assertIn("save(OUT / filename, document)", generator)
         self.assertIn('docs/android-port/generated/packages-semantic-coverage.json', workflow)
         self.assertIn('docs/android-port/generated/rejected-android-targets.json', workflow)
         self.assertIn("assert coverage['complete_rows'] + coverage['strict_incomplete_rows'] == 852", workflow)
