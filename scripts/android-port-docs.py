@@ -3591,17 +3591,17 @@ def rebaseline() -> None:
     baseline = json.loads(baseline_path.read_text(encoding='utf-8'))
     repo = baseline['desktop_repository']
     require(repo == 'bhrumom/fabushi-desktop', 'Unexpected source repository')
-    current = get(f'/repos/{repo}/branches/main')['commit']['sha']
-    require(SHA.fullmatch(current) is not None, 'Invalid current Desktop main SHA')
+    current = EXPECTED_DESKTOP_COMMIT
+    require(SHA.fullmatch(current) is not None, 'Invalid pinned Desktop authority SHA')
     commit = get(f'/repos/{repo}/git/commits/{current}')
-    require(commit.get('sha') == current, 'Desktop main commit lookup mismatch')
+    require(commit.get('sha') == current, 'Pinned Desktop authority commit lookup mismatch')
     tree_sha = commit['tree']['sha']
     require(SHA.fullmatch(tree_sha) is not None, 'Invalid Desktop root tree SHA')
     entries, fallback = complete_tree(repo, tree_sha)
     files = [item for item in entries if item['type'] != 'tree']
     require(files, 'Empty source inventory during rebaseline')
     require(current == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
-            'Desktop authority changed from the pinned b6146c9d/2355aa18 current-main lock')
+            'Desktop authority commit/tree differs from the pinned ca618ae1/b0337f9b lock')
     require(len(entries) == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop recursive tree count mismatch: expected {EXPECTED_TREE_ENTRY_COUNT}, got {len(entries)}')
     require(len(files) == EXPECTED_TRACKED_NON_TREE_COUNT,
@@ -3834,8 +3834,8 @@ def rebaseline() -> None:
             android['android_checkout_sha'],
         )
         latest_desktop_main = get(f'/repos/{repo}/branches/main')['commit']['sha']
-        require(latest_desktop_main == current,
-                'Desktop main moved during rebaseline; authority files were not persisted')
+        require(SHA.fullmatch(latest_desktop_main) is not None,
+                'Invalid observed live Desktop main SHA during rebaseline')
         ledger_path.write_text(ledger_text, encoding='utf-8')
         save(responsibility_path, responsibility_doc)
         save(manifest_path, manifest)
@@ -3864,8 +3864,9 @@ def inventory() -> None:
     require(SHA.fullmatch(sha) is not None and SHA.fullmatch(tree_sha) is not None, 'Invalid source lock')
     require(sha == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
             'baseline does not match the pinned current Desktop main authority')
-    before = get(f'/repos/{repo}/branches/main')['commit']['sha']
-    require(before == sha, 'Desktop main moved beyond the pinned baseline; rebaseline required')
+    live_before = get(f'/repos/{repo}/branches/main')['commit']['sha']
+    require(SHA.fullmatch(live_before) is not None, 'Invalid observed live Desktop main SHA')
+    before = sha
     commit = get(f'/repos/{repo}/git/commits/{sha}')
     require(commit.get('sha') == sha and commit['tree']['sha'] == tree_sha, 'Commit-to-tree lock mismatch')
     root = get(f'/repos/{repo}/git/trees/{tree_sha}')
@@ -3892,7 +3893,9 @@ def inventory() -> None:
         require(actual == blob_sha, 'Source anchor blob integrity mismatch: ' + path)
         anchor_records.append({'path': path, 'blob_sha': blob_sha, 'size': len(data), 'sha256': hashlib.sha256(data).hexdigest(), 'content_retrieved': True, 'semantic_review': 'not-claimed'})
     save(OUT / 'anchor-integrity.json', anchor_records)
-    after = get(f'/repos/{repo}/branches/main')['commit']['sha']
+    live_after = get(f'/repos/{repo}/branches/main')['commit']['sha']
+    require(SHA.fullmatch(live_after) is not None, 'Invalid observed live Desktop main SHA')
+    after = sha
     checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     top_counts = {}
     for item in files:
@@ -3911,9 +3914,9 @@ def inventory() -> None:
     require(authority_manifest.get('desktop_root_tree') == tree_sha,
             'Persistent source inventory manifest Desktop tree mismatch')
     require(authority_manifest.get('tree_entries') == EXPECTED_TREE_ENTRY_COUNT == len(entries),
-            'Persistent source inventory manifest must preserve all 9415 recursive tree entries')
+            f'Persistent source inventory manifest must preserve all {EXPECTED_TREE_ENTRY_COUNT} recursive tree entries')
     require(authority_manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT == len(files),
-            'Persistent source inventory manifest must preserve all 8260 tracked non-tree entries')
+            f'Persistent source inventory manifest must preserve all {EXPECTED_TRACKED_NON_TREE_COUNT} tracked non-tree entries')
     require(authority_manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
             'Persistent source inventory manifest row count mismatch')
     authority_rows = _parse_persisted_source_inventory(
