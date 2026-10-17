@@ -1333,6 +1333,8 @@ def merge_responsibility_mapping(
                 file=sys.stderr,
             )
 
+    ids = {item.get('responsibility_id') for item in responsibilities}
+
     unmapped_paths = []
     coverage_only_paths = []
     missing_dispositions = []
