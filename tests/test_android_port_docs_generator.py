@@ -13,8 +13,8 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
-CURRENT_DESKTOP_COMMIT = "428dfdaaa37de3e5da20496a4e968fe439178c7b"
-CURRENT_DESKTOP_TREE = "94da6ac98384ccee7a8e0eff92288c46e47a48ff"
+CURRENT_DESKTOP_COMMIT = "b6146c9d3d8da83030798334695b27c9e4884f46"
+CURRENT_DESKTOP_TREE = "2355aa184197641c6edc465d03e87a2156d626ad"
 
 
 def load_generator():
@@ -228,6 +228,41 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 {"source/packages/agent-kv/agent-store.ts": {"sha": "1" * 40, "mode": "100644", "type": "blob"}},
                 CURRENT_DESKTOP_COMMIT,
             )
+
+    def test_official_device_registration_sources_map_without_claiming_verification(self):
+        module = load_generator()
+        responsibilities = [
+            {"responsibility_id": "ACCOUNT-SESSION-001", "desktop_sources": [], "android_target": []},
+            {"responsibility_id": "REMOTE-COMPUTER-001", "desktop_sources": [], "android_target": []},
+        ] + [
+            {"responsibility_id": f"RESP-{index:03d}", "desktop_sources": []}
+            for index in range(3, 307)
+        ]
+        inventory = {
+            path: {
+                "sha": (f"{index:040x}")[-40:],
+                "mode": "100644",
+                "type": "blob",
+            }
+            for index, path in enumerate(module.OFFICIAL_DEVICE_SOURCE_SPECS, start=1)
+        }
+        module._ensure_official_device_registration_semantic_mapping(
+            responsibilities, inventory, CURRENT_DESKTOP_COMMIT
+        )
+        by_id = {item["responsibility_id"]: item for item in responsibilities}
+        self.assertEqual(len(responsibilities), 306)
+        for path, spec in module.OFFICIAL_DEVICE_SOURCE_SPECS.items():
+            source = next(
+                entry
+                for entry in by_id[spec["responsibility_id"]]["desktop_sources"]
+                if entry["path"] == path
+            )
+            self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+            self.assertEqual(source["blob_sha"], inventory[path]["sha"])
+            self.assertEqual(source["mapping_quality"], "semantic")
+            self.assertEqual(source["android_targets"], spec["android_targets"])
+            self.assertTrue(source["source_owner"])
+            self.assertTrue(source["android_owner"])
 
     def test_legacy_top_level_fallback_is_not_a_semantic_anchor(self):
         module = load_generator()
@@ -628,7 +663,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8268, 9423),
+            (8258, 9412, 8272, 9427),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40

@@ -3,8 +3,8 @@
   "observed_date": "2026-10-17",
   "desktop_repository": "bhrumom/fabushi-desktop",
   "desktop_branch": "main",
-  "desktop_commit": "428dfdaaa37de3e5da20496a4e968fe439178c7b",
-  "desktop_root_tree": "94da6ac98384ccee7a8e0eff92288c46e47a48ff",
+  "desktop_commit": "b6146c9d3d8da83030798334695b27c9e4884f46",
+  "desktop_root_tree": "2355aa184197641c6edc465d03e87a2156d626ad",
   "android_repository": "fabu-android/fabushi-android",
   "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
   "android_pr": 3,
@@ -33,8 +33,8 @@
     "docs/specs/offline-first-installable-mini-app-platform.md",
     "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
   ],
-  "rebaseline_note": "Historical predecessor authority 12a4e29819592e3a7e32f7435cb0cf2e3cc53848/tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2 had 8258 non-tree/9412 recursive entries. Current Desktop main is 428dfdaaa37de3e5da20496a4e968fe439178c7b/tree 94da6ac98384ccee7a8e0eff92288c46e47a48ff and must be enumerated in Actions (8268 non-tree/9423 recursive entries).",
-  "rebaseline_requested_at": "2026-10-17T13:26:12Z",
+  "rebaseline_note": "Historical predecessor authority 12a4e29819592e3a7e32f7435cb0cf2e3cc53848/tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2 had 8258 non-tree/9412 recursive entries. Current Desktop main is b6146c9d3d8da83030798334695b27c9e4884f46/tree 2355aa184197641c6edc465d03e87a2156d626ad and must be enumerated in Actions (8272 non-tree/9427 recursive entries).",
+  "rebaseline_requested_at": "2026-10-17T14:05:36Z",
   "desktop_main_before": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
-  "desktop_main_after": "428dfdaaa37de3e5da20496a4e968fe439178c7b"
+  "desktop_main_after": "b6146c9d3d8da83030798334695b27c9e4884f46"
 }

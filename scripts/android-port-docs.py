@@ -48,8 +48,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9423
-EXPECTED_TRACKED_NON_TREE_COUNT = 8268
+EXPECTED_TREE_ENTRY_COUNT = 9427
+EXPECTED_TRACKED_NON_TREE_COUNT = 8272
 PREDECESSOR_TREE_ENTRY_COUNT = 9412
 PREDECESSOR_TRACKED_NON_TREE_COUNT = 8258
 EXPECTED_PACKAGES_SOURCE_COUNT = 852
@@ -65,8 +65,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '428dfdaaa37de3e5da20496a4e968fe439178c7b'
-EXPECTED_DESKTOP_TREE = '94da6ac98384ccee7a8e0eff92288c46e47a48ff'
+EXPECTED_DESKTOP_COMMIT = 'b6146c9d3d8da83030798334695b27c9e4884f46'
+EXPECTED_DESKTOP_TREE = '2355aa184197641c6edc465d03e87a2156d626ad'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
 PREDECESSOR_DESKTOP_TREE = '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
 
@@ -230,6 +230,110 @@ MCP_TOOL_TIMEOUT_SOURCE_SPEC = {
     ],
     'disposition': 'android-adapted',
 }
+
+
+OFFICIAL_DEVICE_SOURCE_SPECS = {
+    'source/electron-main/account/auth-service-contract.ts': {
+        'responsibility_id': 'ACCOUNT-SESSION-001',
+        'symbols': ['FabushiDeviceAgentSession', 'AuthServicePort.deviceAgentSession'],
+        'source_owner': 'Desktop AuthServicePort device-agent session contract',
+        'android_owner': 'Rust AndroidAccountService session owner exposed through typed Coordinator authDeviceAgentSession',
+        'android_targets': [
+            'source/host/src/account_service.rs',
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/electron-main/main-production-services.ts': {
+        'responsibility_id': 'ACCOUNT-SESSION-001',
+        'symbols': ['ProductionAccountAuthService.deviceAgentSession'],
+        'source_owner': 'Desktop production account service contract',
+        'android_owner': 'Rust AndroidAccountService plus typed AndroidCoordinatorRuntime account boundary',
+        'android_targets': [
+            'source/host/src/account_service.rs',
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/product/fabushi/fabushi-account-service.ts': {
+        'responsibility_id': 'ACCOUNT-SESSION-001',
+        'symbols': ['FabushiAuthService.deviceAgentSession'],
+        'source_owner': 'Desktop FabushiAuthService deviceAgentSession token/device/session issuance',
+        'android_owner': 'Rust AndroidAccountService canonical Fabushi session owner',
+        'android_targets': [
+            'source/host/src/account_service.rs',
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/product/fabushi/fabushi-account-service.contract.test.ts': {
+        'responsibility_id': 'ACCOUNT-SESSION-001',
+        'symbols': ['deviceAgentSession contract tests'],
+        'source_owner': 'Desktop Fabushi account device-session contract tests',
+        'android_owner': 'Rust AndroidAccountService and Android account/session contract tests',
+        'android_targets': [
+            'source/host/src/account_service.rs',
+            'mobile/android/app/src/test/java/com/ombhrum/fabushi/RemoteBindingFencePolicyTest.kt',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/product/fabushi/fabushi-account-adapters.ts': {
+        'responsibility_id': 'REMOTE-COMPUTER-001',
+        'symbols': ['createFabushiProductionAccountOAuthBinding', 'createFabushiOfficialDeviceRegistryService'],
+        'source_owner': 'Desktop production account adapter binding official device registry lifecycle to account changes',
+        'android_owner': 'FabushiRemoteDeviceGateway lifecycle driven by typed Coordinator account session projection',
+        'android_targets': [
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/product/fabushi/fabushi-official-device-registry.ts': {
+        'responsibility_id': 'REMOTE-COMPUTER-001',
+        'symbols': ['FabushiOfficialDeviceRegistryService', 'resolveFabushiDeviceGatewayUrl', 'FABUSHI_APP_AGENT_STATUS_TOOL'],
+        'source_owner': 'Desktop official-device WSS registration owner with account/revoke fencing and read-only status admission',
+        'android_owner': 'FabushiRemoteDeviceGateway plus FabushiAppAgentSurface; current Android surface requires fresh parity review because it is broader than Desktop status-only registration',
+        'android_targets': [
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+            'source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/product/fabushi/fabushi-official-device-registry.contract.test.ts': {
+        'responsibility_id': 'REMOTE-COMPUTER-001',
+        'symbols': ['official registry account-switch/revoke/token-boundary/non-retry contracts'],
+        'source_owner': 'Desktop official-device registration contract tests',
+        'android_owner': 'Android remote-device gateway, command journal and App Agent surface tests',
+        'android_targets': [
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+            'mobile/android/app/src/test/java/com/ombhrum/fabushi/RemoteCommandJournalTest.kt',
+            'mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiAppAgentSurfaceTest.kt',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/product/fabushi/ws-shim.d.ts': {
+        'responsibility_id': 'REMOTE-COMPUTER-001',
+        'symbols': ['WebSocket type shim'],
+        'source_owner': 'Desktop Node ws compile-time shim for the official-device registry transport',
+        'android_owner': 'Android OkHttp WebSocket transport in FabushiRemoteDeviceGateway',
+        'android_targets': [
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+        ],
+        'disposition': 'not-applicable-with-replacement',
+    },
+    '.github/workflows/fdn-official-device-registration.yml': {
+        'responsibility_id': 'REMOTE-COMPUTER-001',
+        'symbols': ['FDN official device registration exact-head acceptance'],
+        'source_owner': 'Desktop exact-head official-device registration CI gate',
+        'android_owner': 'Android exact-head parity CI plus remote-device gateway focused coverage',
+        'android_targets': [
+            '.github/workflows/android-parity-full-ci.yml',
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+        ],
+        'disposition': 'not-applicable-with-replacement',
+    },
+}
+
 
 
 
@@ -1502,7 +1606,7 @@ def _validate_rebaseline_boundary(
                 and prior_manifest.get('desktop_main_before') in {PREDECESSOR_DESKTOP_COMMIT, current},
                 'current source manifest Desktop main lineage mismatch')
     else:
-        raise ValueError('persisted source manifest is neither the pinned historical 8258/9412 predecessor nor the current 8268/9423 authority')
+        raise ValueError('persisted source manifest is neither the pinned historical 8258/9412 predecessor nor the current 8272/9427 authority')
     require(prior_manifest.get('source_commit') == prior_commit,
             'persisted source manifest source_commit does not match its Desktop commit')
     require(prior_manifest.get('tree_entries') == prior_tree_expected,
@@ -1881,6 +1985,79 @@ def _ensure_mcp_tool_timeout_semantic_mapping(
         item['notes'] = note
 
 
+
+def _ensure_official_device_registration_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach the new Desktop official-device/account production sources without inheriting verification."""
+    if not any(path in new_by_path for path in OFFICIAL_DEVICE_SOURCE_SPECS):
+        return
+    missing = sorted(set(OFFICIAL_DEVICE_SOURCE_SPECS) - set(new_by_path))
+    require(not missing, 'current Desktop official-device source set is incomplete: ' + ', '.join(missing))
+    by_id = {
+        item.get('responsibility_id'): item
+        for item in responsibilities
+        if item.get('responsibility_id')
+    }
+    required_ids = {spec['responsibility_id'] for spec in OFFICIAL_DEVICE_SOURCE_SPECS.values()}
+    missing_ids = sorted(required_ids - set(by_id))
+    require(not missing_ids, 'official-device mapping responsibility is missing: ' + ', '.join(missing_ids))
+    for path, spec in OFFICIAL_DEVICE_SOURCE_SPECS.items():
+        source_object = new_by_path[path]
+        require(
+            source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+            'official-device Desktop source has invalid blob/mode/type: ' + path,
+        )
+        item = by_id[spec['responsibility_id']]
+        existing_sources = {
+            source.get('path'): dict(source)
+            for source in item.get('desktop_sources', [])
+            if isinstance(source, dict) and isinstance(source.get('path'), str)
+        }
+        source = existing_sources.get(path, {})
+        source.update({
+            'path': path,
+            'blob_sha': source_object['sha'],
+            'source_mode': source_object['mode'],
+            'source_type': source_object['type'],
+            'source_commit': desktop_commit,
+            'mapping_quality': 'semantic',
+            'symbols': list(spec['symbols']),
+            'android_targets': list(spec['android_targets']),
+            'source_owner': spec['source_owner'],
+            'android_owner': spec['android_owner'],
+        })
+        existing_sources[path] = source
+        item['desktop_sources'] = sorted(
+            existing_sources.values(), key=lambda value: value.get('path', '')
+        )
+        raw_targets = item.get('android_target')
+        if not isinstance(raw_targets, list):
+            raw_targets = []
+        for target in spec['android_targets']:
+            if target not in raw_targets:
+                raw_targets.append(target)
+        item['android_target'] = raw_targets
+        note = (
+            'Desktop official-device registration authority was added at ' + desktop_commit
+            + '; this source mapping is provenance-only and remains unreviewed/not-verified. '
+            'Android currently has a real FabushiRemoteDeviceGateway production owner, but its '
+            'published tool surface is broader than the new Desktop status-only/read-only registry, '
+            'so exact semantic parity must be reviewed and proven before verification.'
+        )
+        notes = item.get('notes')
+        if isinstance(notes, str):
+            if note not in notes:
+                item['notes'] = notes + ' ' + note
+        elif isinstance(notes, list):
+            if note not in notes:
+                notes.append(note)
+        else:
+            item['notes'] = note
+
+
 def merge_responsibility_mapping(
     responsibility_path: Path,
     ledger_rows: list[dict],
@@ -1907,6 +2084,8 @@ def merge_responsibility_mapping(
         _ensure_constants_structured_log_semantic_mapping(responsibilities, new_by_path, current)
     if MCP_TOOL_TIMEOUT_SOURCE_PATH in new_by_path:
         _ensure_mcp_tool_timeout_semantic_mapping(responsibilities, new_by_path, current)
+    if any(path in new_by_path for path in OFFICIAL_DEVICE_SOURCE_SPECS):
+        _ensure_official_device_registration_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
         require(len(responsibilities) == expected_responsibility_count,
                 f'expected {expected_responsibility_count} responsibility definitions, got {len(responsibilities)}')
@@ -2399,6 +2578,8 @@ def merge_responsibility_mapping(
             row['disposition'] = STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['disposition']
         elif path == MCP_TOOL_TIMEOUT_SOURCE_PATH:
             row['disposition'] = MCP_TOOL_TIMEOUT_SOURCE_SPEC['disposition']
+        elif path in OFFICIAL_DEVICE_SOURCE_SPECS:
+            row['disposition'] = OFFICIAL_DEVICE_SOURCE_SPECS[path]['disposition']
         else:
             predecessor_row = predecessor_source_rows.get(path)
             inherited = predecessor_row.get('disposition') if predecessor_row else None
@@ -2575,7 +2756,7 @@ def rebaseline() -> None:
     files = [item for item in entries if item['type'] != 'tree']
     require(files, 'Empty source inventory during rebaseline')
     require(current == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
-            'Desktop authority changed from the pinned 428dfdaa/94da6ac9 current-main lock')
+            'Desktop authority changed from the pinned b6146c9d/2355aa18 current-main lock')
     require(len(entries) == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop recursive tree count mismatch: expected {EXPECTED_TREE_ENTRY_COUNT}, got {len(entries)}')
     require(len(files) == EXPECTED_TRACKED_NON_TREE_COUNT,
