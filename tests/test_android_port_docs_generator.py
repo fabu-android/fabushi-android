@@ -1770,6 +1770,89 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             workflow,
         )
 
+
+    def test_agent_exec_shell_mapping_uses_existing_remote_computer_owner_without_local_shell_grant(self):
+        module = load_generator()
+        source_path = module.AGENT_EXEC_SHELL_SOURCE_PATH
+        primary = {
+            "responsibility_id": module.AGENT_EXEC_SHELL_RESPONSIBILITY_ID,
+            "desktop_sources": [],
+            "source_owner": "Remote Computer owner",
+            "android_owner": "Authenticated Remote Runner owner",
+            "android_target": ["source/host/src/runner/remote_routed_tools.rs"],
+            "disposition": "android-adapted",
+        }
+        responsibilities = padded_responsibilities(primary)
+        source_object = {
+            "sha": module.AGENT_EXEC_SHELL_DESKTOP_BLOB,
+            "mode": "100644",
+            "type": "blob",
+        }
+        module._ensure_agent_exec_shell_semantic_mapping(
+            responsibilities,
+            {source_path: source_object},
+            CURRENT_DESKTOP_COMMIT,
+        )
+        owner = next(
+            item for item in responsibilities
+            if item["responsibility_id"] == module.AGENT_EXEC_SHELL_RESPONSIBILITY_ID
+        )
+        source = next(item for item in owner["desktop_sources"] if item["path"] == source_path)
+        self.assertEqual(source["blob_sha"], module.AGENT_EXEC_SHELL_DESKTOP_BLOB)
+        self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+        self.assertEqual(source["mapping_quality"], "semantic")
+        self.assertEqual(source["symbols"][-1], "shellExecutorResource")
+        self.assertIn("RemoteExecManager", source["source_owner"])
+        self.assertIn("AuthenticatedRemoteHostRunner", source["android_owner"])
+        self.assertIn("no unrestricted shell", source["android_owner"])
+        self.assertIn("source/shared/src/execution.rs", source["android_targets"])
+        self.assertIn("source/host/src/runner/remote_routed_tools.rs", source["android_targets"])
+        self.assertIn("source/host/src/runner/local_routed_tools.rs", source["android_targets"])
+        self.assertIn("source/box-exec-daemon/src/transport.rs", source["android_targets"])
+        self.assertTrue(source["focused_tests"])
+        self.assertEqual(module.AGENT_EXEC_SHELL_SOURCE_SPEC["disposition"], "android-adapted")
+
+    def test_agent_exec_shell_contract_is_remote_authenticated_and_local_shell_remains_absent(self):
+        shared = (ROOT / "source" / "shared" / "src" / "execution.rs").read_text(encoding="utf-8")
+        remote = (
+            ROOT / "source" / "host" / "src" / "runner" / "remote_routed_tools.rs"
+        ).read_text(encoding="utf-8")
+        local = (
+            ROOT / "source" / "host" / "src" / "runner" / "local_routed_tools.rs"
+        ).read_text(encoding="utf-8")
+        transport = (
+            ROOT / "source" / "box-exec-daemon" / "src" / "transport.rs"
+        ).read_text(encoding="utf-8")
+        workflow = (
+            ROOT / ".github" / "workflows" / "grok-android-architecture.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("pub struct ExecutionRequest {", shared)
+        self.assertIn("pub struct ExecutionResult {", shared)
+        self.assertIn("AuthenticatedRemoteHttpTransport", remote)
+        self.assertIn('name == "Shell"', remote)
+        self.assertIn('"shell",', remote)
+        self.assertIn('"Read" => LOCAL_FILE_READ_CAPABILITY,', local)
+        self.assertIn('"Write" => LOCAL_FILE_WRITE_CAPABILITY,', local)
+        self.assertNotIn('"Shell" =>', local)
+        self.assertIn('set("Authorization", &authorization)', transport)
+        self.assertIn('set("X-Fabushi-Account-Fence", &context.account_fence)', transport)
+        self.assertIn('set("X-Fabushi-Account-Epoch", &account_epoch)', transport)
+        self.assertIn("Side-effecting execution is deliberately sent exactly once", transport)
+        self.assertIn("Verify exact-HEAD agent-exec shell remote execution owner", workflow)
+        self.assertIn("Test exact-HEAD agent-exec shell remote execution owner", workflow)
+        self.assertIn(
+            "cargo test -p fabushi-android-box-exec-daemon "
+            "transport::tests::network_interruption_after_dispatch_is_outcome_unknown_without_blind_replay "
+            "-- --exact",
+            workflow,
+        )
+        self.assertIn(
+            "cargo test -p fabushi-mahayana-host "
+            "runner::local_routed_tools::tests::always_permission_executes_only_through_broker_and_runner "
+            "-- --exact",
+            workflow,
+        )
+
     def test_current_android_provenance_prefers_android_workflow_sha_and_rejects_stale_fallback(self):
         module = load_generator()
         head = "a" * 40

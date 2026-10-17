@@ -125,6 +125,40 @@ jobs:
           cargo test -p fabushi-android-mcp-core config::mcp_tool_call_timeout::tests::desktop_default_and_legacy_timeouts_are_one_hour -- --exact
           cargo test -p fabushi-mahayana-host runner::mcp_meta_routed_tools::tests::long_timeout_tier_uses_desktop_mcp_default_contract -- --exact
 
+
+      - name: Verify exact-HEAD agent-exec shell remote execution owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'pub struct ExecutionRequest {' source/shared/src/execution.rs
+          grep -Fq 'pub struct ExecutionResult {' source/shared/src/execution.rs
+          grep -Fq 'AuthenticatedRemoteHttpTransport' source/host/src/runner/remote_routed_tools.rs
+          grep -Fq 'name == "Shell"' source/host/src/runner/remote_routed_tools.rs
+          grep -Fq '"shell",' source/host/src/runner/remote_routed_tools.rs
+          grep -Fq 'runner: Arc<Mutex<Option<AuthenticatedRemoteHostRunner<AuthenticatedRemoteHttpTransport>>>>' source/host/src/runner/remote_routed_tools.rs
+          grep -Fq '"Read" => LOCAL_FILE_READ_CAPABILITY,' source/host/src/runner/local_routed_tools.rs
+          grep -Fq '"Write" => LOCAL_FILE_WRITE_CAPABILITY,' source/host/src/runner/local_routed_tools.rs
+          if grep -Fq '"Shell" =>' source/host/src/runner/local_routed_tools.rs; then
+            echo 'shipping Android local router must not expose unrestricted Shell' >&2
+            exit 1
+          fi
+          grep -Fq 'set("Authorization", &authorization)' source/box-exec-daemon/src/transport.rs
+          grep -Fq 'set("X-Fabushi-Account-Fence", &context.account_fence)' source/box-exec-daemon/src/transport.rs
+          grep -Fq 'set("X-Fabushi-Account-Epoch", &account_epoch)' source/box-exec-daemon/src/transport.rs
+          grep -Fq 'set("X-Fabushi-Permission-Grant-Id", &context.permission_grant_id)' source/box-exec-daemon/src/transport.rs
+          grep -Fq 'set("X-Fabushi-Device-Id", &context.device_id)' source/box-exec-daemon/src/transport.rs
+          grep -Fq 'Side-effecting execution is deliberately sent exactly once' source/box-exec-daemon/src/transport.rs
+      - name: Test exact-HEAD agent-exec shell remote execution owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-shared execution::tests::execution_request_rejects_unbounded_or_invalid_wire_inputs -- --exact
+          cargo test -p fabushi-android-box-exec-daemon transport::tests::execute_binds_bearer_account_epoch_operation_request_grant_and_device -- --exact
+          cargo test -p fabushi-android-box-exec-daemon transport::tests::network_interruption_after_dispatch_is_outcome_unknown_without_blind_replay -- --exact
+          cargo test -p fabushi-mahayana-host runner::remote_routed_tools::tests::binding_requires_explicit_known_executor_capabilities -- --exact
+          cargo test -p fabushi-mahayana-host runner::remote_routed_tools::tests::remote_tool_identity_changes_when_arguments_change -- --exact
+          cargo test -p fabushi-mahayana-host runner::local_routed_tools::tests::never_permission_hides_local_file_tools -- --exact
+          cargo test -p fabushi-mahayana-host runner::local_routed_tools::tests::always_permission_executes_only_through_broker_and_runner -- --exact
+
       - name: Verify exact-HEAD client-side tool v2 relay production owner
         run: |
           set -euo pipefail
