@@ -77,6 +77,10 @@ class FabushiAppAgentSurfaceTest {
         )
         assertFalse(FabushiRemoteDeviceGateway.isReadOnlyOfficialPreflight(writeShaped))
         assertFalse(FabushiRemoteDeviceGateway.isReadOnlyOfficialPreflight(JSONObject()))
+
+        val heartbeat = JSONObject(FabushiRemoteDeviceGateway.officialHeartbeatMessage(now))
+        assertEquals("heartbeat", heartbeat.getString("type"))
+        assertEquals(now, heartbeat.getLong("at"))
     }
 
     @Test

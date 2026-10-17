@@ -43,6 +43,7 @@ internal class FabushiRemoteDeviceGateway(
         private const val MaxMessageBytes = 32 * 1024 * 1024
         private const val MaxStatusResultBytes = 64 * 1024
         private const val SessionExpiryLeewayMs = 30_000L
+        private const val HeartbeatIntervalMs = 25_000L
 
         // Canonical Desktop b614 official-device registration exposes only the
         // bounded read-only status tool. Richer Android semantic tools remain
@@ -81,6 +82,12 @@ internal class FabushiRemoteDeviceGateway(
             val targets = preflight.optJSONArray("targets") ?: return false
             return preflight.optString("impact") == "none" && targets.length() == 0
         }
+
+        internal fun officialHeartbeatMessage(nowMs: Long): String =
+            JSONObject()
+                .put("type", "heartbeat")
+                .put("at", nowMs)
+                .toString()
     }
 
     private data class AgentSession(
@@ -106,6 +113,7 @@ internal class FabushiRemoteDeviceGateway(
     private var socket: WebSocket? = null
     private var activeSession: AgentSession? = null
     private var registered = false
+    private var heartbeatJob: Job? = null
 
     fun setLoggedIn(loggedIn: Boolean) {
         synchronized(stateLock) { desiredLoggedIn = loggedIn }
@@ -185,6 +193,7 @@ internal class FabushiRemoteDeviceGateway(
                     webSocket.close(1011, "registration failed")
                     return
                 }
+                startHeartbeat(webSocket, session)
                 appendTrace(
                     "register-sent",
                     mapOf("deviceId" to session.deviceId.take(128), "sessionId" to session.sessionId.take(96)),
@@ -220,6 +229,7 @@ internal class FabushiRemoteDeviceGateway(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                stopHeartbeat()
                 synchronized(stateLock) {
                     if (socket === webSocket) {
                         socket = null
@@ -230,6 +240,7 @@ internal class FabushiRemoteDeviceGateway(
             }
 
             override fun onFailure(webSocket: WebSocket, error: Throwable, response: Response?) {
+                stopHeartbeat()
                 synchronized(stateLock) {
                     if (socket === webSocket) {
                         socket = null
@@ -419,7 +430,29 @@ internal class FabushiRemoteDeviceGateway(
             }
         }
 
+    private fun startHeartbeat(webSocket: WebSocket, session: AgentSession) {
+        stopHeartbeat()
+        heartbeatJob = scope.launch {
+            while (isActive) {
+                delay(HeartbeatIntervalMs)
+                val shouldSend = synchronized(stateLock) {
+                    socket === webSocket &&
+                        registered &&
+                        activeSession?.let { isSameSession(it, session) } == true
+                }
+                if (!shouldSend) break
+                if (!webSocket.send(officialHeartbeatMessage(System.currentTimeMillis()))) break
+            }
+        }
+    }
+
+    private fun stopHeartbeat() {
+        heartbeatJob?.cancel()
+        heartbeatJob = null
+    }
+
     private fun stopConnection(reason: String) {
+        stopHeartbeat()
         val previousRegistered: Boolean
         val previousSocket: WebSocket?
         synchronized(stateLock) {
