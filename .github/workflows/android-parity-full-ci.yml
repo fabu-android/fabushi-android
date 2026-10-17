@@ -10,7 +10,7 @@ permissions:
 # Keep only the newest exact HEAD runnable for this workflow/PR. Superseded SHAs are
 # predecessor evidence and must not consume the runner queue ahead of current acceptance.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 env:
