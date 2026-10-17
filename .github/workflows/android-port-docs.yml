@@ -189,8 +189,8 @@ jobs:
             assert anchor['source_type'] == row['source_type']
             assert anchor['focused_tests'] and anchor['android_targets']
             for evidence_key, step_name in (
-              ('production_evidence', 'Build exact-HEAD native Mahayana Coordinator Host'),
-              ('test_evidence', 'Compile, unit-test, lint, and assemble non-release acceptance APKs'),
+              ('production_evidence', 'Build exact-HEAD agent-kv production owners'),
+              ('test_evidence', 'Test exact-HEAD agent-kv production owners'),
             ):
               candidates = [
                 evidence for evidence in agent_kv_owner.get(evidence_key, [])
@@ -198,11 +198,16 @@ jobs:
               ]
               assert any(
                 evidence.get('result') == 'passed'
-                and evidence.get('workflow_name') == 'Android Parity Full CI'
-                and evidence.get('workflow_job_name') == 'android-build-unit-lint'
+                and evidence.get('workflow_name') == 'Grok Android Architecture'
+                and evidence.get('workflow_id') == 364026685
+                and evidence.get('workflow_path') == '.github/workflows/grok-android-architecture.yml'
+                and evidence.get('workflow_event') == 'pull_request'
+                and evidence.get('workflow_repository') == 'fabu-android/fabushi-android'
+                and evidence.get('workflow_job_name') == 'agent-kv-exact-head-evidence'
                 and evidence.get('workflow_step_name') == step_name
                 and evidence.get('workflow_run_id')
                 and evidence.get('workflow_job_id')
+                and evidence.get('run_conclusion') == 'success'
                 and evidence.get('android_pr_head_sha') == expected
                 and evidence.get('android_tested_checkout_sha') == expected
                 and evidence.get('workflow_sha') == expected
