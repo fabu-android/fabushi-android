@@ -48,8 +48,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9415
-EXPECTED_TRACKED_NON_TREE_COUNT = 8260
+EXPECTED_TREE_ENTRY_COUNT = 9423
+EXPECTED_TRACKED_NON_TREE_COUNT = 8268
 PREDECESSOR_TREE_ENTRY_COUNT = 9412
 PREDECESSOR_TRACKED_NON_TREE_COUNT = 8258
 EXPECTED_PACKAGES_SOURCE_COUNT = 852
@@ -65,8 +65,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = 'dc81eac2df50f6c08ae4daf98988076bfdc956d9'
-EXPECTED_DESKTOP_TREE = '04473e188c5088b66a7f984e5e89e6d47e75eafb'
+EXPECTED_DESKTOP_COMMIT = '49b325828abca503d0f38877d4f7cca588820739'
+EXPECTED_DESKTOP_TREE = 'a0506b8411ef49fffed70f3e5abe13a925a1ccad'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
 PREDECESSOR_DESKTOP_TREE = '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
 
@@ -1502,7 +1502,7 @@ def _validate_rebaseline_boundary(
                 and prior_manifest.get('desktop_main_before') in {PREDECESSOR_DESKTOP_COMMIT, current},
                 'current source manifest Desktop main lineage mismatch')
     else:
-        raise ValueError('persisted source manifest is neither the pinned historical 8258/9412 predecessor nor the current 8260/9415 authority')
+        raise ValueError('persisted source manifest is neither the pinned historical 8258/9412 predecessor nor the current 8268/9423 authority')
     require(prior_manifest.get('source_commit') == prior_commit,
             'persisted source manifest source_commit does not match its Desktop commit')
     require(prior_manifest.get('tree_entries') == prior_tree_expected,
@@ -2575,7 +2575,7 @@ def rebaseline() -> None:
     files = [item for item in entries if item['type'] != 'tree']
     require(files, 'Empty source inventory during rebaseline')
     require(current == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
-            'Desktop authority changed from the pinned dc81eac2/04473e18 current-main lock')
+            'Desktop authority changed from the pinned 49b32582/a0506b84 current-main lock')
     require(len(entries) == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop recursive tree count mismatch: expected {EXPECTED_TREE_ENTRY_COUNT}, got {len(entries)}')
     require(len(files) == EXPECTED_TRACKED_NON_TREE_COUNT,
