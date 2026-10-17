@@ -58,6 +58,84 @@ DEFAULT_RESPONSIBILITY_ARTIFACT = '12072277149'
 DEFAULT_RESPONSIBILITY_ARTIFACT_DIGEST = 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
 ANDROID_REPOSITORY = 'fabu-android/fabushi-android'
 
+AGENT_KV_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
+AGENT_KV_PRODUCTION_STEP = 'Build exact-HEAD native Mahayana Coordinator Host'
+AGENT_KV_TEST_STEP = 'Compile, unit-test, lint, and assemble non-release acceptance APKs'
+AGENT_KV_SOURCE_SPECS = {
+    'source/packages/agent-kv/agent-store.ts': {
+        'symbols': ['AgentMetadata', 'AgentMetadataSerde', 'AgentStore2', 'getDefaultAgentMetadata', 'generateBlobEncryptionKeyHex', 'isValidBlobEncryptionKeyHex'],
+        'source_owner': 'Desktop AgentStore2 and AgentMetadataSerde in source/packages/agent-kv/agent-store.ts',
+        'android_owner': 'Rust Host ProductionAgentStore plus agent-kv AgentMetadataSerde',
+        'android_targets': ['source/host/src/extensions/session/production_agent_store.rs', 'source/packages/agent-kv/src/agent_store.rs', 'source/packages/agent-kv/src/lib.rs'],
+        'production_target': 'source/host/src/extensions/session/production_agent_store.rs',
+        'test_target': 'source/packages/agent-kv/src/agent_store.rs',
+        'focused_tests': ['source/packages/agent-kv/src/agent_store.rs::tests::metadata_normalizes_legacy_values', 'source/packages/agent-kv/src/lib.rs::tests::typed_blob_and_metadata_roundtrip'],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent-kv/blob-store.ts': {
+        'symbols': ['BlobStore', 'isBlobDurable', 'toUint8Array', 'InMemoryBlobStore'],
+        'source_owner': 'Desktop content-addressed BlobStore in source/packages/agent-kv/blob-store.ts',
+        'android_owner': 'Rust agent-kv BlobStore with the existing Rust Host ProductionAgentStore adapter',
+        'android_targets': ['source/packages/agent-kv/src/blob_store.rs', 'source/host/src/extensions/session/production_agent_store.rs'],
+        'production_target': 'source/packages/agent-kv/src/blob_store.rs',
+        'test_target': 'source/packages/agent-kv/src/blob_store.rs',
+        'focused_tests': ['source/packages/agent-kv/src/blob_store.rs::tests::memory_missing_and_digest_validation', 'source/packages/agent-kv/src/blob_store.rs::tests::durable_file_store_detects_corruption'],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent-kv/blob-not-found-error.ts': {
+        'symbols': ['BlobNotFoundError', 'findBlobNotFoundError'],
+        'source_owner': 'Desktop BlobNotFoundError and cause-chain lookup in source/packages/agent-kv/blob-not-found-error.ts',
+        'android_owner': 'Rust BlobNotFoundError and BlobStoreError in the existing agent-kv crate',
+        'android_targets': ['source/packages/agent-kv/src/blob_not_found_error.rs', 'source/packages/agent-kv/src/blob_store.rs'],
+        'production_target': 'source/packages/agent-kv/src/blob_not_found_error.rs',
+        'test_target': 'source/packages/agent-kv/src/blob_not_found_error.rs',
+        'focused_tests': ['source/packages/agent-kv/src/blob_not_found_error.rs::tests::formats_missing_blob_context', 'source/packages/agent-kv/src/blob_store.rs::tests::memory_missing_and_digest_validation'],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent-kv/reference.ts': {
+        'symbols': ['Writeable', 'EagerReference', 'LazyReference'],
+        'source_owner': 'Desktop EagerReference and LazyReference in source/packages/agent-kv/reference.ts',
+        'android_owner': 'Rust BlobRef, EagerReference and LazyReference in the existing agent-kv crate',
+        'android_targets': ['source/packages/agent-kv/src/reference.rs', 'source/packages/agent-kv/src/typed_blob_store.rs', 'source/host/src/extensions/session/production_agent_store.rs'],
+        'production_target': 'source/packages/agent-kv/src/reference.rs',
+        'test_target': 'source/packages/agent-kv/src/reference.rs',
+        'focused_tests': ['source/packages/agent-kv/src/reference.rs::tests::sha256_is_strict_and_verified', 'source/packages/agent-kv/src/reference.rs::tests::eager_lazy_roundtrip'],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent-kv/serde.ts': {
+        'symbols': ['BlobType', 'Serde', 'Utf8Serde', 'ProtoSerde', 'toHex', 'fromHex'],
+        'source_owner': 'Desktop Utf8Serde, ProtoSerde and hex serialization in source/packages/agent-kv/serde.ts',
+        'android_owner': 'Rust Utf8Codec, JsonCodec and AgentMetadataSerde in the existing agent-kv crate',
+        'android_targets': ['source/packages/agent-kv/src/serde.rs', 'source/packages/agent-kv/src/agent_store.rs'],
+        'production_target': 'source/packages/agent-kv/src/serde.rs',
+        'test_target': 'source/packages/agent-kv/src/serde.rs',
+        'focused_tests': ['source/packages/agent-kv/src/serde.rs::tests::utf8_codec_round_trip_and_invalid_bytes_fail_closed', 'source/packages/agent-kv/src/serde.rs::tests::json_codec_round_trip_and_malformed_payload_fail_closed', 'source/packages/agent-kv/src/agent_store.rs::tests::metadata_normalizes_legacy_values'],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent-kv/subagent-states.ts': {
+        'symbols': ['resolveSubagentPersistedStates'],
+        'source_owner': 'Desktop persisted subagent-state resolution in source/packages/agent-kv/subagent-states.ts',
+        'android_owner': 'Rust resolve_subagent_state_references integrated by the existing ProductionAgentStore',
+        'android_targets': ['source/packages/agent-kv/src/subagent_states.rs', 'source/host/src/extensions/session/production_agent_store.rs'],
+        'production_target': 'source/host/src/extensions/session/production_agent_store.rs',
+        'test_target': 'source/packages/agent-kv/src/subagent_states.rs',
+        'focused_tests': ['source/packages/agent-kv/src/subagent_states.rs::tests::inline_fallback_and_missing_diagnostic', 'source/packages/agent-kv/src/subagent_states.rs::tests::fetches_concurrently_with_bound'],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent-kv/typed-blob-store.ts': {
+        'symbols': ['BLOB_METADATA_CALLBACK_SYMBOL', 'BlobMetadata', 'BlobMetadataCallback', 'getBlobMetadataCallback', 'unwrapBlobStore', 'TypedBlobStore'],
+        'source_owner': 'Desktop TypedBlobStore, metadata callbacks and cloud mirror boundary in source/packages/agent-kv/typed-blob-store.ts',
+        'android_owner': 'Rust TypedBlobStore and BlobMirror in the existing agent-kv crate',
+        'android_targets': ['source/packages/agent-kv/src/typed_blob_store.rs', 'source/packages/agent-kv/src/blob_store.rs', 'source/packages/agent-kv/src/lib.rs'],
+        'production_target': 'source/packages/agent-kv/src/typed_blob_store.rs',
+        'test_target': 'source/packages/agent-kv/src/typed_blob_store.rs',
+        'focused_tests': ['source/packages/agent-kv/src/typed_blob_store.rs::tests::metadata_and_mirror_write_through', 'source/packages/agent-kv/src/lib.rs::tests::typed_blob_and_metadata_roundtrip'],
+        'disposition': 'android-adapted',
+    },
+}
+AGENT_KV_SOURCE_SPEC_BY_PATH = AGENT_KV_SOURCE_SPECS
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ValueError(message)
@@ -246,27 +324,121 @@ def _has_real_owner(value: object) -> bool:
     )
 
 
+
+def _latest_exact_head_android_ci_evidence(android_head: str) -> dict | None:
+    """Wait for terminal exact-head Android Parity Full CI and return only successful job/step evidence."""
+    if not os.environ.get('GH_TOKEN'):
+        print('WARNING: GH_TOKEN is unavailable; agent-kv CI evidence remains incomplete', file=sys.stderr)
+        return None
+    try:
+        wait_seconds = max(0, int(os.environ.get('ANDROID_CI_EVIDENCE_WAIT_SECONDS', '1200')))
+    except ValueError:
+        wait_seconds = 1200
+    deadline = time.monotonic() + wait_seconds
+    while True:
+        try:
+            response = get(
+                f'/repos/{ANDROID_REPOSITORY}/actions/runs?head_sha={android_head}&per_page=100'
+            )
+            runs = [
+                run for run in response.get('workflow_runs', [])
+                if run.get('name') == 'Android Parity Full CI'
+                and run.get('head_sha') == android_head
+            ]
+            active = [run for run in runs if run.get('status') != 'completed']
+            terminal = [
+                run for run in runs
+                if run.get('status') == 'completed'
+                and run.get('conclusion') in {'success', 'failure'}
+            ]
+            for run in sorted(
+                terminal,
+                key=lambda value: (value.get('run_number') or 0, value.get('run_attempt') or 0),
+                reverse=True,
+            ):
+                jobs_response = get(
+                    f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run["id"]}/jobs?per_page=100'
+                )
+                job = next((
+                    value for value in jobs_response.get('jobs', [])
+                    if value.get('name') == 'android-build-unit-lint'
+                ), None)
+                if not job or job.get('status') != 'completed' or job.get('conclusion') != 'success':
+                    continue
+                steps = {
+                    value.get('name'): value
+                    for value in job.get('steps', [])
+                    if isinstance(value, dict) and isinstance(value.get('name'), str)
+                }
+                production_step = steps.get(AGENT_KV_PRODUCTION_STEP)
+                test_step = steps.get(AGENT_KV_TEST_STEP)
+                if not all(
+                    step and step.get('status') == 'completed' and step.get('conclusion') == 'success'
+                    for step in (production_step, test_step)
+                ):
+                    continue
+                return {
+                    'workflow_name': run['name'],
+                    'workflow_run_id': run['id'],
+                    'run_attempt': run.get('run_attempt'),
+                    'run_conclusion': run.get('conclusion'),
+                    'workflow_job_name': job['name'],
+                    'workflow_job_id': job['id'],
+                    'production_step_name': production_step['name'],
+                    'production_step_number': production_step.get('number'),
+                    'test_step_name': test_step['name'],
+                    'test_step_number': test_step.get('number'),
+                    'android_head': android_head,
+                }
+            if runs and not active:
+                print(
+                    'WARNING: terminal exact-head Android Parity Full CI has no successful '
+                    'android-build-unit-lint job with both required successful steps; '
+                    'agent-kv CI evidence remains incomplete',
+                    file=sys.stderr,
+                )
+                return None
+        except (RuntimeError, KeyError, TypeError, ValueError) as error:
+            print(
+                'WARNING: unable to read exact-head Android Parity Full CI evidence: '
+                + type(error).__name__,
+                file=sys.stderr,
+            )
+            return None
+        except OSError:
+            if time.monotonic() >= deadline:
+                return None
+        if time.monotonic() >= deadline:
+            print('WARNING: timed out waiting for exact-head Android Parity Full CI evidence', file=sys.stderr)
+            return None
+        time.sleep(15)
+
+
 def _package_action_job_passed(
     entry: dict,
     *,
     android_head: str,
     tracked_android_paths: set[str],
-    action_job_cache: dict[tuple[int, int, str], bool],
+    action_job_cache: dict[tuple[int, int, str, str], bool],
 ) -> bool:
-    """Count evidence only when a tracked Android file is backed by successful exact-head CI."""
+    """Count only a successful job and named successful step on the exact Android checkout."""
     run_id = entry.get('workflow_run_id')
     job_id = entry.get('workflow_job_id')
+    job_name = entry.get('workflow_job_name')
+    step_name = entry.get('workflow_step_name')
     evidence_ref = entry.get('evidence_ref')
     if (
         not isinstance(run_id, int) or isinstance(run_id, bool) or run_id <= 0
         or not isinstance(job_id, int) or isinstance(job_id, bool) or job_id <= 0
+        or not isinstance(job_name, str) or not job_name.strip()
+        or not isinstance(step_name, str) or not step_name.strip()
         or not isinstance(evidence_ref, str) or not evidence_ref.strip()
     ):
         return False
     evidence_path = evidence_ref.split('#', 1)[0]
     if evidence_path not in tracked_android_paths:
         return False
-    key = (run_id, job_id, android_head)
+    key = (run_id, job_id, android_head, step_name)
     if key not in action_job_cache:
         try:
             run = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}')
@@ -275,16 +447,30 @@ def _package_action_job_passed(
                 or (run.get('repository') or {}).get('full_name') != ANDROID_REPOSITORY
                 or run.get('head_sha') != android_head
                 or run.get('status') != 'completed'
-                or run.get('conclusion') != 'success'
+                or run.get('conclusion') not in {'success', 'failure'}
             ):
                 action_job_cache[key] = False
             else:
                 jobs = get(f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run_id}/jobs?per_page=100')
-                action_job_cache[key] = any(
-                    job.get('id') == job_id and job.get('status') == 'completed'
-                    and job.get('conclusion') == 'success'
-                    for job in jobs.get('jobs', [])
-                )
+                job = next((
+                    value for value in jobs.get('jobs', [])
+                    if value.get('id') == job_id
+                ), None)
+                if (
+                    not job or job.get('name') != job_name
+                    or job.get('status') != 'completed'
+                    or job.get('conclusion') != 'success'
+                ):
+                    action_job_cache[key] = False
+                else:
+                    step = next((
+                        value for value in job.get('steps', [])
+                        if value.get('name') == step_name
+                    ), None)
+                    action_job_cache[key] = bool(
+                        step and step.get('status') == 'completed'
+                        and step.get('conclusion') == 'success'
+                    )
         except (RuntimeError, KeyError, TypeError, ValueError, OSError):
             action_job_cache[key] = False
     return action_job_cache[key]
@@ -298,7 +484,7 @@ def _has_package_evidence(
     android_head: str,
     required_kinds: frozenset[str],
     tracked_android_paths: set[str],
-    action_job_cache: dict[tuple[int, int, str], bool],
+    action_job_cache: dict[tuple[int, int, str, str], bool],
 ) -> bool:
     """Require source-scoped evidence plus a successful exact-head Android CI job."""
     if not isinstance(entries, list):
@@ -332,7 +518,7 @@ def _package_semantic_coverage(
     responsibilities: list[dict],
     tracked_android_paths: set[str],
 ) -> dict:
-    """Report strict semantic/owner/target/disposition coverage for all 852 package source rows."""
+    """Report strict semantic/owner/target/disposition and same-head evidence for all package rows."""
     package_rows = [
         row for row in ledger_rows
         if str(row.get('source_path') or '').startswith('source/packages/')
@@ -348,22 +534,24 @@ def _package_semantic_coverage(
     android_owner_rows = 0
     target_rows = 0
     disposition_rows = 0
-    action_job_cache: dict[tuple[int, int, str], bool] = {}
+    action_job_cache: dict[tuple[int, int, str, str], bool] = {}
 
     for row in package_rows:
         path = row.get('source_path') or '<missing-source-path>'
         linked = []
+        linked_anchors = []
         for rid in row.get('responsibilities') or []:
             item = responsibility_by_id.get(rid)
             if item is None:
                 continue
-            has_semantic_anchor = any(
-                source.get('path') == path
+            matching_sources = [
+                source for source in item.get('desktop_sources') or []
+                if source.get('path') == path
                 and _source_mapping_quality(rid, source) == 'semantic'
-                for source in item.get('desktop_sources') or []
-            )
-            if has_semantic_anchor:
+            ]
+            if matching_sources:
                 linked.append(item)
+                linked_anchors.extend((item, source) for source in matching_sources)
 
         reasons = []
         if row.get('mapping_status') != 'semantic' or not linked:
@@ -371,8 +559,14 @@ def _package_semantic_coverage(
         else:
             semantic_rows += 1
 
-        has_source_owner = any(_has_real_owner(item.get('source_owner')) for item in linked)
-        has_android_owner = any(_has_real_owner(item.get('android_owner')) for item in linked)
+        has_source_owner = any(
+            _has_real_owner(source.get('source_owner') or item.get('source_owner'))
+            for item, source in linked_anchors
+        )
+        has_android_owner = any(
+            _has_real_owner(source.get('android_owner') or item.get('android_owner'))
+            for item, source in linked_anchors
+        )
         if has_source_owner:
             source_owner_rows += 1
         else:
@@ -423,13 +617,28 @@ def _package_semantic_coverage(
             if isinstance(target, str) and target in tracked_android_paths
         ]
         has_responsibility_target = any(
-            _real_android_targets(item.get('android_target'), tracked_android_paths)
-            for item in linked
+            _real_android_targets(
+                source.get('android_targets')
+                if isinstance(source.get('android_targets'), list)
+                else item.get('android_target'),
+                tracked_android_paths,
+            )
+            for item, source in linked_anchors
         )
         if not row_targets or len(valid_row_targets) != len(row_targets) or not has_responsibility_target:
             reasons.append('missing-valid-tracked-android-target')
         else:
             target_rows += 1
+
+        if path in AGENT_KV_SOURCE_SPEC_BY_PATH:
+            has_focused_tests = any(
+                isinstance(source.get('focused_tests'), list)
+                and bool(source.get('focused_tests'))
+                and all(isinstance(test, str) and test.strip() for test in source.get('focused_tests', []))
+                for _, source in linked_anchors
+            )
+            if not has_focused_tests:
+                reasons.append('missing-focused-android-tests')
 
         if row.get('disposition') not in ALLOWED_SOURCE_DISPOSITIONS:
             reasons.append('missing-or-invalid-disposition')
@@ -465,7 +674,9 @@ def _package_semantic_coverage(
         'policy': (
             'Every source/packages row requires an explicit semantic source anchor, real source_owner '
             'and android_owner, a tracked Android file target, and one legal disposition. Coverage-only '
-            'anchors and provenance-only evidence do not satisfy semantic mapping or verification.'
+            'anchors and provenance-only evidence do not satisfy semantic mapping or verification; '
+            'agent-kv sources additionally require source-specific tracked targets, focused tests, and '
+            'successful same-exact-head job/step evidence.'
         ),
     }
 
@@ -488,6 +699,85 @@ def _is_semantic_source_anchor(responsibility_id: str, source: dict) -> bool:
     if not isinstance(path, str) or not path:
         return False
     return _source_mapping_quality(responsibility_id, source) == 'semantic'
+
+
+
+def _ensure_agent_kv_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach seven current-main Agent KV sources to the existing canonical Agent lifecycle owner."""
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == AGENT_KV_RESPONSIBILITY_ID
+    ]
+    require(len(matches) == 1,
+            'agent-kv semantic mapping requires exactly one ' + AGENT_KV_RESPONSIBILITY_ID)
+    item = matches[0]
+    item['source_owner'] = (
+        'Desktop canonical Agent lifecycle plus AgentStore2/AgentMetadataSerde and the '
+        'source/packages/agent-kv storage/reference/serde/subagent owners'
+    )
+    item['android_owner'] = (
+        'Existing Rust Host ProductionAgentStore plus source/packages/agent-kv/src/*; '
+        'no parallel Agent store or session owner'
+    )
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    for path, spec in AGENT_KV_SOURCE_SPECS.items():
+        source_object = new_by_path.get(path)
+        require(source_object is not None,
+                'agent-kv Desktop source is absent from current authority tree: ' + path)
+        require(source_object.get('type') == 'blob'
+                and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+                'agent-kv Desktop source has invalid blob/mode/type: ' + path)
+        source = existing_sources.get(path, {})
+        source.update({
+            'path': path,
+            'blob_sha': source_object['sha'],
+            'source_mode': source_object['mode'],
+            'source_type': source_object['type'],
+            'source_commit': desktop_commit,
+            'mapping_quality': 'semantic',
+            'symbols': list(spec['symbols']),
+            'focused_tests': list(spec['focused_tests']),
+            'android_targets': list(spec['android_targets']),
+            'source_owner': spec['source_owner'],
+            'android_owner': spec['android_owner'],
+        })
+        existing_sources[path] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda source: source.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for spec in AGENT_KV_SOURCE_SPECS.values():
+        for target in spec['android_targets']:
+            if target not in raw_targets:
+                raw_targets.append(target)
+    item['android_target'] = raw_targets
+    item['android_disposition'] = 'android-adapted'
+    note = (
+        'Current-main Agent KV semantic mapping covers AgentStore2/metadata serde, content-addressed '
+        'BlobStore and not-found errors, eager/lazy references, codecs, persisted subagent-state resolution, '
+        'and typed blob metadata/mirror semantics. Source-specific Android targets and focused tests are '
+        'explicit; exact-head production/test evidence is added only from successful Android Parity Full CI '
+        'job steps. Mapping and CI evidence do not promote implementation_status or verification_status.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
 
 
 def _merge_responsibility_sources(current: dict, predecessor: dict) -> dict:
@@ -859,6 +1149,7 @@ def merge_responsibility_mapping(
             'responsibility mapping authority Desktop tree does not match current Desktop main')
 
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
+    _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
         require(len(responsibilities) == expected_responsibility_count,
                 f'expected {expected_responsibility_count} responsibility definitions, got {len(responsibilities)}')
@@ -869,6 +1160,7 @@ def merge_responsibility_mapping(
     source_symbols_by_path: dict[str, set[str]] = {}
     source_owners_by_path: dict[str, list[dict]] = {}
     coverage_owners_by_path: dict[str, list[dict]] = {}
+    source_targets_raw_by_path: dict[str, list] = {}
     semantic_anchor_paths: set[str] = set()
     coverage_anchor_paths: set[str] = set()
     semantic_anchor_entries = 0
@@ -890,6 +1182,8 @@ def merge_responsibility_mapping(
             refreshed['source_mode'] = new_by_path[path]['mode']
             refreshed['source_type'] = new_by_path[path]['type']
             cleaned.append(refreshed)
+            if isinstance(source.get('android_targets'), list):
+                source_targets_raw_by_path[path] = list(source['android_targets'])
             if quality == 'semantic':
                 rid_by_path.setdefault(path, set()).add(rid)
                 semantic_anchor_paths.add(path)
@@ -900,8 +1194,8 @@ def merge_responsibility_mapping(
                 )
                 source_owners_by_path.setdefault(path, []).append({
                     'responsibility_id': rid,
-                    'source_owner': item.get('source_owner'),
-                    'android_owner': item.get('android_owner'),
+                    'source_owner': source.get('source_owner') or item.get('source_owner'),
+                    'android_owner': source.get('android_owner') or item.get('android_owner'),
                 })
             else:
                 coverage_rid_by_path.setdefault(path, set()).add(rid)
@@ -916,6 +1210,21 @@ def merge_responsibility_mapping(
 
     tracked_android_paths = _current_android_tracked_files()
     rejected_android_targets = []
+    source_targets_by_path: dict[str, list[str]] = {}
+    for path, spec in AGENT_KV_SOURCE_SPECS.items():
+        missing_targets = [target for target in spec['android_targets'] if target not in tracked_android_paths]
+        require(not missing_targets,
+                'agent-kv Android target is not tracked at exact HEAD for ' + path + ': ' + ', '.join(missing_targets))
+    for path, raw_targets in source_targets_raw_by_path.items():
+        accepted_targets, rejected_targets = _filter_android_targets(raw_targets, tracked_android_paths)
+        source_targets_by_path[path] = accepted_targets
+        for rejected in rejected_targets:
+            rejected_android_targets.append({
+                'responsibility_id': AGENT_KV_RESPONSIBILITY_ID,
+                'source_path': path,
+                'target': rejected['target'],
+                'reason': rejected['reason'],
+            })
     ids = {item.get('responsibility_id') for item in responsibilities}
     require(len(ids) == len(responsibilities),
             'responsibility mapping contains duplicate responsibility IDs')
@@ -953,6 +1262,67 @@ def merge_responsibility_mapping(
         )
         for item in responsibilities
     }
+
+    ci_evidence = _latest_exact_head_android_ci_evidence(android['android_pr_head_sha'])
+    agent_kv_responsibility = next(
+        item for item in responsibilities
+        if item.get('responsibility_id') == AGENT_KV_RESPONSIBILITY_ID
+    )
+    agent_kv_paths = set(AGENT_KV_SOURCE_SPECS)
+    for evidence_key in ('production_evidence', 'test_evidence'):
+        existing_evidence = agent_kv_responsibility.get(evidence_key)
+        if not isinstance(existing_evidence, list):
+            existing_evidence = []
+        agent_kv_responsibility[evidence_key] = [
+            evidence for evidence in existing_evidence
+            if not any(path in agent_kv_paths for path in (
+                evidence.get('source_paths') if isinstance(evidence.get('source_paths'), list)
+                else [evidence.get('source_path')]
+            ))
+        ]
+    if ci_evidence is not None:
+        for path, spec in AGENT_KV_SOURCE_SPECS.items():
+            production_target = spec['production_target']
+            test_target = spec['test_target']
+            require(production_target in tracked_android_paths and test_target in tracked_android_paths,
+                    'agent-kv evidence target is not tracked at exact HEAD: ' + path)
+            common = {
+                'source_paths': [path],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': ci_evidence['workflow_name'],
+                'workflow_run_id': ci_evidence['workflow_run_id'],
+                'workflow_job_name': ci_evidence['workflow_job_name'],
+                'workflow_job_id': ci_evidence['workflow_job_id'],
+                'run_attempt': ci_evidence['run_attempt'],
+                'run_conclusion': ci_evidence['run_conclusion'],
+                'result': 'passed',
+            }
+            agent_kv_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': ci_evidence['production_step_name'],
+                'workflow_step_number': ci_evidence['production_step_number'],
+                'evidence_ref': production_target,
+            })
+            agent_kv_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': ci_evidence['test_step_name'],
+                'workflow_step_number': ci_evidence['test_step_number'],
+                'evidence_ref': test_target,
+                'focused_tests': list(spec['focused_tests']),
+            })
+    else:
+        print(
+            'WARNING: no successful same-exact-head Android build/unit-test job and step evidence; '
+            'agent-kv coverage remains incomplete',
+            file=sys.stderr,
+        )
 
     unmapped_paths = []
     coverage_only_paths = []
@@ -1029,17 +1399,21 @@ def merge_responsibility_mapping(
         row['responsibility_owners'] = source_owners_by_path.get(path, [])
         row['coverage_responsibilities'] = sorted(coverage_links)
         row['coverage_responsibility_owners'] = coverage_owners_by_path.get(path, [])
-        row['android_targets'] = sorted({
+        row['android_targets'] = source_targets_by_path[path] if path in source_targets_by_path else sorted({
             target for rid in links for target in targets_by_rid.get(rid, [])
         })
         row['android_target_provenance'] = 'responsibility-ledger-explicit-anchor; provenance-only; not semantic verification'
-        predecessor_row = predecessor_source_rows.get(path)
-        inherited = predecessor_row.get('disposition') if predecessor_row else None
-        if row.get('disposition') not in ALLOWED_SOURCE_DISPOSITIONS:
-            if inherited in ALLOWED_SOURCE_DISPOSITIONS:
-                row['disposition'] = inherited
-            else:
-                missing_dispositions.append(path)
+        agent_kv_spec = AGENT_KV_SOURCE_SPEC_BY_PATH.get(path)
+        if agent_kv_spec is not None:
+            row['disposition'] = agent_kv_spec['disposition']
+        else:
+            predecessor_row = predecessor_source_rows.get(path)
+            inherited = predecessor_row.get('disposition') if predecessor_row else None
+            if row.get('disposition') not in ALLOWED_SOURCE_DISPOSITIONS:
+                if inherited in ALLOWED_SOURCE_DISPOSITIONS:
+                    row['disposition'] = inherited
+                else:
+                    missing_dispositions.append(path)
         if not row['android_targets']:
             missing_targets.append(path)
         row['implementation_status'] = 'unreviewed'

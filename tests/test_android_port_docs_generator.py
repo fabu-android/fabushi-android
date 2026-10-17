@@ -662,14 +662,18 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "source_commit": CURRENT_DESKTOP_COMMIT, "desktop_commit": CURRENT_DESKTOP_COMMIT,
             "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
             "workflow_sha": android_head, "evidence_ref": target + "#production",
-            "workflow_run_id": 456, "workflow_job_id": 789, "result": "passed",
+            "workflow_run_id": 456, "workflow_job_id": 789, "workflow_job_name": "android-build-unit-lint",
+            "workflow_step_name": "Build exact-HEAD native Mahayana Coordinator Host",
+            "workflow_name": "Android Parity Full CI", "result": "passed",
         } for path in paths]
         test_evidence = [{
             "kind": "contract-test", "source_path": path,
             "source_commit": CURRENT_DESKTOP_COMMIT, "desktop_commit": CURRENT_DESKTOP_COMMIT,
             "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
             "workflow_sha": android_head, "evidence_ref": test_target + "#test",
-            "workflow_run_id": 456, "workflow_job_id": 790, "result": "passed",
+            "workflow_run_id": 456, "workflow_job_id": 789, "workflow_job_name": "android-build-unit-lint",
+            "workflow_step_name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
+            "workflow_name": "Android Parity Full CI", "result": "passed",
         } for path in paths]
         responsibility = {
             "responsibility_id": "PKG-RESP-001",
@@ -692,10 +696,16 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                             "repository": {"full_name": "fabu-android/fabushi-android"},
                             "head_sha": android_head, "status": "completed", "conclusion": run_conclusion}
                 if endpoint == "/repos/fabu-android/fabushi-android/actions/runs/456/jobs?per_page=100":
-                    return {"jobs": [
-                        {"id": 789, "status": "completed", "conclusion": production_conclusion},
-                        {"id": 790, "status": "completed", "conclusion": test_conclusion},
-                    ]}
+                    return {"jobs": [{
+                        "id": 789, "name": "android-build-unit-lint",
+                        "status": "completed", "conclusion": "success",
+                        "steps": [
+                            {"name": "Build exact-HEAD native Mahayana Coordinator Host",
+                             "status": "completed", "conclusion": production_conclusion},
+                            {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
+                             "status": "completed", "conclusion": test_conclusion},
+                        ],
+                    }]}
                 raise AssertionError("Unexpected GitHub API endpoint: " + endpoint)
             return get_ci
 
@@ -709,11 +719,18 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(complete["complete_rows"], 852)
 
         with patch.object(module, "get", side_effect=github_api("failure", "success", "success")):
-            failed_run = module._package_semantic_coverage(
+            successful_steps_in_failed_run = module._package_semantic_coverage(
                 json.loads(json.dumps(complete_rows)), padded_responsibilities(responsibility), tracked
             )
-        self.assertEqual(failed_run["strict_incomplete_rows"], 852)
-        self.assertIn("missing-exact-head-production-evidence", failed_run["gaps"][0]["reasons"])
+        self.assertEqual(successful_steps_in_failed_run["strict_incomplete_rows"], 0)
+        self.assertEqual(successful_steps_in_failed_run["status"], "passed")
+
+        with patch.object(module, "get", side_effect=github_api("cancelled", "success", "success")):
+            cancelled_run = module._package_semantic_coverage(
+                json.loads(json.dumps(complete_rows)), padded_responsibilities(responsibility), tracked
+            )
+        self.assertEqual(cancelled_run["strict_incomplete_rows"], 852)
+        self.assertIn("missing-exact-head-production-evidence", cancelled_run["gaps"][0]["reasons"])
         with patch.object(module, "get", side_effect=github_api("success", "failure", "cancelled")):
             failed_jobs = module._package_semantic_coverage(
                 json.loads(json.dumps(complete_rows)), padded_responsibilities(responsibility), tracked
@@ -851,5 +868,130 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("'source/**'", push_trigger)
         self.assertIn("'tests/**'", push_trigger)
         self.assertNotIn("'docs/android-port/**'", push_trigger)
+
+    def test_agent_kv_semantic_mapping_uses_exact_desktop_objects_and_tracked_android_targets(self):
+        module = load_generator()
+        primary = {
+            "responsibility_id": module.AGENT_KV_RESPONSIBILITY_ID,
+            "desktop_sources": [],
+            "source_owner": "old placeholder",
+            "android_owner": "old placeholder",
+            "android_target": [],
+        }
+        responsibilities = padded_responsibilities(primary)
+        new_by_path = {
+            path: {"sha": f"{index + 1:040x}", "mode": "100644", "type": "blob"}
+            for index, path in enumerate(module.AGENT_KV_SOURCE_SPECS)
+        }
+        module._ensure_agent_kv_semantic_mapping(
+            responsibilities, new_by_path, CURRENT_DESKTOP_COMMIT
+        )
+        self.assertEqual(len(responsibilities), 306)
+        owner = next(item for item in responsibilities
+                     if item["responsibility_id"] == module.AGENT_KV_RESPONSIBILITY_ID)
+        self.assertIn("AgentStore2", owner["source_owner"])
+        self.assertIn("ProductionAgentStore", owner["android_owner"])
+        self.assertEqual(len({
+            source["path"] for source in owner["desktop_sources"]
+            if source["path"] in module.AGENT_KV_SOURCE_SPECS
+        }), 7)
+        for path, source_spec in module.AGENT_KV_SOURCE_SPECS.items():
+            source = next(item for item in owner["desktop_sources"] if item["path"] == path)
+            self.assertEqual(source["blob_sha"], new_by_path[path]["sha"])
+            self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+            self.assertEqual(source["source_mode"], "100644")
+            self.assertEqual(source["source_type"], "blob")
+            self.assertEqual(source["mapping_quality"], "semantic")
+            self.assertEqual(source["symbols"], source_spec["symbols"])
+            self.assertEqual(source["focused_tests"], source_spec["focused_tests"])
+            self.assertTrue(source["android_targets"])
+            self.assertEqual(source_spec["disposition"], "android-adapted")
+            self.assertIn(source_spec["production_target"], source["android_targets"])
+            self.assertIn(source_spec["test_target"], source["android_targets"])
+            self.assertTrue(all(target.startswith("source/") for target in source["android_targets"]))
+
+    def test_package_action_evidence_requires_a_successful_exact_head_job_and_named_step(self):
+        module = load_generator()
+        android_head = "a" * 40
+        target = "source/packages/agent-kv/src/serde.rs"
+        run = {
+            "name": "Android Parity Full CI",
+            "repository": {"full_name": "fabu-android/fabushi-android"},
+            "head_sha": android_head,
+            "status": "completed",
+            "conclusion": "failure",
+        }
+        job = {
+            "id": 789,
+            "name": "android-build-unit-lint",
+            "status": "completed",
+            "conclusion": "success",
+            "steps": [
+                {"name": "Build exact-HEAD native Mahayana Coordinator Host",
+                 "status": "completed", "conclusion": "success"},
+                {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
+                 "status": "completed", "conclusion": "success"},
+            ],
+        }
+        entry = {
+            "workflow_run_id": 456,
+            "workflow_job_id": 789,
+            "workflow_job_name": "android-build-unit-lint",
+            "workflow_step_name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
+            "evidence_ref": target,
+        }
+        with patch.object(module, "get", side_effect=[run, {"jobs": [job]}]):
+            self.assertTrue(module._package_action_job_passed(
+                entry, android_head=android_head, tracked_android_paths={target},
+                action_job_cache={},
+            ))
+        bad_step = json.loads(json.dumps(job))
+        bad_step["steps"][1]["conclusion"] = "cancelled"
+        with patch.object(module, "get", side_effect=[run, {"jobs": [bad_step]}]):
+            self.assertFalse(module._package_action_job_passed(
+                entry, android_head=android_head, tracked_android_paths={target},
+                action_job_cache={},
+            ))
+        wrong_head = {**run, "head_sha": "b" * 40}
+        with patch.object(module, "get", return_value=wrong_head):
+            self.assertFalse(module._package_action_job_passed(
+                entry, android_head=android_head, tracked_android_paths={target},
+                action_job_cache={},
+            ))
+
+    def test_exact_head_ci_discovery_accepts_failed_overall_run_only_when_required_job_steps_pass(self):
+        module = load_generator()
+        android_head = "a" * 40
+        run = {
+            "id": 456, "name": "Android Parity Full CI", "head_sha": android_head,
+            "status": "completed", "conclusion": "failure", "run_number": 12, "run_attempt": 1,
+        }
+        job = {
+            "id": 789, "name": "android-build-unit-lint",
+            "status": "completed", "conclusion": "success",
+            "steps": [
+                {"name": "Build exact-HEAD native Mahayana Coordinator Host",
+                 "number": 9, "status": "completed", "conclusion": "success"},
+                {"name": "Compile, unit-test, lint, and assemble non-release acceptance APKs",
+                 "number": 10, "status": "completed", "conclusion": "success"},
+            ],
+        }
+        with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}):
+            with patch.object(module, "get", side_effect=[
+                {"workflow_runs": [run]}, {"jobs": [job]},
+            ]):
+                evidence = module._latest_exact_head_android_ci_evidence(android_head)
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence["workflow_run_id"], 456)
+        self.assertEqual(evidence["workflow_job_id"], 789)
+        self.assertEqual(evidence["run_conclusion"], "failure")
+        self.assertEqual(evidence["production_step_number"], 9)
+        self.assertEqual(evidence["test_step_number"], 10)
+
+        cancelled = {**run, "conclusion": "cancelled"}
+        with patch.dict("os.environ", {"GH_TOKEN": "token", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}):
+            with patch.object(module, "get", return_value={"workflow_runs": [cancelled]}):
+                self.assertIsNone(module._latest_exact_head_android_ci_evidence(android_head))
+
 if __name__ == "__main__":
     unittest.main()

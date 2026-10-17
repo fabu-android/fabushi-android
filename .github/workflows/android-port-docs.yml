@@ -32,7 +32,7 @@ jobs:
   source-inventory:
     name: Pinned Desktop complete source inventory
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -52,6 +52,7 @@ jobs:
           ANDROID_PR_HEAD_SHA: ${{ github.sha }}
           ANDROID_PR_HEAD_REF: ${{ github.ref_name }}
           ANDROID_PR_NUMBER: '3'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '1200'
           ANDROID_PR_BASE_SHA: ''
           ANDROID_PR_BASE_REF: 'main'
           ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
@@ -63,6 +64,7 @@ jobs:
           ANDROID_PR_HEAD_SHA: ${{ github.sha }}
           ANDROID_PR_HEAD_REF: ${{ github.ref_name }}
           ANDROID_PR_NUMBER: '3'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '1200'
           ANDROID_PR_BASE_SHA: ''
           ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py inventory
@@ -127,6 +129,61 @@ jobs:
           rejected=json.loads(Path('docs/android-port/generated/rejected-android-targets.json').read_text(encoding='utf-8'))
           assert rejected['count']==len(rejected['rejected_targets'])
           assert rejected['status']==('incomplete' if rejected['count'] else 'passed')
+          agent_kv_paths = [
+            'source/packages/agent-kv/agent-store.ts',
+            'source/packages/agent-kv/blob-store.ts',
+            'source/packages/agent-kv/blob-not-found-error.ts',
+            'source/packages/agent-kv/reference.ts',
+            'source/packages/agent-kv/serde.ts',
+            'source/packages/agent-kv/subagent-states.ts',
+            'source/packages/agent-kv/typed-blob-store.ts',
+          ]
+          agent_kv_rows = {
+            row['source_path']: row for row in package_rows
+            if row['source_path'] in agent_kv_paths
+          }
+          assert set(agent_kv_rows) == set(agent_kv_paths), sorted(set(agent_kv_paths) - set(agent_kv_rows))
+          coverage_gaps = {gap['source_path']: gap['reasons'] for gap in coverage.get('gaps', [])}
+          agent_kv_owner = next(item for item in responsibilities
+                                if item['responsibility_id'] == 'AGENT-RUN-LIFECYCLE-001')
+          for path, row in agent_kv_rows.items():
+            assert row['mapping_status'] == 'semantic', (path, row.get('mapping_status'))
+            assert row['responsibilities'] == ['AGENT-RUN-LIFECYCLE-001'], (path, row.get('responsibilities'))
+            assert row['disposition'] == 'android-adapted', (path, row.get('disposition'))
+            assert row['android_targets'], (path, 'missing Android targets')
+            assert row['package_semantic_coverage_status'] == 'complete', (path, row.get('package_semantic_coverage_reasons'))
+            assert path not in coverage_gaps, (path, coverage_gaps.get(path))
+            assert row['implementation_status'] == 'unreviewed'
+            assert row['verification_status'] == 'not-verified'
+            anchor = next(source for source in agent_kv_owner['desktop_sources'] if source['path'] == path)
+            assert anchor['source_commit'] == m['desktop_commit']
+            assert anchor['blob_sha'] == row['source_blob_sha']
+            assert anchor['source_mode'] == row['source_mode']
+            assert anchor['source_type'] == row['source_type']
+            assert anchor['focused_tests'] and anchor['android_targets']
+            for evidence_key, step_name in (
+              ('production_evidence', 'Build exact-HEAD native Mahayana Coordinator Host'),
+              ('test_evidence', 'Compile, unit-test, lint, and assemble non-release acceptance APKs'),
+            ):
+              candidates = [
+                evidence for evidence in agent_kv_owner.get(evidence_key, [])
+                if path in evidence.get('source_paths', [])
+              ]
+              assert any(
+                evidence.get('result') == 'passed'
+                and evidence.get('workflow_name') == 'Android Parity Full CI'
+                and evidence.get('workflow_job_name') == 'android-build-unit-lint'
+                and evidence.get('workflow_step_name') == step_name
+                and evidence.get('workflow_run_id')
+                and evidence.get('workflow_job_id')
+                and evidence.get('android_pr_head_sha') == expected
+                and evidence.get('android_tested_checkout_sha') == expected
+                and evidence.get('workflow_sha') == expected
+                and evidence.get('desktop_commit') == m['desktop_commit']
+                and evidence.get('source_commit') == m['desktop_commit']
+                and evidence.get('evidence_ref') in row['android_targets']
+                for evidence in candidates
+              ), (path, evidence_key, step_name)
           print(json.dumps({
             'android_head':expected,
             'desktop_commit':m['desktop_commit'],
