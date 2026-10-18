@@ -1312,6 +1312,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             manifest = {
                 "authority_current": True, "desktop_commit": desktop_commit,
                 "source_commit": desktop_commit, "desktop_root_tree": desktop_tree,
+                "desktop_main_before": desktop_commit, "desktop_main_after": desktop_commit,
                 "tree_entries": 3, "tracked_non_tree_entries": 2, "authority_ledger_rows": 2,
                 "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
                 "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
