@@ -8,11 +8,13 @@
 
 权威顺序：用户最新明确要求 → 本规范及 `docs/android-port/` 的明确设计要求 → 本规范绑定的 Desktop main 源码与实际 shipping composition → Android 既有规范的非冲突要求 → 历史 Grok 参考资料。关于现状、文件位置和现有协议的事实，必须以固定 SHA 的实际代码与生产接线为准，不能让旧文字覆盖真实源码。旧规范 `docs/specs/grok-bot-0.18-android-architecture-parity.md` 的原生化、独立源码、边界隔离、逐源审计、进程恢复和删除 legacy 要求保留；其以 Grok 重建仓库作为最终产品权威的表述被本规范取代。Android 是 Fabushi Desktop 的原生 Android 版本，不是另一款 Grok 产品。
 
-本轮发现基线：
-- Desktop main：`12a4e29819592e3a7e32f7435cb0cf2e3cc53848`；root tree：`72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`。历史 `371b72f1/3116c54` 仅作为 predecessor provenance。
+本轮发现基线（2026-10-18，GitHub API exact refs）：
+- Desktop main：`12887d2a44ba450b13ca8390066a39418c52e0c9`；root tree：`4bc59314edd76a51bd8f0e2d0654935d9e8ffb41`。recursive tree `truncated=false`，共 9,431 entries，其中 8,276 个 tracked non-tree entries；已逐项核对候选清单 path/mode/type/blob SHA，缺失、额外及不匹配均为 0。
 - Android main：`59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2`。
-- Android 既有迁移 PR：#3，分支 `spec/grok-bot-018-android-parity-20260922`；本轮修改前 HEAD：`5d049353e167d9b91b5c765e1686f1ac8670f2ff`。
-- 2026-10-11 incremental rebaseline：Desktop 先从 `92fcc2b0f64b6b8f8f8829305b30874b558d6b35` 前进到 `d575b4f7...`，随后又前进 1 个提交到当前 `62d0c99f95d83f0c7c135a802a31c8b2fcf2cc8d`。最新 compare 仅修改 `docs/specs/fabushi-plugins-marketplace-open-ecosystem.md` 并新增 `docs/specs/fabushi-plugins-marketplace-owner-inventory.md`；完整树为 9,326 entries / 8,177 non-tree tracked entries，`source/**`、`frontend/**` 及其他 shipping code blob 相对 d575 基线未变化。FPM-001 / OMA-001 / owner-inventory 都是当前设计权威，但其存在不等于 Android 已实现，必须分别进入 source/responsibility ledger。
+- Android 迁移 PR：#3，分支 `spec/grok-bot-018-android-parity-20260922`；本轮读取时 exact HEAD：`84318e1cd5fa8497d49b1c8309f1f25acf0db560`。该 SHA 只作为本轮候选生成输入；后续提交产生的新 HEAD 必须独立验收。
+- 固定的原始 8,276 行 inventory candidate SHA-256：`2b821bc55738c6d96b3a16f7144854eaefe982b7b03856b97de7b4695c082ce0`。加入已有责任引用后生成的 linked inventory ledger SHA-256：`84f65fcb92803c0eaaadc8ffcf16840534553c76af08b54ddb3699e328846392`；两者是不同文件，不能互相冒充。
+- 306 项 responsibility 当前含 6,089 个 Desktop source anchors、覆盖 5,891 个唯一路径；已将所有 anchor 的 `source_commit`、blob SHA、mode/type 重新绑定到 `12887d2a44ba450b13ca8390066a39418c52e0c9` / `4bc59314edd76a51bd8f0e2d0654935d9e8ffb41`，修复了 4 个已发现的陈旧 blob anchor。Inventory→responsibility 与 responsibility→inventory 的引用在这 5,891 个已锚定路径上双向一致；其余 2,385 个路径仍未分配责任，不得伪造映射。
+- 全部 8,276 条自动生成 inventory 记录均为 `unreviewed`，306 项责任均保留 `implementation_status=unreviewed` 与 `verification_status=not-verified`。未继承旧 HEAD 的测试、包或设备验收证据；完整 source closure 仍不完整，产品验收未声明完成。
 
 每次实现与最终验收都重新读取 Desktop main 和 Android exact HEAD。未合并的 Desktop PR 只进入观察清单，不冒充 main 已有功能。Desktop main 改变后逐 changed path / responsibility rebaseline，不继承失效证据。
 
