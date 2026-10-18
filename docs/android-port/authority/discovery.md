@@ -1,8 +1,12 @@
 # 本轮实际发现与尚未证明的内容
 
-## 当前 authority lock — 2026-10-16
+## 当前 authority lock — 2026-10-18
 
-bhrumom/fabushi-desktop@main = `12a4e29819592e3a7e32f7435cb0cf2e3cc53848` (root tree `72fc5f777012f6e7bf5f5f471b6f121fd3612bb2`). Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
+bhrumom/fabushi-desktop@main = `12887d2a44ba450b13ca8390066a39418c52e0c9` (root tree `4bc59314edd76a51bd8f0e2d0654935d9e8ffb41`). GitHub recursive tree: 9,431 entries / 8,276 tracked non-tree entries, `truncated=false`. Exact path/mode/type/blob reconciliation against the immutable raw inventory candidate has zero differences. Android migration PR #3 was read at `84318e1cd5fa8497d49b1c8309f1f25acf0db560` on branch `spec/grok-bot-018-android-parity-20260922`; this is candidate-input provenance, not evidence for any later commit.
+
+Raw inventory candidate SHA-256: `2b821bc55738c6d96b3a16f7144854eaefe982b7b03856b97de7b4695c082ce0`. The separately linked inventory ledger SHA-256: `84f65fcb92803c0eaaadc8ffcf16840534553c76af08b54ddb3699e328846392`. The 306-item responsibility ledger has 6,089 Desktop anchors over 5,891 unique paths; all anchor source commits and blob SHA values are rebound to this Desktop authority. Four stale blob anchors were corrected. Bidirectional links are complete for the 5,891 already anchored paths; 2,385 inventory paths remain unassigned and closure status remains incomplete. All 8,276 inventory rows remain `unreviewed`; all responsibility verification remains `not-verified`. No prior Actions/package/device evidence is inherited.
+
+Any older Desktop SHA mentioned below is predecessor/historical provenance only; it is not current authority or exact-HEAD verification evidence.
 
 ## 2026-10-15 Desktop authority rebaseline
 
