@@ -6856,6 +6856,21 @@
           "source_type": "blob",
           "mapping_quality": "semantic",
           "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46"
+        },
+        {
+          "path": ".github/scripts/promote-miniapp-candidate.mjs",
+          "blob_sha": "b90e75b034b686cb63e6e652438ea91d90b88e48",
+          "symbols": [
+            "verifyPromotion",
+            "verifyDeliveryChecksums",
+            "assertMonotonicVersion",
+            "promote",
+            "immutable accepted-candidate proof binding and no-rebuild prerelease promotion"
+          ],
+          "source_mode": "100644",
+          "source_type": "blob",
+          "mapping_quality": "semantic",
+          "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46"
         }
       ],
       "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46",
