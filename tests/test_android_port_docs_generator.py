@@ -652,6 +652,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 "workflow_run_id": 456,
             }],
         }
+        row["responsibilities"] = ["RESP-001"]
         manifest = {
             "desktop_commit": CURRENT_DESKTOP_COMMIT,
             "source_commit": CURRENT_DESKTOP_COMMIT,
@@ -1267,6 +1268,14 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 json.dumps({"sha": desktop_tree, "truncated": False, "tree": tree_entries}),
                 encoding="utf-8",
             )
+            (out / "desktop-root-tree.json").write_text(
+                json.dumps({
+                    "sha": desktop_tree,
+                    "truncated": False,
+                    "tree": [item for item in tree_entries if "/" not in item["path"]],
+                }),
+                encoding="utf-8",
+            )
             source_rows = []
             responsibility_rows = []
             for index, (path, blob_sha) in enumerate(
@@ -1359,6 +1368,14 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 "generated_at_utc": "2026-10-17T00:00:00Z",
             }
             digest = "sha256:" + hashlib.sha256(payload).hexdigest()
+            def fake_github_get(endpoint):
+                if endpoint == "/repos/bhrumom/fabushi-desktop/branches/main":
+                    return {"commit": {"sha": desktop_commit}}
+                if endpoint == f"/repos/bhrumom/fabushi-desktop/git/commits/{desktop_commit}":
+                    return {"sha": desktop_commit, "tree": {"sha": desktop_tree}}
+                if endpoint == f"/repos/bhrumom/fabushi-desktop/git/trees/{desktop_tree}?recursive=1":
+                    return {"sha": desktop_tree, "truncated": False, "tree": tree_entries}
+                raise AssertionError(f"unexpected GitHub API request in receipt fixture: {endpoint}")
             with patch.object(module, "ROOT", root), patch.object(module, "DOC", doc), \
                  patch.object(module, "OUT", out), \
                  patch.object(module, "EXPECTED_DESKTOP_COMMIT", desktop_commit), \
@@ -1375,6 +1392,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                  patch.object(module, "_download_predecessor_bytes", return_value=payload), \
                  patch.object(module, "_current_android_tracked_files", return_value={"source/host.rs"}), \
                  patch.object(module, "current_android_provenance", return_value=provenance), \
+                 patch.object(module, "get", side_effect=fake_github_get), \
                  patch.dict("os.environ", {
                      "RUNNER_TEMP": str(runner_temp), "GH_TOKEN": "token",
                      "ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT": "123",
@@ -1589,6 +1607,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 "workflow_run_id": 456,
             }],
         }
+        row["responsibilities"] = ["RESP-001"]
         manifest = {
             "desktop_commit": CURRENT_DESKTOP_COMMIT,
             "source_commit": CURRENT_DESKTOP_COMMIT,
