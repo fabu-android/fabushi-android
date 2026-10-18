@@ -44,7 +44,7 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "77e60db0f76e171072ff237857b5cf2870442512b88d230674a0e3623f5c7b8a",
+  "ledger_sha256": "3d7a652c82264a6f8dbdfe175a0516dac747dd9a1f87e6f65844dc7efeaeaac1",
   "closure_review": "incremental-rebaseline-preserved-8230-reset-42-deleted-0",
   "product_acceptance": "not-claimed",
   "responsibility_mapping_status": "incomplete",
