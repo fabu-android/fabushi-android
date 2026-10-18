@@ -6871,6 +6871,21 @@
           "source_type": "blob",
           "mapping_quality": "semantic",
           "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46"
+        },
+        {
+          "path": ".github/scripts/promote-miniapp-candidate.test.mjs",
+          "blob_sha": "de451bfcebba57707e40dd6f43139552c1df052b",
+          "symbols": [
+            "only the same immutable main binary accepted by both independent gates promotes",
+            "missing or skipped source, production lifecycle and cleanup assertions cannot pass",
+            "public Desktop version must strictly exceed every other published version",
+            "promotion never rebuilds or deletes an existing release on uncertain outcome",
+            "published installer checksum manifest exactly covers the immutable delivery assets"
+          ],
+          "source_mode": "100644",
+          "source_type": "blob",
+          "mapping_quality": "semantic",
+          "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46"
         }
       ],
       "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46",
