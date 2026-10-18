@@ -96,26 +96,120 @@ jobs:
           ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py inventory
       - name: Verify generated exact authority bookkeeping
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           EXPECTED_ANDROID_HEAD="$(git rev-parse HEAD)"
-          test "$(wc -l < docs/android-port/authority/source-inventory-ledger.jsonl)" -eq 8272
+          test -s docs/android-port/generated/desktop-complete-tree.json
+          test -s docs/android-port/generated/desktop-root-tree.json
           python3 - "$EXPECTED_ANDROID_HEAD" <<'PY'
-          import hashlib, json, sys
+          import hashlib, json, os, sys
           from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          desktop_repo = 'bhrumom/fabushi-desktop'
+          desktop_commit = '12887d2a44ba450b13ca8390066a39418c52e0c9'
+          desktop_tree = '4bc59314edd76a51bd8f0e2d0654935d9e8ffb41'
+          prior_desktop_commits = {
+            '12a4e29819592e3a7e32f7435cb0cf2e3cc53848',
+            'ca618ae19add78872fcac7cb86bf8754a4ad7a55',
+            desktop_commit,
+          }
+          expected_tree_entries = 9431
+          expected_non_tree_entries = 8276
+
+          def github_json(path):
+            headers = {
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': 'Fabushi-Android-Authority-Gate',
+              'X-GitHub-Api-Version': '2022-11-28',
+            }
+            token = os.environ.get('GH_TOKEN')
+            if token:
+              headers['Authorization'] = 'Bearer ' + token
+            with urlopen(Request('https://api.github.com' + path, headers=headers), timeout=45) as response:
+              return json.load(response)
+
+          def tree_signature(entries, label):
+            assert isinstance(entries, list), (label, 'tree must be a list')
+            paths = []
+            signature = []
+            for item in entries:
+              assert isinstance(item, dict), (label, 'tree entry must be an object')
+              path = item.get('path')
+              assert isinstance(path, str) and path and not path.startswith('/') and '..' not in path.split('/'), (label, path)
+              sha = item.get('sha')
+              assert isinstance(sha, str) and len(sha) == 40 and all(c in '0123456789abcdef' for c in sha), (label, path, sha)
+              assert item.get('mode') in ('040000', '100644', '100755', '120000', '160000'), (label, path, item.get('mode'))
+              assert item.get('type') in ('tree', 'blob', 'commit'), (label, path, item.get('type'))
+              paths.append(path)
+              signature.append((path, sha, item['mode'], item['type']))
+            assert len(paths) == len(set(paths)), (label, 'duplicate tree paths')
+            return sorted(signature)
+
+          live_main_before = github_json(f'/repos/{desktop_repo}/branches/main')['commit']['sha']
+          assert live_main_before == desktop_commit, ('Desktop main moved before authority check', live_main_before)
+          commit_doc = github_json(f'/repos/{desktop_repo}/git/commits/{desktop_commit}')
+          assert commit_doc.get('sha') == desktop_commit
+          assert commit_doc.get('tree', {}).get('sha') == desktop_tree
+          remote_tree = github_json(f'/repos/{desktop_repo}/git/trees/{desktop_tree}?recursive=1')
+          assert remote_tree.get('sha') == desktop_tree
+          assert remote_tree.get('truncated') is False, 'current Desktop recursive API tree is truncated'
+          remote_entries = remote_tree.get('tree')
+          assert isinstance(remote_entries, list) and len(remote_entries) == expected_tree_entries, ('remote tree count', len(remote_entries) if isinstance(remote_entries, list) else None)
+          remote_signature = tree_signature(remote_entries, 'current Desktop recursive tree')
+          assert sum(item['type'] != 'tree' for item in remote_entries) == expected_non_tree_entries
+          live_main_after = github_json(f'/repos/{desktop_repo}/branches/main')['commit']['sha']
+          assert live_main_after == desktop_commit, ('Desktop main moved during authority check', live_main_after)
+
+          tree_path = Path('docs/android-port/generated/desktop-complete-tree.json')
+          assert tree_path.is_file() and tree_path.stat().st_size > 0, 'current Desktop complete-tree evidence is missing'
+          tree_doc = json.loads(tree_path.read_text(encoding='utf-8'))
+          assert tree_doc.get('sha') == desktop_tree
+          assert tree_doc.get('truncated') is False, 'saved Desktop complete-tree evidence is truncated'
+          saved_tree_entries = tree_doc.get('tree')
+          assert isinstance(saved_tree_entries, list) and len(saved_tree_entries) == expected_tree_entries
+          assert tree_signature(saved_tree_entries, 'saved Desktop complete tree') == remote_signature, 'saved complete tree differs from current GitHub API tree'
+
+          root_tree_path = Path('docs/android-port/generated/desktop-root-tree.json')
+          assert root_tree_path.is_file() and root_tree_path.stat().st_size > 0, 'current Desktop root-tree evidence is missing'
+          root_tree_doc = json.loads(root_tree_path.read_text(encoding='utf-8'))
+          assert root_tree_doc.get('sha') == desktop_tree and root_tree_doc.get('truncated') is False
+          root_remote_entries = [item for item in remote_entries if '/' not in item.get('path', '')]
+          assert tree_signature(root_tree_doc.get('tree'), 'saved Desktop root tree') == tree_signature(root_remote_entries, 'current Desktop root entries')
+
           expected=sys.argv[1]
           m=json.loads(Path('docs/android-port/authority/source-inventory-manifest.json').read_text(encoding='utf-8'))
           ledger_bytes=Path('docs/android-port/authority/source-inventory-ledger.jsonl').read_bytes()
-          rows=[json.loads(line) for line in ledger_bytes.decode('utf-8').splitlines() if line.strip()]
+          ledger_lines = ledger_bytes.decode('utf-8').splitlines()
+          assert len(ledger_lines) == expected_non_tree_entries and all(line.strip() for line in ledger_lines)
+          rows = [json.loads(line) for line in ledger_lines]
           assert hashlib.sha256(ledger_bytes).hexdigest()==m['ledger_sha256']
-          assert m['desktop_commit']=='ca618ae19add78872fcac7cb86bf8754a4ad7a55'
-          assert m['source_commit']==m['desktop_commit']
-          assert m['desktop_root_tree']=='b0337f9bd17e5dc0c7165e89331aaf2748f52a74'
-          assert m['tracked_non_tree_entries']==8272 and len(rows)==8272
-          assert m['tree_entries']==9427
+          assert m['desktop_commit'] == desktop_commit
+          assert m['source_commit'] == desktop_commit
+          assert m['desktop_root_tree'] == desktop_tree
+          assert m['desktop_main_before'] in prior_desktop_commits
+          assert m['desktop_main_after'] == desktop_commit
+          assert m['authority_current'] is True
+          assert m['tracked_non_tree_entries'] == expected_non_tree_entries and len(rows) == expected_non_tree_entries
+          assert m['tree_entries'] == expected_tree_entries
+          assert m['authority_ledger_rows'] == expected_non_tree_entries
           for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
             assert m[field]==expected, (field,m[field],expected)
-          assert len({row['source_path'] for row in rows})==8272
+          row_paths = [row.get('source_path') for row in rows]
+          assert all(isinstance(path, str) and path for path in row_paths)
+          assert len(row_paths) == len(set(row_paths)) == expected_non_tree_entries
+          assert row_paths == sorted(row_paths), 'source ledger paths are not in canonical order'
+          rows_by_path = {row['source_path']: row for row in rows}
+          non_tree_by_path = {item['path']: item for item in saved_tree_entries if item.get('type') != 'tree'}
+          assert len(non_tree_by_path) == expected_non_tree_entries
+          assert set(rows_by_path) == set(non_tree_by_path), 'source ledger paths differ from current complete tree'
+          for path, row in rows_by_path.items():
+            item = non_tree_by_path[path]
+            assert row['source_blob_sha'] == item['sha'], ('source object SHA mismatch', path)
+            assert row['source_mode'] == item['mode'], ('source object mode mismatch', path)
+            assert row['source_type'] == item['type'], ('source object type mismatch', path)
           for row in rows:
             assert row['source_commit']==m['desktop_commit']
             assert row['source_blob_sha'] and row['source_mode'] and row['source_type']
@@ -125,23 +219,51 @@ jobs:
             assert row['implementation_status']=='unreviewed'
             assert row['verification_status']=='not-verified'
           r=json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
-          assert r['source_commit']==m['desktop_commit']
+          assert r['source_commit'] == desktop_commit
+          assert r.get('authority', {}).get('desktop_commit') == desktop_commit
+          assert r.get('authority', {}).get('desktop_root_tree') == desktop_tree
           for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
-            assert r[field]==expected, (field,r[field],expected)
-          responsibilities=r.get('responsibilities',[])
-          ids=[item.get('responsibility_id') for item in responsibilities]
-          assert len(responsibilities)==306 and len(set(ids))==306
+            assert r[field] == expected, (field,r[field],expected)
+          responsibilities = r.get('responsibilities', [])
+          ids = [item.get('responsibility_id') for item in responsibilities]
+          assert len(responsibilities) == 306 and all(isinstance(rid, str) and rid for rid in ids) and len(set(ids)) == 306
+          reverse_links = {}
+          legacy_fallback_ids = {
+            'RUST-ANDROID-RUNTIME-GATE-001',
+            'AUTHORITY-CANONICAL-MIGRATION-SOURCE-001',
+            'UI-PRODUCTION-COMPOSITION-ANDROID-001',
+            'CI-DESKTOP-SOURCE-AUTHORITY-REPLACEMENT-001',
+            'GOVERNANCE-SPEC-FIRST-ANDROID-001',
+            'GOVERNANCE-REPOSITORY-BOUNDARY-001',
+          }
           for item in responsibilities:
-            assert item['source_commit']==m['desktop_commit']
-            assert item['android_head_at_update']==expected
-            assert item['implementation_status']=='unreviewed'
-            assert item['verification_status']=='not-verified'
-            for source in item.get('desktop_sources',[]):
-              row=next(row for row in rows if row['source_path']==source['path'])
-              assert source['source_commit']==m['desktop_commit']
-              assert source['blob_sha']==row['source_blob_sha']
-              assert source['source_mode']==row['source_mode']
-              assert source['source_type']==row['source_type']
+            assert item['source_commit'] == desktop_commit
+            assert item['android_head_at_update'] == expected
+            assert item['implementation_status'] == 'unreviewed'
+            assert item['verification_status'] == 'not-verified'
+            sources = item.get('desktop_sources', [])
+            assert isinstance(sources, list)
+            for source in sources:
+              assert isinstance(source, dict)
+              path = source.get('path')
+              assert isinstance(path, str) and path in rows_by_path, ('responsibility anchor missing from source ledger', item['responsibility_id'], path)
+              row = rows_by_path[path]
+              assert source['source_commit'] == desktop_commit
+              assert source['blob_sha'] == row['source_blob_sha']
+              assert source['source_mode'] == row['source_mode']
+              assert source['source_type'] == row['source_type']
+              quality = source.get('mapping_quality')
+              if quality not in ('semantic', 'coverage-only'):
+                has_object_metadata = source.get('source_mode') in ('100644', '100755', '120000', '160000') and source.get('source_type') in ('blob', 'commit')
+                quality = 'coverage-only' if item['responsibility_id'] in legacy_fallback_ids and not has_object_metadata else 'semantic'
+              if quality == 'semantic':
+                reverse_links.setdefault(path, set()).add(item['responsibility_id'])
+          responsibility_id_set = set(ids)
+          for row in rows:
+            linked = row.get('responsibilities', [])
+            assert isinstance(linked, list) and all(isinstance(rid, str) and rid in responsibility_id_set for rid in linked)
+            assert len(linked) == len(set(linked)), ('duplicate responsibility links', row['source_path'])
+            assert set(linked) == reverse_links.get(row['source_path'], set()), ('source/responsibility links are not bidirectional', row['source_path'])
           coverage=json.loads(Path('docs/android-port/generated/packages-semantic-coverage.json').read_text(encoding='utf-8'))
           package_rows=[row for row in rows if row['source_path'].startswith('source/packages/')]
           assert len(package_rows)==852

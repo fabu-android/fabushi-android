@@ -13,8 +13,8 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
-CURRENT_DESKTOP_COMMIT = "ca618ae19add78872fcac7cb86bf8754a4ad7a55"
-CURRENT_DESKTOP_TREE = "b0337f9bd17e5dc0c7165e89331aaf2748f52a74"
+CURRENT_DESKTOP_COMMIT = "12887d2a44ba450b13ca8390066a39418c52e0c9"
+CURRENT_DESKTOP_TREE = "4bc59314edd76a51bd8f0e2d0654935d9e8ffb41"
 
 
 def load_generator():
@@ -2276,6 +2276,100 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(evidence["production_step_number"], 6)
         self.assertEqual(evidence["test_step_number"], 7)
         self.assertEqual(evidence["workflow_id"], module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID)
+
+    def _exact_head_provenance_fixture(self, row_links, mapping_quality="semantic"):
+        module = load_generator()
+        android_head = "a" * 40
+        desktop_commit = "b" * 40
+        desktop_tree = "c" * 40
+        source_blob = "d" * 40
+        source_path = "source/example.ts"
+        run_id = 987654
+        source = {
+            "path": source_path,
+            "source_commit": desktop_commit,
+            "blob_sha": source_blob,
+            "source_mode": "100644",
+            "source_type": "blob",
+            "mapping_quality": mapping_quality,
+        }
+        row = {
+            "source_path": source_path,
+            "source_commit": desktop_commit,
+            "source_blob_sha": source_blob,
+            "source_mode": "100644",
+            "source_type": "blob",
+            "responsibilities": list(row_links),
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
+            "evidence": [{
+                "source_path": source_path,
+                "source_blob_sha": source_blob,
+                "desktop_commit": desktop_commit,
+                "desktop_root_tree": desktop_tree,
+                "source_commit": desktop_commit,
+                "android_head": android_head,
+                "android_pr_head_sha": android_head,
+                "android_tested_checkout_sha": android_head,
+                "workflow_sha": android_head,
+                "workflow_run_id": run_id,
+            }],
+        }
+        responsibilities = [{
+            "responsibility_id": "RESP-001",
+            "source_commit": desktop_commit,
+            "android_head_at_update": android_head,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [source],
+        }]
+        responsibilities.extend({
+            "responsibility_id": f"RESP-{index:03d}",
+            "source_commit": desktop_commit,
+            "android_head_at_update": android_head,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [],
+        } for index in range(2, 307))
+        manifest = {
+            "desktop_commit": desktop_commit,
+            "source_commit": desktop_commit,
+            "desktop_root_tree": desktop_tree,
+            "workflow_run_id": run_id,
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
+        }
+        responsibility_doc = {
+            "source_commit": desktop_commit,
+            "android_pr_head_sha": android_head,
+            "android_tested_checkout_sha": android_head,
+            "workflow_sha": android_head,
+            "authority": {
+                "desktop_commit": desktop_commit,
+                "desktop_root_tree": desktop_tree,
+            },
+            "responsibilities": responsibilities,
+        }
+        return module, manifest, row, responsibility_doc, android_head
+
+    def test_exact_head_provenance_accepts_bidirectional_semantic_responsibility_links(self):
+        module, manifest, row, responsibility_doc, android_head = self._exact_head_provenance_fixture(["RESP-001"])
+        module.validate_exact_head_provenance(manifest, [row], responsibility_doc, android_head)
+
+    def test_exact_head_provenance_rejects_missing_or_extra_reverse_responsibility_links(self):
+        for row_links in ([], ["RESP-002"], ["RESP-001", "RESP-002"]):
+            with self.subTest(row_links=row_links):
+                module, manifest, row, responsibility_doc, android_head = self._exact_head_provenance_fixture(row_links)
+                with self.assertRaisesRegex(ValueError, "responsibility links disagree"):
+                    module.validate_exact_head_provenance(manifest, [row], responsibility_doc, android_head)
+
+    def test_exact_head_provenance_allows_explicit_coverage_only_anchors_without_reverse_links(self):
+        module, manifest, row, responsibility_doc, android_head = self._exact_head_provenance_fixture([], "coverage-only")
+        module.validate_exact_head_provenance(manifest, [row], responsibility_doc, android_head)
 
 if __name__ == "__main__":
     unittest.main()

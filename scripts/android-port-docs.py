@@ -2110,6 +2110,7 @@ def validate_exact_head_provenance(
                     'exact-head source evidence has stale workflow run: ' + path)
         rows_by_path[path] = row
 
+    reverse_links: dict[str, set[str]] = {}
     for responsibility in responsibilities:
         rid = responsibility.get('responsibility_id') or '<missing-id>'
         require(responsibility.get('source_commit') == desktop_commit,
@@ -2119,7 +2120,12 @@ def validate_exact_head_provenance(
         require(responsibility.get('implementation_status') == 'unreviewed'
                 and responsibility.get('verification_status') == 'not-verified',
                 'exact-head responsibility status was promoted without verification: ' + rid)
-        for source in responsibility.get('desktop_sources') or []:
+        sources = responsibility.get('desktop_sources') or []
+        require(isinstance(sources, list),
+                'exact-head responsibility source anchors must be a list: ' + rid)
+        for source in sources:
+            require(isinstance(source, dict),
+                    'exact-head responsibility source anchor must be an object: ' + rid)
             path = source.get('path')
             row = rows_by_path.get(path)
             require(row is not None,
@@ -2129,6 +2135,17 @@ def validate_exact_head_provenance(
                     and source.get('source_mode') == row.get('source_mode')
                     and source.get('source_type') == row.get('source_type'),
                     'exact-head responsibility anchor differs from current Desktop object: ' + str(path))
+            if _source_mapping_quality(rid, source) == 'semantic':
+                reverse_links.setdefault(path, set()).add(rid)
+
+    for path, row in rows_by_path.items():
+        linked = row.get('responsibilities') or []
+        require(isinstance(linked, list)
+                and all(isinstance(rid, str) and rid for rid in linked)
+                and len(set(linked)) == len(linked),
+                'exact-head source ledger has malformed responsibility links: ' + path)
+        require(set(linked) == reverse_links.get(path, set()),
+                'exact-head source ledger responsibility links disagree with responsibility source anchors: ' + path)
 
 
 def load_predecessor_responsibility_mapping(responsibility_path: Path) -> tuple[dict, dict[str, dict], str, dict]:
@@ -4168,9 +4185,7 @@ def rebaseline() -> None:
                 if path in new_by_path and _source_mapping_quality(rid, source) == 'semantic':
                     reverse_links.setdefault(path, set()).add(rid)
         for row in new_rows:
-            linked = reverse_links.get(row['source_path'])
-            if linked:
-                row['responsibilities'] = sorted(set(row.get('responsibilities') or []) | linked)
+            row['responsibilities'] = sorted(reverse_links.get(row['source_path'], set()))
         ledger_text = serialize_source_inventory_ledger(new_rows)
         manifest['ledger_sha256'] = hashlib.sha256(ledger_text.encode('utf-8')).hexdigest()
         mapping_authority = responsibility_doc.get('authority', {})
@@ -4233,7 +4248,8 @@ def inventory() -> None:
             'baseline does not match the pinned current Desktop main authority')
     live_before = get(f'/repos/{repo}/branches/main')['commit']['sha']
     require(SHA.fullmatch(live_before) is not None, 'Invalid observed live Desktop main SHA')
-    before = sha
+    require(live_before == sha, 'Desktop main does not match the pinned current authority before inventory')
+    before = live_before
     commit = get(f'/repos/{repo}/git/commits/{sha}')
     require(commit.get('sha') == sha and commit['tree']['sha'] == tree_sha, 'Commit-to-tree lock mismatch')
     root = get(f'/repos/{repo}/git/trees/{tree_sha}')
@@ -4262,7 +4278,7 @@ def inventory() -> None:
     save(OUT / 'anchor-integrity.json', anchor_records)
     live_after = get(f'/repos/{repo}/branches/main')['commit']['sha']
     require(SHA.fullmatch(live_after) is not None, 'Invalid observed live Desktop main SHA')
-    after = sha
+    after = live_after
     checkout = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     top_counts = {}
     for item in files:
@@ -4367,12 +4383,16 @@ def audit_receipt() -> None:
     require(actual_digest == expected_digest,
             'predecessor artifact SHA-256 mismatch: expected ' + expected_digest + ', got ' + actual_digest)
 
+    tree_path = OUT / 'desktop-complete-tree.json'
+    root_tree_path = OUT / 'desktop-root-tree.json'
     inputs = {
         'baseline': DOC / 'authority/baseline.json',
         'source_inventory_manifest': DOC / 'authority/source-inventory-manifest.json',
         'source_inventory_ledger': DOC / 'authority/source-inventory-ledger.jsonl',
         'responsibility_ledger': DOC / 'authority/responsibility-ledger.json',
         'package_semantic_coverage': OUT / 'packages-semantic-coverage.json',
+        'desktop_complete_tree': tree_path,
+        'desktop_root_tree': root_tree_path,
     }
     digests, docs = {}, {}
     for name, path in inputs.items():
@@ -4397,18 +4417,75 @@ def audit_receipt() -> None:
             and manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT
             and manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
             'receipt manifest does not preserve the current 8276/9431 authority boundary')
-    tree_path = OUT / 'desktop-complete-tree.json'
-    require(tree_path.is_file(), 'current Desktop complete-tree evidence is missing')
-    tree_doc = json.loads(tree_path.read_text(encoding='utf-8'))
-    require(tree_doc.get('sha') == manifest.get('desktop_root_tree'),
-            'receipt complete-tree evidence does not match the current Desktop root tree')
+    tree_doc = docs['desktop_complete_tree']
+    root_tree_doc = docs['desktop_root_tree']
+    require(tree_doc.get('sha') == EXPECTED_DESKTOP_TREE
+            and tree_doc.get('sha') == manifest.get('desktop_root_tree')
+            and tree_doc.get('truncated') is False,
+            'receipt complete-tree evidence is truncated or does not match the current Desktop root tree')
     tree_entries = tree_doc.get('tree')
     require(isinstance(tree_entries, list) and len(tree_entries) == EXPECTED_TREE_ENTRY_COUNT,
             'receipt complete-tree evidence has the wrong recursive entry count')
-    tree_paths = [item.get('path') for item in tree_entries]
-    require(all(isinstance(path, str) and path for path in tree_paths)
-            and len(tree_paths) == len(set(tree_paths)),
-            'receipt complete-tree evidence contains missing or duplicate paths')
+    require(root_tree_doc.get('sha') == EXPECTED_DESKTOP_TREE
+            and root_tree_doc.get('truncated') is False,
+            'receipt root-tree evidence is truncated or does not match the current Desktop root tree')
+
+    def tree_signature(entries: list[dict], label: str) -> list[tuple[str, str, str, str]]:
+        require(isinstance(entries, list), label + ' must be a list')
+        paths, signature = [], []
+        for item in entries:
+            require(isinstance(item, dict), label + ' contains a non-object entry')
+            path = item.get('path')
+            require(isinstance(path, str) and path and not PurePosixPath(path).is_absolute()
+                    and '..' not in PurePosixPath(path).parts,
+                    label + ' contains an unsafe or missing path')
+            require(SHA.fullmatch(str(item.get('sha') or '')) is not None,
+                    label + ' contains an invalid object SHA: ' + path)
+            require(item.get('mode') in {'040000', '100644', '100755', '120000', '160000'}
+                    and item.get('type') in {'tree', 'blob', 'commit'},
+                    label + ' contains an invalid mode/type: ' + path)
+            paths.append(path)
+            signature.append((path, item['sha'], item['mode'], item['type']))
+        require(len(paths) == len(set(paths)), label + ' contains duplicate paths')
+        return sorted(signature)
+
+    desktop_repo = baseline['desktop_repository']
+    live_main_before = get(f'/repos/{desktop_repo}/branches/main')['commit']['sha']
+    require(live_main_before == EXPECTED_DESKTOP_COMMIT,
+            'receipt current Desktop main does not match the pinned commit')
+    commit_doc = get(f'/repos/{desktop_repo}/git/commits/{EXPECTED_DESKTOP_COMMIT}')
+    require(commit_doc.get('sha') == EXPECTED_DESKTOP_COMMIT
+            and commit_doc.get('tree', {}).get('sha') == EXPECTED_DESKTOP_TREE,
+            'receipt current Desktop commit/tree lock mismatch')
+    remote_tree = get(f'/repos/{desktop_repo}/git/trees/{EXPECTED_DESKTOP_TREE}?recursive=1')
+    require(remote_tree.get('sha') == EXPECTED_DESKTOP_TREE
+            and remote_tree.get('truncated') is False,
+            'receipt current Desktop recursive API tree is truncated or has the wrong root identity')
+    remote_entries = remote_tree.get('tree')
+    require(isinstance(remote_entries, list) and len(remote_entries) == EXPECTED_TREE_ENTRY_COUNT,
+            'receipt current Desktop recursive API tree has the wrong entry count')
+    require(sum(item.get('type') != 'tree' for item in remote_entries if isinstance(item, dict))
+            == EXPECTED_TRACKED_NON_TREE_COUNT,
+            'receipt current Desktop recursive API tree has the wrong non-tree count')
+    saved_signature = tree_signature(tree_entries, 'saved Desktop complete tree')
+    remote_signature = tree_signature(remote_entries, 'current Desktop recursive API tree')
+    require(saved_signature == remote_signature,
+            'receipt saved complete-tree evidence differs from current GitHub API path/object/mode/type data')
+    root_entries = root_tree_doc.get('tree')
+    remote_root_entries = [item for item in remote_entries if isinstance(item, dict) and '/' not in item.get('path', '')]
+    require(tree_signature(root_entries, 'saved Desktop root tree')
+            == tree_signature(remote_root_entries, 'current Desktop root entries'),
+            'receipt saved root-tree evidence differs from current GitHub API root entries')
+    live_main_after = get(f'/repos/{desktop_repo}/branches/main')['commit']['sha']
+    require(live_main_after == EXPECTED_DESKTOP_COMMIT,
+            'receipt Desktop main moved during complete-tree verification')
+    require(manifest.get('desktop_main_before') in {
+                PRIOR_DESKTOP_COMMIT, PREDECESSOR_DESKTOP_COMMIT, EXPECTED_DESKTOP_COMMIT
+            }
+            and manifest.get('desktop_main_after') == EXPECTED_DESKTOP_COMMIT
+            and manifest.get('authority_current') is True,
+            'receipt manifest does not bind the rebaseline to the current Desktop authority')
+
     expected_paths = {item['path']: item for item in tree_entries if item.get('type') != 'tree'}
     require(len(expected_paths) == EXPECTED_TRACKED_NON_TREE_COUNT,
             'receipt complete-tree evidence has the wrong non-tree entry count')
