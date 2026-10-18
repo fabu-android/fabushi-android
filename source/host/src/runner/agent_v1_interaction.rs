@@ -3,7 +3,7 @@ use super::production_turn_agent_owner::ProductionTurnPrivacyMode;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use prost::Message;
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Condvar, Mutex,
@@ -174,25 +174,49 @@ pub struct InteractionFence {
 struct PendingAskQuestion {
     fence: InteractionFence,
     tool_call_id: String,
+    original_tool_call_id: String,
+    original_args: AskQuestionArgs,
     run_async: bool,
     privacy_mode: ProductionTurnPrivacyMode,
     response: Option<AskQuestionResult>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AsyncCompletionProjection {
     pub query_id: u32,
     pub tool_call_id: String,
+    pub original_tool_call_id: String,
+    pub original_args_base64: String,
+    pub result_base64: String,
     pub account_fence: String,
     pub process_epoch: u64,
     pub result_kind: &'static str,
     pub redacted: bool,
 }
 
+impl std::fmt::Debug for AsyncCompletionProjection {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AsyncCompletionProjection")
+            .field("query_id", &self.query_id)
+            .field("tool_call_id", &self.tool_call_id)
+            .field("original_tool_call_id", &self.original_tool_call_id)
+            .field("original_args_base64", &"[REDACTED]")
+            .field("result_base64", &"[REDACTED]")
+            .field("account_fence", &self.account_fence)
+            .field("process_epoch", &self.process_epoch)
+            .field("result_kind", &self.result_kind)
+            .field("redacted", &self.redacted)
+            .finish()
+    }
+}
+
 #[derive(Default)]
 struct InteractionState {
     next_query_id: u32,
     pending: BTreeMap<u32, PendingAskQuestion>,
+    pending_async_original_tool_call_ids: BTreeSet<(String, String)>,
+    completed_async_original_tool_call_ids: BTreeSet<(String, String)>,
     post_turn: VecDeque<AsyncCompletionProjection>,
     turn_ended: bool,
 }
@@ -207,7 +231,7 @@ impl SharedAgentInteractionOwner {
         &self,
         fence: InteractionFence,
         tool_call_id: &str,
-        args: AskQuestionArgs,
+        mut args: AskQuestionArgs,
         privacy_mode: ProductionTurnPrivacyMode,
     ) -> Result<(u32, Vec<u8>), String> {
         if fence.account_fence.trim().is_empty() || fence.process_epoch == 0 {
@@ -219,19 +243,43 @@ impl SharedAgentInteractionOwner {
         if args.questions.is_empty() {
             return Err("AskQuestion requires at least one question".into());
         }
+        let supplied_original_id = args.async_original_tool_call_id.trim();
+        let original_tool_call_id = if supplied_original_id.is_empty() {
+            tool_call_id.to_string()
+        } else {
+            supplied_original_id.to_string()
+        };
+        // Desktop replay-horizon matching falls back to the tool call ID when
+        // async_original_tool_call_id is absent. Canonicalize it before sending
+        // the interaction query so a later completion has the same identity.
+        args.async_original_tool_call_id = original_tool_call_id.clone();
+
         let (lock, _) = &*self.state;
         let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
+        let original_key = (fence.account_fence.clone(), original_tool_call_id.clone());
+        if args.run_async
+            && (state.pending_async_original_tool_call_ids.contains(&original_key)
+                || state.completed_async_original_tool_call_ids.contains(&original_key))
+        {
+            return Err("duplicate async AskQuestion original tool call ID".into());
+        }
         state.next_query_id = state.next_query_id.checked_add(1).ok_or("interaction query id exhausted")?;
         if state.next_query_id == 0 {
             state.next_query_id = 1;
         }
         let id = state.next_query_id;
+        let run_async = args.run_async;
+        if run_async {
+            state.pending_async_original_tool_call_ids.insert(original_key);
+        }
         state.pending.insert(
             id,
             PendingAskQuestion {
                 fence,
                 tool_call_id: tool_call_id.to_string(),
-                run_async: args.run_async,
+                original_tool_call_id,
+                original_args: args.clone(),
+                run_async,
                 privacy_mode,
                 response: None,
             },
@@ -263,21 +311,37 @@ impl SharedAgentInteractionOwner {
         };
         let (lock, ready) = &*self.state;
         let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
-        let pending = state
-            .pending
-            .get_mut(&response.id)
-            .ok_or("interaction response is stale or unknown")?;
-        if &pending.fence != expected {
-            return Err("interaction response belongs to a stale account/process epoch".into());
-        }
-        if pending.response.is_some() {
-            return Err("interaction response already settled".into());
-        }
-        pending.response = Some(result.clone());
-        let run_async = pending.run_async;
+        let (run_async, projection, original_key, should_receipt) = {
+            let pending = state
+                .pending
+                .get_mut(&response.id)
+                .ok_or("interaction response is stale or unknown")?;
+            if &pending.fence != expected {
+                return Err("interaction response belongs to a stale account/process epoch".into());
+            }
+            if pending.response.is_some() {
+                return Err("interaction response already settled".into());
+            }
+            if pending.run_async && !is_valid_async_completion_result(&result) {
+                return Err("async AskQuestion completion must contain success, error, or rejected result".into());
+            }
+            pending.response = Some(result.clone());
+            let run_async = pending.run_async;
+            let projection = run_async.then(|| completion_projection(response.id, pending, &result));
+            let original_key = (
+                pending.fence.account_fence.clone(),
+                pending.original_tool_call_id.clone(),
+            );
+            let should_receipt = run_async && should_receipt_ask_question_result(&result);
+            (run_async, projection, original_key, should_receipt)
+        };
         if run_async {
-            let projection = completion_projection(response.id, pending, &result);
+            let projection = projection.ok_or("async AskQuestion completion projection is missing")?;
             state.post_turn.push_back(projection);
+            state.pending_async_original_tool_call_ids.remove(&original_key);
+            if should_receipt {
+                state.completed_async_original_tool_call_ids.insert(original_key);
+            }
             state.pending.remove(&response.id);
         }
         ready.notify_all();
@@ -372,6 +436,15 @@ impl SharedAgentInteractionOwner {
         let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
         let before = state.pending.len();
         state.pending.retain(|_, pending| pending.fence == *current);
+        state.pending_async_original_tool_call_ids = state
+            .pending
+            .values()
+            .filter(|pending| pending.run_async)
+            .map(|pending| (
+                pending.fence.account_fence.clone(),
+                pending.original_tool_call_id.clone(),
+            ))
+            .collect();
         state.post_turn.retain(|item| {
             item.account_fence == current.account_fence && item.process_epoch == current.process_epoch
         });
@@ -391,10 +464,33 @@ fn completion_projection(
     AsyncCompletionProjection {
         query_id,
         tool_call_id: pending.tool_call_id.clone(),
+        original_tool_call_id: pending.original_tool_call_id.clone(),
+        original_args_base64: BASE64_STANDARD.encode(pending.original_args.encode_to_vec()),
+        result_base64: BASE64_STANDARD.encode(result.encode_to_vec()),
         account_fence: pending.fence.account_fence.clone(),
         process_epoch: pending.fence.process_epoch,
         result_kind: ask_question_result_kind(result),
         redacted: pending.privacy_mode != ProductionTurnPrivacyMode::UsageCodebaseTrainingAllowed,
+    }
+}
+
+fn is_valid_async_completion_result(result: &AskQuestionResult) -> bool {
+    matches!(
+        result.result.as_ref(),
+        Some(ask_question_result::Result::Success(_))
+            | Some(ask_question_result::Result::Error(_))
+            | Some(ask_question_result::Result::Rejected(_))
+    )
+}
+
+fn should_receipt_ask_question_result(result: &AskQuestionResult) -> bool {
+    match result.result.as_ref() {
+        Some(ask_question_result::Result::Success(_))
+        | Some(ask_question_result::Result::Error(_)) => true,
+        Some(ask_question_result::Result::Rejected(value)) => {
+            !fabushi_constants::ask_question::is_ask_question_auto_answer_reason(Some(value.reason.as_str()))
+        }
+        Some(ask_question_result::Result::Async(_)) | None => false,
     }
 }
 
@@ -705,7 +801,139 @@ mod tests {
         assert_eq!(completion.len(), 1);
         assert!(completion[0].redacted);
         assert_eq!(completion[0].result_kind, "success");
-        assert!(!format!("{completion:?}").contains("private answer"));
+        assert_eq!(completion[0].tool_call_id, "async-1");
+        assert_eq!(completion[0].original_tool_call_id, "async-1");
+        let original_args = AskQuestionArgs::decode(
+            BASE64_STANDARD.decode(&completion[0].original_args_base64).unwrap().as_slice(),
+        ).unwrap();
+        assert_eq!(original_args.async_original_tool_call_id, "async-1");
+        let completion_result = AskQuestionResult::decode(
+            BASE64_STANDARD.decode(&completion[0].result_base64).unwrap().as_slice(),
+        ).unwrap();
+        let Some(ask_question_result::Result::Success(success)) = completion_result.result else {
+            panic!("expected successful async AskQuestion result");
+        };
+        assert_eq!(success.answers[0].freeform_text, "private answer");
+        let debug = format!("{completion:?}");
+        assert!(!debug.contains("private answer"));
+        assert!(!debug.contains(&completion[0].result_base64));
+        assert!(!debug.contains(&completion[0].original_args_base64));
+        assert!(owner.begin_ask_question(
+            fence(),
+            "async-1",
+            args(true),
+            ProductionTurnPrivacyMode::NoStorage,
+        ).unwrap_err().contains("duplicate async AskQuestion"));
+    }
+
+    #[test]
+    fn explicit_async_original_tool_call_id_is_the_completion_and_dedup_identity() {
+        let owner = SharedAgentInteractionOwner::default();
+        let mut question_args = args(true);
+        question_args.async_original_tool_call_id = "original-call-7".into();
+        let (id, _) = owner.begin_ask_question(
+            fence(),
+            "runtime-call-7",
+            question_args.clone(),
+            ProductionTurnPrivacyMode::NoTraining,
+        ).unwrap();
+        let response = InteractionResponse {
+            id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Rejected(AskQuestionRejected {
+                            reason: "user skipped".into(),
+                        })),
+                    }),
+                },
+            )),
+        };
+        assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
+        owner.turn_ended(&fence(), TurnEndedUpdate::default()).unwrap();
+        let completion = owner.drain_post_turn(&fence()).unwrap().pop().unwrap();
+        assert_eq!(completion.tool_call_id, "runtime-call-7");
+        assert_eq!(completion.original_tool_call_id, "original-call-7");
+        let original_args = AskQuestionArgs::decode(
+            BASE64_STANDARD.decode(&completion.original_args_base64).unwrap().as_slice(),
+        ).unwrap();
+        assert_eq!(original_args.async_original_tool_call_id, "original-call-7");
+        assert!(owner.begin_ask_question(
+            fence(),
+            "runtime-call-8",
+            question_args,
+            ProductionTurnPrivacyMode::NoTraining,
+        ).unwrap_err().contains("duplicate async AskQuestion"));
+    }
+
+    #[test]
+    fn auto_answer_rejection_does_not_consume_the_completion_receipt_identity() {
+        let owner = SharedAgentInteractionOwner::default();
+        let mut question_args = args(true);
+        question_args.async_original_tool_call_id = "auto-answer-call".into();
+        let (id, _) = owner.begin_ask_question(
+            fence(),
+            "runtime-auto-answer",
+            question_args.clone(),
+            ProductionTurnPrivacyMode::NoTraining,
+        ).unwrap();
+        let response = InteractionResponse {
+            id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Rejected(AskQuestionRejected {
+                            reason: fabushi_constants::ask_question::default_ask_question_auto_answer_reason(),
+                        })),
+                    }),
+                },
+            )),
+        };
+        assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
+        owner.turn_ended(&fence(), TurnEndedUpdate::default()).unwrap();
+        assert_eq!(owner.drain_post_turn(&fence()).unwrap().len(), 1);
+        assert!(owner.begin_ask_question(
+            fence(),
+            "runtime-auto-answer-retry",
+            question_args,
+            ProductionTurnPrivacyMode::NoTraining,
+        ).is_ok());
+    }
+
+    #[test]
+    fn async_completion_rejects_async_placeholder_without_consuming_pending_query() {
+        let owner = SharedAgentInteractionOwner::default();
+        let (id, _) = owner.begin_ask_question(
+            fence(),
+            "async-placeholder",
+            args(true),
+            ProductionTurnPrivacyMode::NoTraining,
+        ).unwrap();
+        let placeholder = InteractionResponse {
+            id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Async(AskQuestionAsync {})),
+                    }),
+                },
+            )),
+        };
+        assert!(owner.settle_response(&fence(), &placeholder.encode_to_vec())
+            .unwrap_err().contains("must contain success, error, or rejected"));
+        let valid = InteractionResponse {
+            id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Success(AskQuestionSuccess {
+                            answers: vec![],
+                        })),
+                    }),
+                },
+            )),
+        };
+        assert!(owner.settle_response(&fence(), &valid.encode_to_vec()).unwrap());
     }
 
     #[test]
