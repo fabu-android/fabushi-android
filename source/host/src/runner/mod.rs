@@ -5,6 +5,7 @@ pub mod conversation_outline;
 pub mod agent_management;
 pub mod agent_v1_wire;
 pub mod agent_v1_observation;
+pub mod agent_v1_interaction;
 pub mod android_host_inference;
 pub mod box_help_routed_tool;
 pub mod android_system_prompt;
@@ -99,6 +100,11 @@ pub use android_host_inference::{
     AndroidToolCallObservationSink,
 };
 pub use agent_v1_observation::DurableAgentV1ObservationOwner;
+pub use agent_v1_interaction::{
+    decode_response_base64, with_ask_question_tool, AsyncCompletionProjection, InteractionFence,
+    InteractionResponse as AgentV1InteractionResponse, InteractionUpdate as AgentV1InteractionUpdate,
+    SharedAgentInteractionOwner, TurnEndedUpdate as AgentV1TurnEndedUpdate,
+};
 
 pub use send_message::{
     with_send_message_tools, with_send_message_tools_counted_to_target,

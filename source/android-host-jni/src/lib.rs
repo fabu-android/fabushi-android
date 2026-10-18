@@ -1297,6 +1297,31 @@ mod tests {
     }
 
     #[test]
+    fn native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host() {
+        let mut runtime =
+            AndroidNativeRuntime::new(test_root("interaction-native-dispatch"), AndroidHostMode::Test, 23);
+        sign_in_test_account(&mut runtime);
+        let fence = call(
+            &mut runtime,
+            json!({"method":"feature.account.fence","params":{}}),
+        );
+        assert_eq!(fence["ok"], true);
+        let account_fence = fence["result"]["accountFence"].as_str().unwrap().to_string();
+
+        let flushed = call(
+            &mut runtime,
+            json!({
+                "id":"interaction-flush-1",
+                "method":"feature.agent.interaction.flushPostTurn",
+                "params":{"accountFence":account_fence}
+            }),
+        );
+        assert_eq!(flushed["ok"], true);
+        assert_eq!(flushed["result"]["flushed"], 0);
+        assert_eq!(runtime.generation(), 23);
+    }
+
+    #[test]
     fn client_side_tool_v2_wire_ingress_is_reachable_only_through_rust_coordinator() {
         let mut runtime =
             AndroidNativeRuntime::new(test_root("client-tool-v2"), AndroidHostMode::Test, 3);

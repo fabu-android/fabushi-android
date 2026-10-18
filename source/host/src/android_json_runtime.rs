@@ -205,6 +205,8 @@ use crate::runner::{
     AndroidMcpPromptServer, AndroidRemotePromptState, AndroidSkillPromptItem,
     AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
+    decode_response_base64, with_ask_question_tool, InteractionFence,
+    SharedAgentInteractionOwner, AgentV1TurnEndedUpdate,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
     ProductionDiskPressureLevel, ProductionTurnInput, ProductionTurnLifecycleStore,
@@ -1561,6 +1563,7 @@ pub struct AndroidJsonHost {
     turn_journal: Arc<Mutex<DurableTurnJournal>>,
     turn_lifecycle: Arc<Mutex<ProductionTurnLifecycleStore>>,
     turn_upgrade_quiescing: Arc<AtomicBool>,
+    interaction_owner: SharedAgentInteractionOwner,
     live_account_fence: Arc<Mutex<Option<String>>>,
     client_side_tool_v2: ClientSideToolV2Producer,
     agent_turn_interruptions: Arc<AgentTurnInterruptionRegistry>,
@@ -2858,6 +2861,7 @@ impl AndroidJsonHost {
                 }),
             )),
             turn_upgrade_quiescing: Arc::new(AtomicBool::new(false)),
+            interaction_owner: SharedAgentInteractionOwner::default(),
             live_account_fence,
             client_side_tool_v2: ClientSideToolV2Producer::new(),
             agent_turn_interruptions: Arc::new(AgentTurnInterruptionRegistry::default()),
@@ -4970,6 +4974,8 @@ impl AndroidJsonHost {
                 Ok(json!({"recorded":true}))
             },
             "feature.account.fence" => Ok(json!({"accountFence":self.current_turn_account_fence()?})),
+            "feature.agent.interaction.respond" => self.agent_interaction_respond(params),
+            "feature.agent.interaction.flushPostTurn" => self.agent_interaction_flush_post_turn(params),
             "feature.account.sandAccess" => self.account_sand_access(),
             "feature.account.privacyMode" => Ok(self.account_privacy_mode()),
             "feature.account.teamRules" => self.account_team_rules(),
@@ -7744,6 +7750,67 @@ impl AndroidJsonHost {
                 .and_then(|backend| backend.resolve_sand_access_status().ok())
                 .unwrap_or_else(|| project_fabushi_sand_access(false))),
         }
+    }
+
+    fn current_interaction_fence(&self) -> Result<InteractionFence, String> {
+        let account_fence = self.current_turn_account_fence()?;
+        let process_epoch = self
+            .turn_lifecycle
+            .lock()
+            .map_err(|_| "turn lifecycle lock poisoned".to_string())?
+            .process_epoch();
+        Ok(InteractionFence { account_fence, process_epoch })
+    }
+
+    fn agent_interaction_respond(&mut self, params: &Value) -> Result<Value, String> {
+        let supplied = InteractionFence {
+            account_fence: required_string(params, "accountFence")?.to_string(),
+            process_epoch: required_u64(params, "processEpoch")?,
+        };
+        let current = self.current_interaction_fence()?;
+        if supplied != current {
+            let _ = self.interaction_owner.invalidate_stale(&current);
+            return Err("interaction response belongs to a stale account/process epoch".into());
+        }
+        let bytes = decode_response_base64(&required_string(params, "responseBase64")?)?;
+        let run_async = self.interaction_owner.settle_response(&supplied, &bytes)?;
+        let flushed = self.flush_agent_interaction_post_turn(&supplied)?;
+        Ok(json!({"accepted":true,"runAsync":run_async,"postTurnFlushed":flushed}))
+    }
+
+    fn flush_agent_interaction_post_turn(&mut self, fence: &InteractionFence) -> Result<usize, String> {
+        let completions = self.interaction_owner.drain_post_turn(fence)?;
+        let count = completions.len();
+        for completion in completions {
+            push_turn_event(
+                &self.turn_events,
+                json!({
+                    "type":"agent.askQuestion.asyncCompleted",
+                    "queryId":completion.query_id,
+                    "toolCallId":completion.tool_call_id,
+                    "accountFence":completion.account_fence,
+                    "processEpoch":completion.process_epoch,
+                    "resultKind":completion.result_kind,
+                    "redacted":completion.redacted,
+                }),
+            );
+        }
+        Ok(count)
+    }
+
+    fn agent_interaction_flush_post_turn(&mut self, params: &Value) -> Result<Value, String> {
+        let current = self.current_interaction_fence()?;
+        if let Some(account_fence) = params.get("accountFence").and_then(Value::as_str) {
+            if account_fence != current.account_fence {
+                return Err("post-turn flush belongs to a stale account epoch".into());
+            }
+        }
+        if let Some(process_epoch) = params.get("processEpoch").and_then(Value::as_u64) {
+            if process_epoch != current.process_epoch {
+                return Err("post-turn flush belongs to a stale process epoch".into());
+            }
+        }
+        Ok(json!({"flushed":self.flush_agent_interaction_post_turn(&current)?}))
     }
 
     fn account_privacy_mode(&self) -> Value {
@@ -15112,6 +15179,7 @@ impl AndroidJsonHost {
                 })
                 .unwrap_or(ProductionTurnPrivacyMode::Unspecified),
         };
+        let interaction_owner = self.interaction_owner.clone();
         let frozen_privacy_label = match frozen_privacy {
             ProductionTurnPrivacyMode::Unspecified => "unspecified",
             ProductionTurnPrivacyMode::NoStorage => "no-storage",
@@ -15889,6 +15957,37 @@ impl AndroidJsonHost {
                 } else {
                     routed_subagent_tools
                 };
+                let ask_question_events = Arc::clone(&turn_events);
+                let ask_operation_id = operation_id_owned.clone();
+                let ask_request_id = request_id_owned.clone();
+                let ask_agent_id = conversation_id_owned.clone();
+                let ask_fence = InteractionFence {
+                    account_fence: account_fence_owned.clone(),
+                    process_epoch: turn_lifecycle_process_epoch,
+                };
+                let routed_subagent_tools = with_ask_question_tool(
+                    routed_subagent_tools,
+                    interaction_owner.clone(),
+                    ask_fence,
+                    frozen_privacy,
+                    Arc::clone(&cancelled),
+                    Arc::new(move |query_id, bytes, fence| {
+                        push_turn_event(
+                            &ask_question_events,
+                            json!({
+                                "type":"agent.interaction.query",
+                                "operationId":ask_operation_id,
+                                "requestId":ask_request_id,
+                                "agentId":ask_agent_id,
+                                "queryId":query_id,
+                                "accountFence":fence.account_fence,
+                                "processEpoch":fence.process_epoch,
+                                "protobufBase64":BASE64_STANDARD.encode(bytes),
+                            }),
+                        );
+                        Ok(())
+                    }),
+                );
 
                 let agent_v1_observation_owner = Arc::new(
                     DurableAgentV1ObservationOwner::new(
@@ -16480,6 +16579,45 @@ impl AndroidJsonHost {
                     },
                     &mut sink,
                 );
+
+                if result.as_ref().is_ok_and(|value| value.settlement.is_some()) {
+                    let interaction_fence = InteractionFence {
+                        account_fence: account_fence_owned.clone(),
+                        process_epoch: turn_lifecycle_process_epoch,
+                    };
+                    if let Ok(update_bytes) = interaction_owner.turn_ended(
+                        &interaction_fence,
+                        AgentV1TurnEndedUpdate::default(),
+                    ) {
+                        push_turn_event(
+                            &turn_events,
+                            json!({
+                                "type":"agent.interaction.update",
+                                "operationId":operation_id_owned,
+                                "requestId":request_id_owned,
+                                "accountFence":account_fence_owned,
+                                "processEpoch":turn_lifecycle_process_epoch,
+                                "protobufBase64":BASE64_STANDARD.encode(update_bytes),
+                            }),
+                        );
+                    }
+                    if let Ok(completions) = interaction_owner.drain_post_turn(&interaction_fence) {
+                        for completion in completions {
+                            push_turn_event(
+                                &turn_events,
+                                json!({
+                                    "type":"agent.askQuestion.asyncCompleted",
+                                    "queryId":completion.query_id,
+                                    "toolCallId":completion.tool_call_id,
+                                    "accountFence":completion.account_fence,
+                                    "processEpoch":completion.process_epoch,
+                                    "resultKind":completion.result_kind,
+                                    "redacted":completion.redacted,
+                                }),
+                            );
+                        }
+                    }
+                }
 
                 if let Err(error) = result {
                     if !cancelled.load(Ordering::Acquire) && !terminal_emitted {
@@ -19312,6 +19450,117 @@ mod tests {
 
 
     use super::*;
+
+    #[test]
+    fn android_json_host_settles_generated_ask_question_response_with_exact_fence() {
+        use crate::runner::agent_v1_interaction::{
+            ask_question_result, interaction_response, AskQuestionArgs, AskQuestionInteractionResponse,
+            AskQuestionOption, AskQuestionQuestion, AskQuestionRejected, AskQuestionResult,
+            InteractionResponse,
+        };
+        use prost::Message as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let fence = host.current_interaction_fence().unwrap();
+        let (query_id, _) = host.interaction_owner.begin_ask_question(
+            fence.clone(),
+            "host-sync-ask",
+            AskQuestionArgs {
+                title: "Need input".into(),
+                questions: vec![AskQuestionQuestion {
+                    id: "q1".into(),
+                    prompt: "Choose".into(),
+                    options: vec![
+                        AskQuestionOption { id: "a".into(), label: "A".into() },
+                        AskQuestionOption { id: "b".into(), label: "B".into() },
+                    ],
+                    allow_multiple: false,
+                }],
+                run_async: false,
+                async_original_tool_call_id: String::new(),
+            },
+            ProductionTurnPrivacyMode::NoStorage,
+        ).unwrap();
+        let response = InteractionResponse {
+            id: query_id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Rejected(AskQuestionRejected {
+                            reason: "skip".into(),
+                        })),
+                    }),
+                },
+            )),
+        };
+        let settled = host.dispatch(
+            "feature.agent.interaction.respond",
+            &json!({
+                "accountFence":fence.account_fence,
+                "processEpoch":fence.process_epoch,
+                "responseBase64":BASE64_STANDARD.encode(response.encode_to_vec()),
+            }),
+        ).unwrap();
+        assert_eq!(settled["accepted"], true);
+        assert_eq!(settled["runAsync"], false);
+    }
+
+    #[test]
+    fn android_json_host_rejects_stale_interaction_response_after_account_or_process_change() {
+        use crate::runner::agent_v1_interaction::{
+            ask_question_result, interaction_response, AskQuestionArgs, AskQuestionInteractionResponse,
+            AskQuestionOption, AskQuestionQuestion, AskQuestionRejected, AskQuestionResult,
+            InteractionResponse,
+        };
+        use prost::Message as _;
+
+        let root = tempfile::tempdir().unwrap();
+        let mut host = AndroidJsonHost::new(root.path(), AndroidHostMode::Test);
+        sign_in_test_account(&mut host);
+        let fence = host.current_interaction_fence().unwrap();
+        let (query_id, _) = host.interaction_owner.begin_ask_question(
+            fence.clone(),
+            "host-stale-ask",
+            AskQuestionArgs {
+                title: String::new(),
+                questions: vec![AskQuestionQuestion {
+                    id: "q1".into(),
+                    prompt: "Choose".into(),
+                    options: vec![
+                        AskQuestionOption { id: "a".into(), label: "A".into() },
+                        AskQuestionOption { id: "b".into(), label: "B".into() },
+                    ],
+                    allow_multiple: false,
+                }],
+                run_async: false,
+                async_original_tool_call_id: String::new(),
+            },
+            ProductionTurnPrivacyMode::NoStorage,
+        ).unwrap();
+        let response = InteractionResponse {
+            id: query_id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Rejected(AskQuestionRejected {
+                            reason: "stale".into(),
+                        })),
+                    }),
+                },
+            )),
+        };
+        let error = host.dispatch(
+            "feature.agent.interaction.respond",
+            &json!({
+                "accountFence":fence.account_fence,
+                "processEpoch":fence.process_epoch + 1,
+                "responseBase64":BASE64_STANDARD.encode(response.encode_to_vec()),
+            }),
+        ).unwrap_err();
+        assert!(error.contains("stale account/process epoch"));
+    }
 
     #[test]
     fn dynamic_prompt_snapshot_reopens_canonical_owners_and_fences_stale_accounts() {

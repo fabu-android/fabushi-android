@@ -1,0 +1,57 @@
+name: Android Interaction Focused
+
+on:
+  push:
+    branches:
+      - interaction-r115-validation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.sha }}
+
+jobs:
+  interaction-focused:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: "Focused 1/6 generated-compatible Interaction wire"
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cargo test -p fabushi-mahayana-host generated_compatible_interaction_query_response_wire_roundtrip -- --nocapture 2>&1 | tee evidence/01-generated-wire.log
+      - name: "Focused 2/6 runAsync + turnEnded + privacy post-turn"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host run_async_completion_is_enqueued_and_privacy_projection_is_redacted -- --nocapture 2>&1 | tee evidence/02-run-async.log
+      - name: "Focused 3/6 account/process stale fencing"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host stale_account_and_process_epoch_responses_fail_closed -- --nocapture 2>&1 | tee evidence/03-stale-fence.log
+      - name: "Focused 4/6 AndroidJsonHost sync AskQuestion settlement"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host android_json_host_settles_generated_ask_question_response_with_exact_fence -- --nocapture 2>&1 | tee evidence/04-host-sync-ask.log
+      - name: "Focused 5/6 AndroidJsonHost stale dispatch"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host android_json_host_rejects_stale_interaction_response_after_account_or_process_change -- --nocapture 2>&1 | tee evidence/05-host-stale.log
+      - name: "Focused 6/6 android-host-jni nativeDispatch"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-host-jni native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host -- --nocapture 2>&1 | tee evidence/06-jni-native-dispatch.log
+      - name: Record exact SHA
+        if: always()
+        run: |
+          printf 'source_sha=%s\n' "$SOURCE_SHA" > evidence/source-sha.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-interaction-focused-${{ env.SOURCE_SHA }}
+          path: evidence/
+          if-no-files-found: error

@@ -1,0 +1,736 @@
+use super::android_host_inference::AndroidRoutedToolBridge;
+use super::production_turn_agent_owner::ProductionTurnPrivacyMode;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use prost::Message;
+use serde_json::{json, Value};
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Condvar, Mutex,
+};
+use std::time::{Duration, Instant};
+
+pub const ASK_QUESTION_TOOL_NAME: &str = "AskQuestion";
+pub const FROZEN_AGENT_PB_BLOB_SHA: &str = "3cd3d020e69b54d1a6df27c0f967afe7e9fc942c";
+pub const FROZEN_ASK_QUESTION_PB_BLOB_SHA: &str = "79a7cbf0decd0bc9e8fa5940378a1ec28bbf8ba5";
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionOption {
+    #[prost(string, tag = "1")]
+    pub id: String,
+    #[prost(string, tag = "2")]
+    pub label: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionQuestion {
+    #[prost(string, tag = "1")]
+    pub id: String,
+    #[prost(string, tag = "2")]
+    pub prompt: String,
+    #[prost(message, repeated, tag = "3")]
+    pub options: Vec<AskQuestionOption>,
+    #[prost(bool, tag = "4")]
+    pub allow_multiple: bool,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionArgs {
+    #[prost(string, tag = "1")]
+    pub title: String,
+    #[prost(message, repeated, tag = "2")]
+    pub questions: Vec<AskQuestionQuestion>,
+    #[prost(bool, tag = "5")]
+    pub run_async: bool,
+    #[prost(string, tag = "6")]
+    pub async_original_tool_call_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionInteractionQuery {
+    #[prost(message, optional, tag = "1")]
+    pub args: Option<AskQuestionArgs>,
+    #[prost(string, tag = "2")]
+    pub tool_call_id: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct InteractionQuery {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(oneof = "interaction_query::Query", tags = "3")]
+    pub query: Option<interaction_query::Query>,
+}
+pub mod interaction_query {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Query {
+        #[prost(message, tag = "3")]
+        AskQuestionInteractionQuery(super::AskQuestionInteractionQuery),
+    }
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionAnswer {
+    #[prost(string, tag = "1")]
+    pub question_id: String,
+    #[prost(string, repeated, tag = "2")]
+    pub selected_option_ids: Vec<String>,
+    #[prost(string, tag = "3")]
+    pub freeform_text: String,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionSuccess {
+    #[prost(message, repeated, tag = "1")]
+    pub answers: Vec<AskQuestionAnswer>,
+}
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionError {
+    #[prost(string, tag = "1")]
+    pub error_message: String,
+}
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionRejected {
+    #[prost(string, tag = "1")]
+    pub reason: String,
+}
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionAsync {}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionResult {
+    #[prost(oneof = "ask_question_result::Result", tags = "1, 2, 3, 4")]
+    pub result: Option<ask_question_result::Result>,
+}
+pub mod ask_question_result {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Result {
+        #[prost(message, tag = "1")]
+        Success(super::AskQuestionSuccess),
+        #[prost(message, tag = "2")]
+        Error(super::AskQuestionError),
+        #[prost(message, tag = "3")]
+        Rejected(super::AskQuestionRejected),
+        #[prost(message, tag = "4")]
+        Async(super::AskQuestionAsync),
+    }
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct AskQuestionInteractionResponse {
+    #[prost(message, optional, tag = "1")]
+    pub result: Option<AskQuestionResult>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct InteractionResponse {
+    #[prost(uint32, tag = "1")]
+    pub id: u32,
+    #[prost(oneof = "interaction_response::Result", tags = "3")]
+    pub result: Option<interaction_response::Result>,
+}
+pub mod interaction_response {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Result {
+        #[prost(message, tag = "3")]
+        AskQuestionInteractionResponse(super::AskQuestionInteractionResponse),
+    }
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct TurnEndedUpdate {
+    #[prost(int64, optional, tag = "1")]
+    pub input_tokens: Option<i64>,
+    #[prost(int64, optional, tag = "2")]
+    pub output_tokens: Option<i64>,
+    #[prost(int64, optional, tag = "3")]
+    pub cache_read_tokens: Option<i64>,
+    #[prost(int64, optional, tag = "4")]
+    pub cache_write_tokens: Option<i64>,
+    #[prost(int64, optional, tag = "5")]
+    pub reasoning_tokens: Option<i64>,
+}
+
+#[derive(Clone, PartialEq, Message)]
+pub struct InteractionUpdate {
+    #[prost(oneof = "interaction_update::Message", tags = "14")]
+    pub message: Option<interaction_update::Message>,
+}
+pub mod interaction_update {
+    #[derive(Clone, PartialEq, prost::Oneof)]
+    pub enum Message {
+        #[prost(message, tag = "14")]
+        TurnEnded(super::TurnEndedUpdate),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InteractionFence {
+    pub account_fence: String,
+    pub process_epoch: u64,
+}
+
+#[derive(Clone)]
+struct PendingAskQuestion {
+    fence: InteractionFence,
+    tool_call_id: String,
+    run_async: bool,
+    privacy_mode: ProductionTurnPrivacyMode,
+    response: Option<AskQuestionResult>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AsyncCompletionProjection {
+    pub query_id: u32,
+    pub tool_call_id: String,
+    pub account_fence: String,
+    pub process_epoch: u64,
+    pub result_kind: &'static str,
+    pub redacted: bool,
+}
+
+#[derive(Default)]
+struct InteractionState {
+    next_query_id: u32,
+    pending: BTreeMap<u32, PendingAskQuestion>,
+    post_turn: VecDeque<AsyncCompletionProjection>,
+    turn_ended: bool,
+}
+
+#[derive(Clone, Default)]
+pub struct SharedAgentInteractionOwner {
+    state: Arc<(Mutex<InteractionState>, Condvar)>,
+}
+
+impl SharedAgentInteractionOwner {
+    pub fn begin_ask_question(
+        &self,
+        fence: InteractionFence,
+        tool_call_id: &str,
+        args: AskQuestionArgs,
+        privacy_mode: ProductionTurnPrivacyMode,
+    ) -> Result<(u32, Vec<u8>), String> {
+        if fence.account_fence.trim().is_empty() || fence.process_epoch == 0 {
+            return Err("interaction fence is invalid".into());
+        }
+        if tool_call_id.trim().is_empty() {
+            return Err("AskQuestion tool_call_id is required".into());
+        }
+        if args.questions.is_empty() {
+            return Err("AskQuestion requires at least one question".into());
+        }
+        let (lock, _) = &*self.state;
+        let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
+        state.next_query_id = state.next_query_id.checked_add(1).ok_or("interaction query id exhausted")?;
+        if state.next_query_id == 0 {
+            state.next_query_id = 1;
+        }
+        let id = state.next_query_id;
+        state.pending.insert(
+            id,
+            PendingAskQuestion {
+                fence,
+                tool_call_id: tool_call_id.to_string(),
+                run_async: args.run_async,
+                privacy_mode,
+                response: None,
+            },
+        );
+        let query = InteractionQuery {
+            id,
+            query: Some(interaction_query::Query::AskQuestionInteractionQuery(
+                AskQuestionInteractionQuery {
+                    args: Some(args),
+                    tool_call_id: tool_call_id.to_string(),
+                },
+            )),
+        };
+        Ok((id, query.encode_to_vec()))
+    }
+
+    pub fn settle_response(
+        &self,
+        expected: &InteractionFence,
+        bytes: &[u8],
+    ) -> Result<bool, String> {
+        let response = InteractionResponse::decode(bytes)
+            .map_err(|error| format!("invalid InteractionResponse protobuf: {error}"))?;
+        let result = match response.result {
+            Some(interaction_response::Result::AskQuestionInteractionResponse(value)) => value
+                .result
+                .ok_or("AskQuestionInteractionResponse.result is required")?,
+            None => return Err("InteractionResponse result is required".into()),
+        };
+        let (lock, ready) = &*self.state;
+        let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
+        let pending = state
+            .pending
+            .get_mut(&response.id)
+            .ok_or("interaction response is stale or unknown")?;
+        if &pending.fence != expected {
+            return Err("interaction response belongs to a stale account/process epoch".into());
+        }
+        if pending.response.is_some() {
+            return Err("interaction response already settled".into());
+        }
+        pending.response = Some(result.clone());
+        let run_async = pending.run_async;
+        if run_async {
+            let projection = completion_projection(response.id, pending, &result);
+            state.post_turn.push_back(projection);
+            state.pending.remove(&response.id);
+        }
+        ready.notify_all();
+        Ok(run_async)
+    }
+
+    pub fn wait_sync(
+        &self,
+        query_id: u32,
+        expected: &InteractionFence,
+        cancelled: &AtomicBool,
+        timeout: Duration,
+    ) -> Result<AskQuestionResult, String> {
+        let deadline = Instant::now() + timeout;
+        let (lock, ready) = &*self.state;
+        let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                state.pending.remove(&query_id);
+                return Err("AskQuestion cancelled".into());
+            }
+            let pending = state.pending.get(&query_id).ok_or("AskQuestion query is no longer pending")?;
+            if &pending.fence != expected {
+                state.pending.remove(&query_id);
+                return Err("AskQuestion query belongs to a stale account/process epoch".into());
+            }
+            if pending.run_async {
+                return Ok(AskQuestionResult {
+                    result: Some(ask_question_result::Result::Async(AskQuestionAsync {})),
+                });
+            }
+            if let Some(result) = pending.response.clone() {
+                state.pending.remove(&query_id);
+                return Ok(result);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                state.pending.remove(&query_id);
+                return Err("AskQuestion response timed out".into());
+            }
+            let remaining = deadline.saturating_duration_since(now).min(Duration::from_millis(250));
+            let (next, _) = ready
+                .wait_timeout(state, remaining)
+                .map_err(|_| "interaction owner condvar poisoned".to_string())?;
+            state = next;
+        }
+    }
+
+    pub fn turn_ended(
+        &self,
+        expected: &InteractionFence,
+        usage: TurnEndedUpdate,
+    ) -> Result<Vec<u8>, String> {
+        let (lock, _) = &*self.state;
+        let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
+        for pending in state.pending.values() {
+            if &pending.fence != expected {
+                return Err("turnEnded attempted across a stale account/process epoch".into());
+            }
+        }
+        state.turn_ended = true;
+        Ok(InteractionUpdate {
+            message: Some(interaction_update::Message::TurnEnded(usage)),
+        }
+        .encode_to_vec())
+    }
+
+    pub fn drain_post_turn(
+        &self,
+        expected: &InteractionFence,
+    ) -> Result<Vec<AsyncCompletionProjection>, String> {
+        let (lock, _) = &*self.state;
+        let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
+        if !state.turn_ended {
+            return Ok(Vec::new());
+        }
+        let mut drained = Vec::new();
+        let mut retained = VecDeque::new();
+        while let Some(item) = state.post_turn.pop_front() {
+            if item.account_fence == expected.account_fence && item.process_epoch == expected.process_epoch {
+                drained.push(item);
+            } else {
+                retained.push_back(item);
+            }
+        }
+        state.post_turn = retained;
+        Ok(drained)
+    }
+
+    pub fn invalidate_stale(&self, current: &InteractionFence) -> Result<usize, String> {
+        let (lock, ready) = &*self.state;
+        let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
+        let before = state.pending.len();
+        state.pending.retain(|_, pending| pending.fence == *current);
+        state.post_turn.retain(|item| {
+            item.account_fence == current.account_fence && item.process_epoch == current.process_epoch
+        });
+        let removed = before.saturating_sub(state.pending.len());
+        if removed > 0 {
+            ready.notify_all();
+        }
+        Ok(removed)
+    }
+}
+
+fn completion_projection(
+    query_id: u32,
+    pending: &PendingAskQuestion,
+    result: &AskQuestionResult,
+) -> AsyncCompletionProjection {
+    AsyncCompletionProjection {
+        query_id,
+        tool_call_id: pending.tool_call_id.clone(),
+        account_fence: pending.fence.account_fence.clone(),
+        process_epoch: pending.fence.process_epoch,
+        result_kind: ask_question_result_kind(result),
+        redacted: pending.privacy_mode != ProductionTurnPrivacyMode::UsageCodebaseTrainingAllowed,
+    }
+}
+
+pub fn ask_question_result_kind(result: &AskQuestionResult) -> &'static str {
+    match result.result {
+        Some(ask_question_result::Result::Success(_)) => "success",
+        Some(ask_question_result::Result::Error(_)) => "error",
+        Some(ask_question_result::Result::Rejected(_)) => "rejected",
+        Some(ask_question_result::Result::Async(_)) => "async",
+        None => "unknown",
+    }
+}
+
+pub fn format_ask_question_result(result: &AskQuestionResult) -> String {
+    match result.result.as_ref() {
+        Some(ask_question_result::Result::Success(success)) => {
+            let answers = success
+                .answers
+                .iter()
+                .map(|answer| {
+                    let freeform = answer.freeform_text.trim();
+                    if !answer.selected_option_ids.is_empty() && !freeform.is_empty() {
+                        format!(
+                            "Question {}: Selected option(s) {}, freeform: {}",
+                            answer.question_id,
+                            answer.selected_option_ids.join(", "),
+                            freeform
+                        )
+                    } else if !freeform.is_empty() {
+                        format!("Question {}: {}", answer.question_id, freeform)
+                    } else if !answer.selected_option_ids.is_empty() {
+                        format!(
+                            "Question {}: Selected option(s) {}",
+                            answer.question_id,
+                            answer.selected_option_ids.join(", ")
+                        )
+                    } else {
+                        format!("Question {}: No answer provided", answer.question_id)
+                    }
+                })
+                .collect::<Vec<_>>();
+            format!("User questions responses:\n{}", answers.join("\n"))
+        }
+        Some(ask_question_result::Result::Async(_)) => {
+            "Questions have been sent to the user asynchronously. You will receive their answers later as a separate tool result. Continue with your reasoning using current information.".into()
+        }
+        Some(ask_question_result::Result::Rejected(value)) => {
+            let reason = value.reason.trim();
+            if reason.is_empty() {
+                "Questions skipped by the user, continue with the information you already have".into()
+            } else {
+                reason.to_string()
+            }
+        }
+        Some(ask_question_result::Result::Error(value)) => format!("Error: {}", value.error_message),
+        None => "Unknown error".into(),
+    }
+}
+
+pub fn ask_question_args_from_json(args: &Value) -> Result<AskQuestionArgs, String> {
+    let object = args.as_object().ok_or("AskQuestion arguments must be an object")?;
+    let title = object.get("title").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+    let questions = object
+        .get("questions")
+        .and_then(Value::as_array)
+        .ok_or("AskQuestion questions must be an array")?
+        .iter()
+        .map(|question| {
+            let q = question.as_object().ok_or("AskQuestion question must be an object")?;
+            let id = q.get("id").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+            let prompt = q.get("prompt").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+            if id.is_empty() || prompt.is_empty() {
+                return Err("AskQuestion question id/prompt is required".to_string());
+            }
+            let options = q
+                .get("options")
+                .and_then(Value::as_array)
+                .ok_or("AskQuestion options must be an array")?
+                .iter()
+                .map(|option| {
+                    let option = option.as_object().ok_or("AskQuestion option must be an object")?;
+                    let id = option.get("id").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+                    let label = option.get("label").and_then(Value::as_str).unwrap_or_default().trim().to_string();
+                    if id.is_empty() || label.is_empty() {
+                        return Err("AskQuestion option id/label is required".to_string());
+                    }
+                    Ok(AskQuestionOption { id, label })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            if options.len() < 2 {
+                return Err("AskQuestion requires at least two options per question".into());
+            }
+            Ok(AskQuestionQuestion {
+                id,
+                prompt,
+                options,
+                allow_multiple: q.get("allow_multiple")
+                    .or_else(|| q.get("allowMultiple"))
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(AskQuestionArgs {
+        title,
+        questions,
+        run_async: object
+            .get("run_async")
+            .or_else(|| object.get("runAsync"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        async_original_tool_call_id: object
+            .get("async_original_tool_call_id")
+            .or_else(|| object.get("asyncOriginalToolCallId"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
+pub fn encode_response_base64(response: &InteractionResponse) -> String {
+    BASE64_STANDARD.encode(response.encode_to_vec())
+}
+
+pub fn decode_response_base64(value: &str) -> Result<Vec<u8>, String> {
+    BASE64_STANDARD
+        .decode(value)
+        .map_err(|error| format!("invalid InteractionResponse base64: {error}"))
+}
+
+pub fn with_ask_question_tool(
+    delegate: Arc<dyn AndroidRoutedToolBridge>,
+    owner: SharedAgentInteractionOwner,
+    fence: InteractionFence,
+    privacy_mode: ProductionTurnPrivacyMode,
+    cancelled: Arc<AtomicBool>,
+    publish_query: Arc<dyn Fn(u32, &[u8], &InteractionFence) -> Result<(), String> + Send + Sync>,
+) -> Arc<dyn AndroidRoutedToolBridge> {
+    Arc::new(AskQuestionRoutedTool {
+        delegate,
+        owner,
+        fence,
+        privacy_mode,
+        cancelled,
+        publish_query,
+    })
+}
+
+struct AskQuestionRoutedTool {
+    delegate: Arc<dyn AndroidRoutedToolBridge>,
+    owner: SharedAgentInteractionOwner,
+    fence: InteractionFence,
+    privacy_mode: ProductionTurnPrivacyMode,
+    cancelled: Arc<AtomicBool>,
+    publish_query: Arc<dyn Fn(u32, &[u8], &InteractionFence) -> Result<(), String> + Send + Sync>,
+}
+
+impl AndroidRoutedToolBridge for AskQuestionRoutedTool {
+    fn list_tools(&self) -> Result<Vec<Value>, String> {
+        let mut tools = self.delegate.list_tools()?;
+        tools.retain(|tool| tool.get("name").and_then(Value::as_str) != Some(ASK_QUESTION_TOOL_NAME));
+        tools.insert(0, json!({
+            "type":"function",
+            "name":ASK_QUESTION_TOOL_NAME,
+            "description":"Ask the user one or more bounded multiple-choice questions, optionally with freeform text.",
+            "parameters":{
+                "type":"object",
+                "additionalProperties":false,
+                "required":["questions"],
+                "properties":{
+                    "title":{"type":"string"},
+                    "questions":{"type":"array","minItems":1,"items":{
+                        "type":"object","additionalProperties":false,
+                        "required":["id","prompt","options"],
+                        "properties":{
+                            "id":{"type":"string","minLength":1},
+                            "prompt":{"type":"string","minLength":1},
+                            "options":{"type":"array","minItems":2,"items":{
+                                "type":"object","additionalProperties":false,"required":["id","label"],
+                                "properties":{"id":{"type":"string","minLength":1},"label":{"type":"string","minLength":1}}
+                            }},
+                            "allow_multiple":{"type":"boolean"}
+                        }
+                    }},
+                    "run_async":{"type":"boolean"},
+                    "async_original_tool_call_id":{"type":"string"}
+                }
+            }
+        }));
+        Ok(tools)
+    }
+
+    fn call_tool(&self, name: &str, args: Value, tool_call_id: &str) -> Result<Value, String> {
+        if name != ASK_QUESTION_TOOL_NAME {
+            return self.delegate.call_tool(name, args, tool_call_id);
+        }
+        let args = ask_question_args_from_json(&args)?;
+        let run_async = args.run_async;
+        let (query_id, wire) = self.owner.begin_ask_question(
+            self.fence.clone(),
+            tool_call_id,
+            args,
+            self.privacy_mode,
+        )?;
+        (self.publish_query)(query_id, &wire, &self.fence)?;
+        let result = if run_async {
+            AskQuestionResult {
+                result: Some(ask_question_result::Result::Async(AskQuestionAsync {})),
+            }
+        } else {
+            self.owner.wait_sync(
+                query_id,
+                &self.fence,
+                &self.cancelled,
+                Duration::from_secs(300),
+            )?
+        };
+        Ok(Value::String(format_ask_question_result(&result)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fence() -> InteractionFence {
+        InteractionFence { account_fence: "account-a".into(), process_epoch: 7 }
+    }
+
+    fn args(run_async: bool) -> AskQuestionArgs {
+        AskQuestionArgs {
+            title: "Pick".into(),
+            questions: vec![AskQuestionQuestion {
+                id: "q1".into(),
+                prompt: "Choose".into(),
+                options: vec![
+                    AskQuestionOption { id: "a".into(), label: "A".into() },
+                    AskQuestionOption { id: "b".into(), label: "B".into() },
+                ],
+                allow_multiple: false,
+            }],
+            run_async,
+            async_original_tool_call_id: String::new(),
+        }
+    }
+
+    #[test]
+    fn generated_compatible_interaction_query_response_wire_roundtrip() {
+        let owner = SharedAgentInteractionOwner::default();
+        let (id, wire) = owner.begin_ask_question(
+            fence(),
+            "tool-1",
+            args(false),
+            ProductionTurnPrivacyMode::NoTraining,
+        ).unwrap();
+        let query = InteractionQuery::decode(wire.as_slice()).unwrap();
+        assert_eq!(query.id, id);
+        let interaction_query::Query::AskQuestionInteractionQuery(query) = query.query.unwrap();
+        assert_eq!(query.tool_call_id, "tool-1");
+        assert_eq!(query.args.unwrap().questions[0].options.len(), 2);
+
+        let response = InteractionResponse {
+            id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Rejected(AskQuestionRejected {
+                            reason: "skip".into(),
+                        })),
+                    }),
+                },
+            )),
+        };
+        assert!(!owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
+    }
+
+    #[test]
+    fn run_async_completion_is_enqueued_and_privacy_projection_is_redacted() {
+        let owner = SharedAgentInteractionOwner::default();
+        let (id, _) = owner.begin_ask_question(
+            fence(),
+            "async-1",
+            args(true),
+            ProductionTurnPrivacyMode::NoStorage,
+        ).unwrap();
+        let response = InteractionResponse {
+            id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Success(AskQuestionSuccess {
+                            answers: vec![AskQuestionAnswer {
+                                question_id: "q1".into(),
+                                selected_option_ids: vec!["a".into()],
+                                freeform_text: "private answer".into(),
+                            }],
+                        })),
+                    }),
+                },
+            )),
+        };
+        assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
+        assert!(owner.drain_post_turn(&fence()).unwrap().is_empty());
+        let wire = owner.turn_ended(&fence(), TurnEndedUpdate::default()).unwrap();
+        let update = InteractionUpdate::decode(wire.as_slice()).unwrap();
+        assert!(matches!(update.message, Some(interaction_update::Message::TurnEnded(_))));
+        let completion = owner.drain_post_turn(&fence()).unwrap();
+        assert_eq!(completion.len(), 1);
+        assert!(completion[0].redacted);
+        assert_eq!(completion[0].result_kind, "success");
+        assert!(!format!("{completion:?}").contains("private answer"));
+    }
+
+    #[test]
+    fn stale_account_and_process_epoch_responses_fail_closed() {
+        let owner = SharedAgentInteractionOwner::default();
+        let (id, _) = owner.begin_ask_question(
+            fence(),
+            "tool-stale",
+            args(false),
+            ProductionTurnPrivacyMode::NoTraining,
+        ).unwrap();
+        let response = InteractionResponse {
+            id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Rejected(AskQuestionRejected {
+                            reason: "stale".into(),
+                        })),
+                    }),
+                },
+            )),
+        };
+        let stale = InteractionFence { account_fence: "account-b".into(), process_epoch: 8 };
+        assert!(owner.settle_response(&stale, &response.encode_to_vec()).unwrap_err().contains("stale"));
+        assert_eq!(owner.invalidate_stale(&stale).unwrap(), 1);
+    }
+}
