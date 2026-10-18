@@ -6843,6 +6843,19 @@
           "source_type": "blob",
           "mapping_quality": "semantic",
           "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46"
+        },
+        {
+          "path": ".github/scripts/miniapp-save-report.applescript",
+          "blob_sha": "8799e7cc89eb41fd06c644d895f7ed053915dc82",
+          "symbols": [
+            "ephemeral macOS Actions Save-panel automation for the exact signed packaged process",
+            "global-dandelion-local-report.json filename and destination contract",
+            "fail-closed Save-panel discovery, directory selection, and dismissal contract"
+          ],
+          "source_mode": "100644",
+          "source_type": "blob",
+          "mapping_quality": "semantic",
+          "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46"
         }
       ],
       "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46",
