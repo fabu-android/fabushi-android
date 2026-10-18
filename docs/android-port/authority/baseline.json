@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "observed_date": "2026-10-17",
+  "observed_date": "2026-10-18",
   "desktop_repository": "bhrumom/fabushi-desktop",
   "desktop_branch": "main",
-  "desktop_commit": "ca618ae19add78872fcac7cb86bf8754a4ad7a55",
-  "desktop_root_tree": "b0337f9bd17e5dc0c7165e89331aaf2748f52a74",
+  "desktop_commit": "12887d2a44ba450b13ca8390066a39418c52e0c9",
+  "desktop_root_tree": "4bc59314edd76a51bd8f0e2d0654935d9e8ffb41",
   "android_repository": "fabu-android/fabushi-android",
   "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
   "android_pr": 3,
@@ -33,8 +33,8 @@
     "docs/specs/offline-first-installable-mini-app-platform.md",
     "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
   ],
-  "rebaseline_note": "Historical predecessor authority 12a4e29819592e3a7e32f7435cb0cf2e3cc53848/tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2 had 8258 non-tree/9412 recursive entries. Previously accepted authority b6146c9d3d8da83030798334695b27c9e4884f46/tree 2355aa184197641c6edc465d03e87a2156d626ad had 8272 non-tree/9427 recursive entries. Current Desktop main is ca618ae19add78872fcac7cb86bf8754a4ad7a55/tree b0337f9bd17e5dc0c7165e89331aaf2748f52a74 and must be re-enumerated in GitHub Actions without inheriting verification.",
-  "rebaseline_requested_at": "2026-10-17T18:02:00Z",
-  "desktop_main_before": "b6146c9d3d8da83030798334695b27c9e4884f46",
-  "desktop_main_after": "ca618ae19add78872fcac7cb86bf8754a4ad7a55"
+  "rebaseline_note": "Accepted predecessor ca618ae19add78872fcac7cb86bf8754a4ad7a55/tree b0337f9bd17e5dc0c7165e89331aaf2748f52a74 had 8272 non-tree/9427 recursive entries. Current Desktop main is 12887d2a44ba450b13ca8390066a39418c52e0c9/tree 4bc59314edd76a51bd8f0e2d0654935d9e8ffb41 with 8276 non-tree/9431 recursive entries; GitHub Actions must re-enumerate and validate the current authority without inheriting implementation verification.",
+  "rebaseline_requested_at": "2026-10-18T16:10:00Z",
+  "desktop_main_before": "ca618ae19add78872fcac7cb86bf8754a4ad7a55",
+  "desktop_main_after": "12887d2a44ba450b13ca8390066a39418c52e0c9"
 }
