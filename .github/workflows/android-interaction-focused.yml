@@ -3,7 +3,7 @@ name: Android Interaction Focused
 on:
   push:
     branches:
-      - interaction-r115-validation
+      - spec/grok-bot-018-android-parity-20260922
   workflow_dispatch:
 
 permissions:

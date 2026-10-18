@@ -6829,6 +6829,20 @@
           "source_type": "blob",
           "mapping_quality": "semantic",
           "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46"
+        },
+        {
+          "path": ".github/scripts/miniapp-release-evidence.test.mjs",
+          "blob_sha": "f2a7ea3ff25a0420f788254cec2d60372f429cc4",
+          "symbols": [
+            "packaged artifact evidence allowlist",
+            "native report signed-app policy / no OS automation privilege grant",
+            "protected CI device identity contract",
+            "immutable factory evidence promotion contract"
+          ],
+          "source_mode": "100644",
+          "source_type": "blob",
+          "mapping_quality": "semantic",
+          "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46"
         }
       ],
       "source_commit": "b6146c9d3d8da83030798334695b27c9e4884f46",
@@ -6882,18 +6896,18 @@
         "docs/android-port/verification/acceptance.md",
         "mobile/android/app/build.gradle"
       ],
-      "android_owner": "Android GitHub Actions release/package gates plus Android platform distribution adapters",
+      "android_owner": "Android GitHub Actions release/package gates + mobile/android/app/build.gradle signing/variant boundary + packaged fabushi-android-host-jni",
       "platform_delta": "macOS Developer ID/notarization/stapling/Electron updater are replaced by Android signing/channel/install semantics. Android must package JNI ABIs, enforce release/ciAcceptance separation, validate APK/AAB/signature/alignment/16KB support, produce provenance/SBOM/license evidence, and run packaged emulator/real-device install-upgrade acceptance. Desktop arbitrary local Computer Use becomes bounded Android App Surface or authorized Remote Runner.",
       "implementation_status": "unreviewed",
-      "production_wiring": "Current Android Full CI already builds exact-head arm64-v8a/x86_64 native Host libraries, assembles debug/ciAcceptance/githubRelease APKs and githubRelease AAB, checks public release has no CI account bootstrap, records SHA-256/native identities and feeds ciAcceptance artifacts to emulator acceptance. Release docs define protected signing, minified final artifact, installation/upgrade, ABI/16KB, SBOM/license and channel requirements.",
-      "unit_test": "pending exact-head Actions",
-      "contract_test": "pending exact-head Actions",
-      "integration_test": "pending exact-head Actions",
-      "packaged_test": "pending exact-head packaged acceptance",
-      "device_test": "pending protected device acceptance",
-      "artifact": null,
+      "production_wiring": "Exact-head Android path: .github/workflows/android-parity-full-ci.yml -> cargo ndk builds fabushi-android-host-jni for arm64-v8a/x86_64 -> mobile/android/app/build.gradle keeps githubRelease CI_ACCOUNT_SESSION_IMPORT_ENABLED=false and ciAcceptance=true -> Gradle debug/ciAcceptance unit/lint packaging -> artifact12120346415. Signed githubRelease APK/AAB/signature/16KB/provenance remains blocked before assemble by four signing secrets; protected emulator/device acceptance remains blocked before emulator by FABUSHI_CI_TEST_USERNAME/PASSWORD.",
+      "unit_test": "run39083446053/job117544990095 exact fd943d39: Gradle testCiAcceptanceUnitTest plus Rust workspace/Host/JNI tests succeeded",
+      "contract_test": "run39083446053/job117544990095 exact fd943d39: release SBOM parser, license inventory generation, JNI/package identity path succeeded",
+      "integration_test": "run39083446053/job117544990095 exact fd943d39: cargo-ndk -> Gradle debug/ciAcceptance -> APK/JNI/SBOM/license artifact path succeeded",
+      "packaged_test": "not verified: signed githubRelease APK/AAB/signature/16KB/provenance blocked in run39083446053/job117548498107 by four missing signing secrets",
+      "device_test": "not verified: protected ciAcceptance emulator/device acceptance blocked in run39083446053/job117548498099 by missing FABUSHI_CI_TEST_USERNAME/FABUSHI_CI_TEST_PASSWORD",
+      "artifact": "partial exact-head evidence only: run39083446053/job117544990095 artifact12120346415 digest sha256:0951b0b63e6522848c96a54d8abc03f1c89cbd4f33f0d5fc25ac3e0d2837bdac; signing blocker artifact12120905798; device blocker artifact12120680487",
       "verification_status": "not-verified",
-      "notes": "This row is mapped, not implemented/verified. The macOS workflow carries applicable release-quality responsibilities that Android must preserve through native platform mechanisms; current Android CI closes only part of that release envelope. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/release-macos-main.yml at Desktop blob e602f5e89059a76f79372a6212b9a886a6425e9c as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked desktop/scripts/notarize-after-sign.cjs at Desktop blob 5f140c6ff8587b4969e1611ec9030a8c5dc5a6f1 as not-applicable-with-replacement; this does not promote verification. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset. Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required. Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required. Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required. Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required. Current-main rebaseline to 12a4e29819592e3a7e32f7435cb0cf2e3cc53848: explicit source responsibility mappings are provenance-only; implementation and exact-head verification remain open. Unmapped source rows: 2390. Current-main rebaseline to 12a4e29819592e3a7e32f7435cb0cf2e3cc53848: explicit source responsibility mappings are provenance-only; implementation and exact-head verification remain open. Unmapped semantic source rows: 2390; coverage-only rows retained: 0. Removed non-target consumer labels from android_target; concrete Android owner targets remain provenance-only until exact-head implementation verification. Current-main rebaseline to b6146c9d3d8da83030798334695b27c9e4884f46: explicit source responsibility mappings are provenance-only; implementation and exact-head verification remain open. Unmapped semantic source rows: 2385; coverage-only rows retained: 0.",
+      "notes": "This row is mapped, not implemented/verified. The macOS workflow carries applicable release-quality responsibilities that Android must preserve through native platform mechanisms; current Android CI closes only part of that release envelope. Desktop authority rebaseline to b6a66fd2b6aa1619565e3d25015bbbf0b4b8263d: one or more source anchors changed; prior implementation/verification status was conservatively invalidated pending semantic re-audit. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked .github/workflows/release-macos-main.yml at Desktop blob e602f5e89059a76f79372a6212b9a886a6425e9c as android-adapted; this does not promote verification. 7d0847b5c52f7f16f169f69f6e171740e7ccd698 source audit linked desktop/scripts/notarize-after-sign.cjs at Desktop blob 5f140c6ff8587b4969e1611ec9030a8c5dc5a6f1 as not-applicable-with-replacement; this does not promote verification. Rebased to current Desktop 12a4e29819592e3a7e32f7435cb0cf2e3cc53848 / tree 72fc5f777012f6e7bf5f5f471b6f121fd3612bb2; prior implementation/verification state intentionally reset. Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required. Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required. Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required. Current-main rebaseline: predecessor mapping is provenance only; fresh semantic and exact-head verification is required. Current-main rebaseline to 12a4e29819592e3a7e32f7435cb0cf2e3cc53848: explicit source responsibility mappings are provenance-only; implementation and exact-head verification remain open. Unmapped source rows: 2390. Current-main rebaseline to 12a4e29819592e3a7e32f7435cb0cf2e3cc53848: explicit source responsibility mappings are provenance-only; implementation and exact-head verification remain open. Unmapped semantic source rows: 2390; coverage-only rows retained: 0. Removed non-target consumer labels from android_target; concrete Android owner targets remain provenance-only until exact-head implementation verification. Current-main rebaseline to b6146c9d3d8da83030798334695b27c9e4884f46: explicit source responsibility mappings are provenance-only; implementation and exact-head verification remain open. Unmapped semantic source rows: 2385; coverage-only rows retained: 0. Exact-head partial evidence at fd943d39e0d35b9c4631b03f2f99de156ef13d01: run39083446053/job117544990095 succeeded and produced artifact12120346415 (debug/ciAcceptance APKs, JNI identities, SBOM/license inventory); this does not prove signed githubRelease APK/AAB or device acceptance. job117548498107 is blocked by four release signing secrets; job117548498099 is blocked by FABUSHI_CI_TEST_USERNAME/PASSWORD.",
       "android_head_at_update": "66bc75bf1a2c6f6b064c755450310dc781455db9"
     },
     {
