@@ -3,8 +3,8 @@
   "observed_date": "2026-10-19",
   "desktop_repository": "bhrumom/fabushi-desktop",
   "desktop_branch": "main",
-  "desktop_commit": "11b3459a85f90288f5d9bf2b0e5adc14ed2e3f57",
-  "desktop_root_tree": "e4ed84295024c69275d03b2f2fe36c814620efd1",
+  "desktop_commit": "72ca525b7c2f5d1d605bf4a3261485609bd2c05f",
+  "desktop_root_tree": "d19997afb9e1c4f3473777ac9ef2b96d6ef6a6da",
   "android_repository": "fabu-android/fabushi-android",
   "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
   "android_pr": 3,
@@ -33,8 +33,8 @@
     "docs/specs/offline-first-installable-mini-app-platform.md",
     "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
   ],
-  "rebaseline_note": "Persisted authority before this rebaseline is 12887d2a44ba450b13ca8390066a39418c52e0c9/tree 4bc59314edd76a51bd8f0e2d0654935d9e8ffb41 with 8276 non-tree/9431 recursive entries. Desktop advanced through 02eb0b51b4e2e6a63801958e07e7ef96a53fefe5/tree 142e8cddcb833da2fc7b728a22c346eb85fa2a1a (8278 non-tree/9433 recursive entries) and then to 11b3459a85f90288f5d9bf2b0e5adc14ed2e3f57/tree e4ed84295024c69275d03b2f2fe36c814620efd1. The latest two commits only modify docs/specs/desktop-app-agent-surface.md, so recursive counts remain 8278 non-tree/9433 entries; GitHub Actions must nevertheless re-enumerate the exact new authority. Generated or changed rows remain unreviewed and no implementation verification is inherited.",
-  "rebaseline_requested_at": "2026-10-18T16:10:00Z",
-  "desktop_main_before": "12887d2a44ba450b13ca8390066a39418c52e0c9",
-  "desktop_main_after": "11b3459a85f90288f5d9bf2b0e5adc14ed2e3f57"
+  "rebaseline_note": "Persisted authority before this rebaseline is 11b3459a85f90288f5d9bf2b0e5adc14ed2e3f57/tree e4ed84295024c69275d03b2f2fe36c814620efd1 with 8278 non-tree/9433 recursive entries. Desktop main advanced to 72ca525b7c2f5d1d605bf4a3261485609bd2c05f/tree d19997afb9e1c4f3473777ac9ef2b96d6ef6a6da. GitHub Actions must re-enumerate the exact new authority at 8286 non-tree/9441 recursive entries; generated or changed rows remain unreviewed and no implementation verification is inherited.",
+  "rebaseline_requested_at": "2026-10-19T10:55:00Z",
+  "desktop_main_before": "11b3459a85f90288f5d9bf2b0e5adc14ed2e3f57",
+  "desktop_main_after": "72ca525b7c2f5d1d605bf4a3261485609bd2c05f"
 }
