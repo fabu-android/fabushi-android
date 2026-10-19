@@ -1812,6 +1812,50 @@ mod tests {
     }
 
     #[test]
+    fn vacuum_preserves_desktop_retired_pack_metadata() {
+        let config = config("retired-pack-metadata");
+        fs::create_dir_all(&config.workspace_root).unwrap();
+        fs::write(config.workspace_root.join("note.txt"), b"keep").unwrap();
+        let root = config.store_root.parent().unwrap().to_path_buf();
+        let store = config
+            .store_root
+            .join("123e4567-e89b-42d3-a456-426614174000");
+        let mut backend = RemoteBoxStoreBackend::open(config).unwrap();
+
+        let snapshot = completed(
+            backend
+                .start(
+                    &identity("retired-snapshot", "retired-snapshot-request"),
+                    &request("retired-snapshot", "snapshot", None),
+                )
+                .unwrap(),
+        );
+        let manifest_etag = serde_json::from_str::<serde_json::Value>(&snapshot)
+            .unwrap()["manifestEtag"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let retired_path =
+            store.join(crate::box_store_pack_restore::BOX_STORE_PACK_RETIRED_KEY);
+        fs::create_dir_all(retired_path.parent().unwrap()).unwrap();
+        let retired = br#"{"version":1,"retired":["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]}"#;
+        fs::write(&retired_path, retired).unwrap();
+
+        completed(
+            backend
+                .start(
+                    &identity("retired-vacuum", "retired-vacuum-request"),
+                    &request("retired-vacuum", "vacuum", Some(&manifest_etag)),
+                )
+                .unwrap(),
+        );
+
+        assert_eq!(fs::read(&retired_path).unwrap(), retired);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn duplicate_execute_returns_durable_result_without_replaying_source_changes() {
         let config = config("duplicate");
         fs::create_dir_all(&config.workspace_root).unwrap();
