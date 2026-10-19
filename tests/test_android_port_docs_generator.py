@@ -1036,7 +1036,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8299, 9454),
+            (8258, 9412, 8300, 9455),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
@@ -2288,6 +2288,9 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("adapters/experiments.ts", workflow)
         self.assertIn("usage_paths_and_decoder_match_desktop_dashboard_contract", workflow)
         self.assertIn("AccountUsageReconciliationTest", workflow)
+        merge_source = inspect.getsource(module.merge_responsibility_mapping)
+        self.assertIn("elif path == AUTO_SPILLOVER_UI_SOURCE_PATH:", merge_source)
+        self.assertIn("row['disposition'] = AUTO_SPILLOVER_UI_SOURCE_SPEC['disposition']", merge_source)
 
     def test_constants_structured_log_contract_is_enforced_by_host_and_exact_head_workflow(self):
         host = (ROOT / "source" / "host" / "src" / "android_structured_log_spill.rs").read_text(encoding="utf-8")
