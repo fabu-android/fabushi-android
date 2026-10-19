@@ -136,8 +136,13 @@ pub fn read_pack_blob(
     cache: &mut PackRestoreCache,
 ) -> Result<Option<Vec<u8>>, String> {
     let index_path = store_dir.join(BOX_STORE_PACK_INDEX_KEY);
-    if !index_path.exists() {
-        return Ok(None);
+    // Inspect the index with symlink_metadata before deciding it is absent.
+    // Path::exists follows symlinks and treats a dangling symlink as missing,
+    // which would silently bypass the fail-closed regular-file check below.
+    match fs::symlink_metadata(&index_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
     }
     if !is_sha256(sha) {
         return Err("invalid requested object digest".into());
@@ -283,6 +288,21 @@ mod tests {
         let index_path = root.path().join(BOX_STORE_PACK_INDEX_KEY);
         std::fs::create_dir_all(index_path.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&external_index, &index_path).unwrap();
+
+        let mut cache = PackRestoreCache::default();
+        let error = read_pack_blob(root.path(), &sha256(b"payload"), 7, &mut cache)
+            .unwrap_err();
+        assert_eq!(error, "pack index is not a regular file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_dangling_symlinked_pack_index_instead_of_treating_it_as_missing() {
+        let root = tempdir().unwrap();
+        let index_path = root.path().join(BOX_STORE_PACK_INDEX_KEY);
+        test_fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        let external = root.path().join("external-index.json");
+        std::os::unix::fs::symlink(&external, &index_path).unwrap();
 
         let mut cache = PackRestoreCache::default();
         let error = read_pack_blob(root.path(), &sha256(b"payload"), 7, &mut cache)
