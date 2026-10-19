@@ -2288,7 +2288,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("adapters/experiments.ts", workflow)
         self.assertIn("usage_paths_and_decoder_match_desktop_dashboard_contract", workflow)
         self.assertIn("AccountUsageReconciliationTest", workflow)
-        merge_source = inspect.getsource(module.merge_responsibility_mapping)
+        merge_source = (ROOT / "scripts" / "android-port-docs.py").read_text(encoding="utf-8")
         self.assertIn("elif path == AUTO_SPILLOVER_UI_SOURCE_PATH:", merge_source)
         self.assertIn("row['disposition'] = AUTO_SPILLOVER_UI_SOURCE_SPEC['disposition']", merge_source)
 
