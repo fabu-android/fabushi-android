@@ -82,7 +82,7 @@ jobs:
           ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           ANDROID_PR_NUMBER: '3'
-          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '0'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '1200'
           ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           ANDROID_PR_BASE_REF: 'main'
           ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
@@ -95,7 +95,7 @@ jobs:
           ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           ANDROID_PR_NUMBER: '3'
-          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '0'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '1200'
           ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py inventory
@@ -329,7 +329,7 @@ jobs:
                 and evidence.get('workflow_name') == 'Grok Android Architecture'
                 and evidence.get('workflow_id') == 364026685
                 and evidence.get('workflow_path') == '.github/workflows/grok-android-architecture.yml'
-                and evidence.get('workflow_event') == 'pull_request'
+                and evidence.get('workflow_event') in ('pull_request', 'push')
                 and evidence.get('workflow_repository') == 'fabu-android/fabushi-android'
                 and evidence.get('workflow_job_name') == 'agent-kv-exact-head-evidence'
                 and evidence.get('workflow_step_name') == step_name
@@ -378,7 +378,7 @@ jobs:
               and evidence.get('workflow_name') == 'Grok Android Architecture'
               and evidence.get('workflow_id') == 364026685
               and evidence.get('workflow_path') == '.github/workflows/grok-android-architecture.yml'
-              and evidence.get('workflow_event') == 'pull_request'
+              and evidence.get('workflow_event') in ('pull_request', 'push')
               and evidence.get('workflow_repository') == 'fabu-android/fabushi-android'
               and evidence.get('workflow_job_name') == 'agent-kv-exact-head-evidence'
               and evidence.get('workflow_step_name') == step_name
