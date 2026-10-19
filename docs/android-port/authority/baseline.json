@@ -3,8 +3,8 @@
   "observed_date": "2026-10-19",
   "desktop_repository": "bhrumom/fabushi-desktop",
   "desktop_branch": "main",
-  "desktop_commit": "eabb6acfb8734a9b57db8cfc47718c22aae6bed5",
-  "desktop_root_tree": "c4a7b95042a7015d3a55fb7da24c3286d879498f",
+  "desktop_commit": "02eb0b51b4e2e6a63801958e07e7ef96a53fefe5",
+  "desktop_root_tree": "142e8cddcb833da2fc7b728a22c346eb85fa2a1a",
   "android_repository": "fabu-android/fabushi-android",
   "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
   "android_pr": 3,
@@ -33,8 +33,8 @@
     "docs/specs/offline-first-installable-mini-app-platform.md",
     "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
   ],
-  "rebaseline_note": "Persisted authority before this rebaseline is 12887d2a44ba450b13ca8390066a39418c52e0c9/tree 4bc59314edd76a51bd8f0e2d0654935d9e8ffb41 with 8276 non-tree/9431 recursive entries. The requested intermediate Desktop authority 4d805081f800c63c8d17ce927ea70136ec6306e9/tree c6d025265e1989acf35baba3a286167fc5f48e0a also had 8276 non-tree/9431 recursive entries, but Desktop main subsequently advanced to eabb6acfb8734a9b57db8cfc47718c22aae6bed5/tree c4a7b95042a7015d3a55fb7da24c3286d879498f with 8278 non-tree/9433 recursive entries. GitHub Actions must re-enumerate the latest exact authority; generated or changed rows remain unreviewed and no implementation verification is inherited.",
+  "rebaseline_note": "Persisted authority before this rebaseline is 12887d2a44ba450b13ca8390066a39418c52e0c9/tree 4bc59314edd76a51bd8f0e2d0654935d9e8ffb41 with 8276 non-tree/9431 recursive entries. The requested intermediate Desktop authority eabb6acfb8734a9b57db8cfc47718c22aae6bed5/tree c4a7b95042a7015d3a55fb7da24c3286d879498f had 8278 non-tree/9433 recursive entries, but Desktop main advanced again to 02eb0b51b4e2e6a63801958e07e7ef96a53fefe5/tree 142e8cddcb833da2fc7b728a22c346eb85fa2a1a with 8278 non-tree/9433 recursive entries. GitHub Actions must re-enumerate the latest exact authority; generated or changed rows remain unreviewed and no implementation verification is inherited.",
   "rebaseline_requested_at": "2026-10-18T16:10:00Z",
   "desktop_main_before": "12887d2a44ba450b13ca8390066a39418c52e0c9",
-  "desktop_main_after": "eabb6acfb8734a9b57db8cfc47718c22aae6bed5"
+  "desktop_main_after": "02eb0b51b4e2e6a63801958e07e7ef96a53fefe5"
 }
