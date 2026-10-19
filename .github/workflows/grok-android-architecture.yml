@@ -1,6 +1,9 @@
 name: Grok Android Architecture
 
 on:
+  push:
+    branches:
+      - spec/grok-bot-018-android-parity-20260922
   pull_request:
   workflow_dispatch:
 
