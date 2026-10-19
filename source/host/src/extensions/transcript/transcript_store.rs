@@ -158,6 +158,112 @@ impl TranscriptStore {
         self.entries.clone()
     }
 
+    /// Extract live assistant AskQuestion/MultipleChoice identities from the exact
+    /// transcript window used by the current turn. Missing or blank async-original IDs
+    /// fall back to toolCallId, matching Desktop replay-horizon.
+    pub fn live_async_ask_question_original_tool_call_ids(window: &[Value]) -> HashSet<String> {
+        let mut ids = HashSet::new();
+        for entry in window {
+            if entry.get("role").and_then(Value::as_str) == Some("assistant") {
+                if let Some(parts) = entry.get("content").and_then(Value::as_array) {
+                    for part in parts {
+                        if part.get("type").and_then(Value::as_str) != Some("tool-call") {
+                            continue;
+                        }
+                        let Some(name) = Self::first_non_empty_field(
+                            part,
+                            &["toolName", "tool_name", "name"],
+                        ) else {
+                            continue;
+                        };
+                        if !Self::is_async_ask_question_tool(name) {
+                            continue;
+                        }
+                        let tool_call_id = Self::first_non_empty_field(
+                            part,
+                            &["toolCallId", "tool_call_id", "id"],
+                        );
+                        let original_id = Self::async_original_tool_call_id(
+                            part.get("args")
+                                .or_else(|| part.get("arguments"))
+                                .or_else(|| part.get("input")),
+                        )
+                        .or_else(|| tool_call_id.map(str::to_owned));
+                        if let Some(original_id) = original_id {
+                            ids.insert(original_id);
+                        }
+                    }
+                }
+            }
+
+            // The canonical Android transcript store also has a flat tool-call entry
+            // shape; its id is the same toolCallId shown by the UI projection.
+            if entry.get("kind").and_then(Value::as_str) == Some("tool-call")
+                && entry
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .map(|role| role == "assistant")
+                    .unwrap_or(true)
+            {
+                let Some(name) = Self::first_non_empty_field(entry, &["name", "toolName", "tool_name"]) else {
+                    continue;
+                };
+                if !Self::is_async_ask_question_tool(name) {
+                    continue;
+                }
+                let tool_call_id =
+                    Self::first_non_empty_field(entry, &["toolCallId", "tool_call_id", "id"]);
+                let original_id = Self::async_original_tool_call_id(
+                    entry
+                        .get("args")
+                        .or_else(|| entry.get("arguments"))
+                        .or_else(|| entry.get("input")),
+                )
+                .or_else(|| tool_call_id.map(str::to_owned));
+                if let Some(original_id) = original_id {
+                    ids.insert(original_id);
+                }
+            }
+        }
+        ids
+    }
+
+    fn first_non_empty_field<'a>(entry: &'a Value, fields: &[&str]) -> Option<&'a str> {
+        fields.iter().find_map(|field| {
+            entry
+                .get(*field)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+    }
+
+    fn is_async_ask_question_tool(name: &str) -> bool {
+        let normalized = name
+            .chars()
+            .filter(|character| !matches!(*character, '_' | '-' | ' '))
+            .flat_map(char::to_lowercase)
+            .collect::<String>();
+        matches!(normalized.as_str(), "askquestion" | "multiplechoice")
+    }
+
+    fn async_original_tool_call_id(args: Option<&Value>) -> Option<String> {
+        let parsed;
+        let args = match args {
+            Some(Value::String(raw)) => {
+                parsed = serde_json::from_str::<Value>(raw).ok()?;
+                &parsed
+            }
+            Some(value) => value,
+            None => return None,
+        };
+        Self::first_non_empty_field(
+            args,
+            &["async_original_tool_call_id", "asyncOriginalToolCallId"],
+        )
+        .map(str::to_owned)
+    }
+
     pub fn page_for_agent(
         &self,
         agent_id: &str,
@@ -1319,4 +1425,49 @@ mod tests {
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
+    #[test]
+    fn live_async_ask_question_ids_follow_the_current_transcript_window_and_fallback() {
+        let window = vec![
+            serde_json::json!({
+                "id":"assistant-message",
+                "kind":"message",
+                "role":"assistant",
+                "content":[
+                    {"type":"tool-call","toolName":"AskQuestion","toolCallId":"call-explicit","args":{"async_original_tool_call_id":"original-explicit"}},
+                    {"type":"tool-call","toolName":"MultipleChoice","toolCallId":"call-json","args":"{\"async_original_tool_call_id\":\"original-json\"}"},
+                    {"type":"tool-call","toolName":"AskQuestion","toolCallId":"fallback-call","args":{"async_original_tool_call_id":" "}},
+                    {"type":"tool-call","toolName":"OtherTool","toolCallId":"other-call","args":{"async_original_tool_call_id":"other-original"}}
+                ]
+            }),
+            serde_json::json!({
+                "id":"flat-explicit",
+                "kind":"tool-call",
+                "name":"MultipleChoice",
+                "args":{"async_original_tool_call_id":"flat-original"}
+            }),
+            serde_json::json!({"id":"flat-fallback","kind":"tool-call","name":"AskQuestion"}),
+            serde_json::json!({
+                "id":"user-message",
+                "kind":"message",
+                "role":"user",
+                "content":[{"type":"tool-call","toolName":"AskQuestion","toolCallId":"user-call"}]
+            })
+        ];
+
+        let ids = TranscriptStore::live_async_ask_question_original_tool_call_ids(&window);
+        assert_eq!(ids.len(), 5);
+        for id in [
+            "original-explicit",
+            "original-json",
+            "fallback-call",
+            "flat-original",
+            "flat-fallback",
+        ] {
+            assert!(ids.contains(id), "missing live original tool-call id {id}");
+        }
+        assert!(!ids.contains("other-original"));
+        assert!(!ids.contains("user-call"));
+    }
+
+
 }

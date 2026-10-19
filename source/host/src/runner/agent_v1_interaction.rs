@@ -215,8 +215,8 @@ impl std::fmt::Debug for AsyncCompletionProjection {
 struct InteractionState {
     next_query_id: u32,
     pending: BTreeMap<u32, PendingAskQuestion>,
-    pending_async_original_tool_call_ids: BTreeSet<(String, String)>,
-    completed_async_original_tool_call_ids: BTreeSet<(String, String)>,
+    pending_async_original_tool_call_ids: BTreeSet<(String, u64, String)>,
+    completed_async_original_tool_call_ids: BTreeSet<(String, u64, String)>,
     post_turn: VecDeque<AsyncCompletionProjection>,
     turn_ended: bool,
 }
@@ -256,7 +256,11 @@ impl SharedAgentInteractionOwner {
 
         let (lock, _) = &*self.state;
         let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
-        let original_key = (fence.account_fence.clone(), original_tool_call_id.clone());
+        let original_key = (
+            fence.account_fence.clone(),
+            fence.process_epoch,
+            original_tool_call_id.clone(),
+        );
         if args.run_async
             && (state.pending_async_original_tool_call_ids.contains(&original_key)
                 || state.completed_async_original_tool_call_ids.contains(&original_key))
@@ -330,6 +334,7 @@ impl SharedAgentInteractionOwner {
             let projection = run_async.then(|| completion_projection(response.id, pending, &result));
             let original_key = (
                 pending.fence.account_fence.clone(),
+                pending.fence.process_epoch,
                 pending.original_tool_call_id.clone(),
             );
             let should_receipt = run_async && should_receipt_ask_question_result(&result);
@@ -390,11 +395,42 @@ impl SharedAgentInteractionOwner {
         }
     }
 
+    /// Prunes only completed async receipts for this account/process fence. Pending
+    /// interactions are intentionally untouched, and another account's receipts are isolated.
+    pub fn prune_completed_async_receipts_from_transcript_window(
+        &self,
+        expected: &InteractionFence,
+        transcript_window: &[serde_json::Value],
+    ) -> Result<usize, String> {
+        if expected.account_fence.trim().is_empty() || expected.process_epoch == 0 {
+            return Err("interaction fence is invalid".into());
+        }
+        let live_ids =
+            crate::extensions::transcript::TranscriptStore::live_async_ask_question_original_tool_call_ids(
+                transcript_window,
+            );
+        let (lock, _) = &*self.state;
+        let mut state = lock
+            .lock()
+            .map_err(|_| "interaction owner lock poisoned".to_string())?;
+        let before = state.completed_async_original_tool_call_ids.len();
+        state.completed_async_original_tool_call_ids.retain(
+            |(account_fence, process_epoch, original_tool_call_id)| {
+                account_fence != &expected.account_fence
+                    || *process_epoch != expected.process_epoch
+                    || live_ids.contains(original_tool_call_id)
+            },
+        );
+        Ok(before.saturating_sub(state.completed_async_original_tool_call_ids.len()))
+    }
+
     pub fn turn_ended(
         &self,
         expected: &InteractionFence,
         usage: TurnEndedUpdate,
+        transcript_window: &[serde_json::Value],
     ) -> Result<Vec<u8>, String> {
+        self.prune_completed_async_receipts_from_transcript_window(expected, transcript_window)?;
         let (lock, _) = &*self.state;
         let mut state = lock.lock().map_err(|_| "interaction owner lock poisoned".to_string())?;
         for pending in state.pending.values() {
@@ -442,6 +478,7 @@ impl SharedAgentInteractionOwner {
             .filter(|pending| pending.run_async)
             .map(|pending| (
                 pending.fence.account_fence.clone(),
+                pending.fence.process_epoch,
                 pending.original_tool_call_id.clone(),
             ))
             .collect();
@@ -737,6 +774,47 @@ mod tests {
         }
     }
 
+    fn assistant_window(tool_calls: &[(&str, &str, Option<&str>)]) -> Vec<serde_json::Value> {
+        let content = tool_calls
+            .iter()
+            .map(|&(name, tool_call_id, original_id)| {
+                let mut part = serde_json::json!({
+                    "type":"tool-call",
+                    "toolName":name,
+                    "toolCallId":tool_call_id
+                });
+                if let Some(original_id) = original_id {
+                    part["args"] = serde_json::json!({
+                        "async_original_tool_call_id":original_id
+                    });
+                }
+                part
+            })
+            .collect::<Vec<_>>();
+        vec![serde_json::json!({
+            "id":"assistant-window",
+            "kind":"message",
+            "role":"assistant",
+            "content":content
+        })]
+    }
+
+    fn settle_success(owner: &SharedAgentInteractionOwner, fence: &InteractionFence, query_id: u32) {
+        let response = InteractionResponse {
+            id: query_id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Success(AskQuestionSuccess {
+                            answers: vec![],
+                        })),
+                    }),
+                },
+            )),
+        };
+        assert!(owner.settle_response(fence, &response.encode_to_vec()).unwrap());
+    }
+
     #[test]
     fn generated_compatible_interaction_query_response_wire_roundtrip() {
         let owner = SharedAgentInteractionOwner::default();
@@ -794,7 +872,8 @@ mod tests {
         };
         assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
         assert!(owner.drain_post_turn(&fence()).unwrap().is_empty());
-        let wire = owner.turn_ended(&fence(), TurnEndedUpdate::default()).unwrap();
+        let window = assistant_window(&[("AskQuestion", "async-1", None)]);
+        let wire = owner.turn_ended(&fence(), TurnEndedUpdate::default(), &window).unwrap();
         let update = InteractionUpdate::decode(wire.as_slice()).unwrap();
         assert!(matches!(update.message, Some(interaction_update::Message::TurnEnded(_))));
         let completion = owner.drain_post_turn(&fence()).unwrap();
@@ -850,7 +929,13 @@ mod tests {
             )),
         };
         assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
-        owner.turn_ended(&fence(), TurnEndedUpdate::default()).unwrap();
+        owner
+            .turn_ended(
+                &fence(),
+                TurnEndedUpdate::default(),
+                &assistant_window(&[("AskQuestion", "runtime-call-7", Some("original-call-7"))]),
+            )
+            .unwrap();
         let completion = owner.drain_post_turn(&fence()).unwrap().pop().unwrap();
         assert_eq!(completion.tool_call_id, "runtime-call-7");
         assert_eq!(completion.original_tool_call_id, "original-call-7");
@@ -890,7 +975,13 @@ mod tests {
             )),
         };
         assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
-        owner.turn_ended(&fence(), TurnEndedUpdate::default()).unwrap();
+        owner
+            .turn_ended(
+                &fence(),
+                TurnEndedUpdate::default(),
+                &assistant_window(&[("AskQuestion", "runtime-auto-answer", Some("auto-answer-call"))]),
+            )
+            .unwrap();
         assert_eq!(owner.drain_post_turn(&fence()).unwrap().len(), 1);
         assert!(owner.begin_ask_question(
             fence(),
@@ -961,4 +1052,187 @@ mod tests {
         assert!(owner.settle_response(&stale, &response.encode_to_vec()).unwrap_err().contains("stale"));
         assert_eq!(owner.invalidate_stale(&stale).unwrap(), 1);
     }
+    #[test]
+    fn completed_receipts_follow_the_live_window_while_pending_receipts_are_preserved() {
+        let owner = SharedAgentInteractionOwner::default();
+        let mut pending_args = args(true);
+        pending_args.async_original_tool_call_id = "pending-original".into();
+        owner
+            .begin_ask_question(
+                fence(),
+                "pending-runtime",
+                pending_args.clone(),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap();
+
+        let mut completed_args = args(true);
+        completed_args.async_original_tool_call_id = "completed-original".into();
+        let (query_id, _) = owner
+            .begin_ask_question(
+                fence(),
+                "completed-runtime",
+                completed_args.clone(),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap();
+        settle_success(&owner, &fence(), query_id);
+
+        let window = assistant_window(&[("AskQuestion", "live-runtime", Some("live-original"))]);
+        assert_eq!(
+            owner
+                .prune_completed_async_receipts_from_transcript_window(&fence(), &window)
+                .unwrap(),
+            1
+        );
+        assert!(owner
+            .begin_ask_question(
+                fence(),
+                "completed-retry",
+                completed_args,
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .is_ok());
+        assert!(owner
+            .begin_ask_question(
+                fence(),
+                "pending-retry",
+                pending_args,
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap_err()
+            .contains("duplicate async AskQuestion"));
+    }
+
+    #[test]
+    fn concurrent_live_window_keeps_each_receipt_and_prunes_only_the_old_call() {
+        let owner = SharedAgentInteractionOwner::default();
+        let mut args_a = args(true);
+        args_a.async_original_tool_call_id = "original-a".into();
+        let (id_a, _) = owner
+            .begin_ask_question(
+                fence(),
+                "runtime-a",
+                args_a.clone(),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap();
+        settle_success(&owner, &fence(), id_a);
+
+        let mut args_b = args(true);
+        args_b.async_original_tool_call_id = "original-b".into();
+        let (id_b, _) = owner
+            .begin_ask_question(
+                fence(),
+                "runtime-b",
+                args_b.clone(),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap();
+        settle_success(&owner, &fence(), id_b);
+
+        let both_live = assistant_window(&[
+            ("AskQuestion", "runtime-a", Some("original-a")),
+            ("MultipleChoice", "runtime-b", Some("original-b")),
+        ]);
+        assert_eq!(
+            owner
+                .prune_completed_async_receipts_from_transcript_window(&fence(), &both_live)
+                .unwrap(),
+            0
+        );
+        assert!(owner
+            .begin_ask_question(
+                fence(),
+                "runtime-a-retry",
+                args_a.clone(),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap_err()
+            .contains("duplicate async AskQuestion"));
+        assert!(owner
+            .begin_ask_question(
+                fence(),
+                "runtime-b-retry",
+                args_b.clone(),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap_err()
+            .contains("duplicate async AskQuestion"));
+
+        let only_b_live = assistant_window(&[("MultipleChoice", "runtime-b", Some("original-b"))]);
+        assert_eq!(
+            owner
+                .prune_completed_async_receipts_from_transcript_window(&fence(), &only_b_live)
+                .unwrap(),
+            1
+        );
+        assert!(owner
+            .begin_ask_question(
+                fence(),
+                "runtime-a-retry",
+                args_a,
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .is_ok());
+        assert!(owner
+            .begin_ask_question(
+                fence(),
+                "runtime-b-retry",
+                args_b,
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap_err()
+            .contains("duplicate async AskQuestion"));
+    }
+
+    #[test]
+    fn completed_receipt_deduplication_is_account_and_process_fenced() {
+        let owner = SharedAgentInteractionOwner::default();
+        let (query_id, _) = owner
+            .begin_ask_question(
+                fence(),
+                "same-original",
+                args(true),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap();
+        settle_success(&owner, &fence(), query_id);
+
+        let other_account = InteractionFence {
+            account_fence: "account-b".into(),
+            process_epoch: 7,
+        };
+        assert!(owner
+            .begin_ask_question(
+                other_account,
+                "same-original",
+                args(true),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .is_ok());
+        let new_process = InteractionFence {
+            account_fence: "account-a".into(),
+            process_epoch: 8,
+        };
+        assert!(owner
+            .begin_ask_question(
+                new_process,
+                "same-original",
+                args(true),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .is_ok());
+        assert!(owner
+            .begin_ask_question(
+                fence(),
+                "same-original-retry",
+                args(true),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap_err()
+            .contains("duplicate async AskQuestion"));
+    }
+
+
 }
