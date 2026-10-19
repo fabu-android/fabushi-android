@@ -228,6 +228,84 @@ AGENT_STORE_IDS_SOURCE_SPEC = {
 }
 
 
+AGENT_CORE_INTERACTION_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
+AGENT_CORE_INTERACTION_PRODUCTION_STEP = 'Verify exact-HEAD agent-core interaction production owner'
+AGENT_CORE_INTERACTION_TEST_STEP = 'Test exact-HEAD agent-core interaction production owner'
+AGENT_CORE_INTERACTION_SOURCE_SPECS = {
+    'source/packages/agent-core/interaction-listener.ts': {
+        'symbols': ['InteractionListener', 'flushPostTurnEndedWork', 'NoopInteractionListener', 'InteractionListenerStreamClosedError'],
+        'source_owner': (
+            'Desktop Agent interaction listener owns update/query delivery and bounded post-turn work flushing '
+            'used by the shipping Agent runtime'
+        ),
+        'android_owner': (
+            'Rust Host AgentV1 interaction listener and AndroidJsonHost/JNI dispatch path; Coordinator owns '
+            'account/process fencing and no presentation layer owns query settlement'
+        ),
+        'android_targets': [
+            'source/host/src/runner/agent_v1_interaction.rs',
+            'source/host/src/android_json_runtime.rs',
+            'source/android-host-jni/src/lib.rs',
+        ],
+        'production_target': 'source/host/src/runner/agent_v1_interaction.rs',
+        'test_target': 'source/host/src/runner/agent_v1_interaction.rs',
+        'focused_tests': [
+            'generated_compatible_interaction_query_response_wire_roundtrip',
+            'run_async_completion_is_enqueued_and_privacy_projection_is_redacted',
+            'native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent-core/interaction-queries.ts': {
+        'symbols': ['InteractionQueryListener', 'DeferredInteractionResponseError', 'Responses', 'queryWebSearch', 'queryWebFetch', 'queryMcpAuth'],
+        'source_owner': (
+            'Desktop Agent interaction query/response wire constructors own typed approval/question response '
+            'settlement over generated Agent v1 protocol messages'
+        ),
+        'android_owner': (
+            'Rust Host AgentV1InteractionQuery/Response wire owner with AndroidJsonHost settlement and '
+            'account/process epoch fencing'
+        ),
+        'android_targets': [
+            'source/host/src/runner/agent_v1_interaction.rs',
+            'source/host/src/android_json_runtime.rs',
+        ],
+        'production_target': 'source/host/src/runner/agent_v1_interaction.rs',
+        'test_target': 'source/host/src/runner/agent_v1_interaction.rs',
+        'focused_tests': [
+            'generated_compatible_interaction_query_response_wire_roundtrip',
+            'android_json_host_settles_generated_ask_question_response_with_exact_fence',
+            'android_json_host_rejects_stale_interaction_response_after_account_or_process_change',
+        ],
+        'disposition': 'android-adapted',
+    },
+    'source/packages/agent-core/interaction-updates.ts': {
+        'symbols': ['Updates', 'TurnUsage', 'textDelta', 'toolCallStarted', 'toolCallCompleted', 'turnEnded'],
+        'source_owner': (
+            'Desktop Agent interaction update constructors own typed streaming/tool/turn-ended update wire '
+            'shape and usage settlement before transcript projection'
+        ),
+        'android_owner': (
+            'Rust Host AgentV1 interaction update/projection owner consumed by AndroidJsonHost; JNI transports '
+            'the Host projection without creating a second transcript owner'
+        ),
+        'android_targets': [
+            'source/host/src/runner/agent_v1_interaction.rs',
+            'source/host/src/android_json_runtime.rs',
+            'source/android-host-jni/src/lib.rs',
+        ],
+        'production_target': 'source/host/src/runner/agent_v1_interaction.rs',
+        'test_target': 'source/host/src/runner/agent_v1_interaction.rs',
+        'focused_tests': [
+            'run_async_completion_is_enqueued_and_privacy_projection_is_redacted',
+            'stale_account_and_process_epoch_responses_fail_closed',
+            'native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host',
+        ],
+        'disposition': 'android-adapted',
+    },
+}
+
+
 BACKGROUND_COMPLETION_RESPONSIBILITY_ID = 'AGENT-GENERATED-SUBAGENT-001'
 BACKGROUND_COMPLETION_PRODUCTION_STEP = 'Verify exact-HEAD background completion production owner'
 BACKGROUND_COMPLETION_TEST_STEP = 'Test exact-HEAD background completion production owner'
@@ -489,6 +567,28 @@ CLIENT_SIDE_TOOL_V2_TEST_TARGETS = {
 
 
 OFFICIAL_DEVICE_SOURCE_SPECS = {
+    'desktop/e2e/app-agent-surface.spec.ts': {
+        'responsibility_id': 'APP-AGENT-SURFACE-ANDROID-001',
+        'symbols': [
+            'packaged Fabushi publishes a generation-safe semantic App MCP over the private loopback bridge',
+            'snapshot/find/action/assert generation fencing',
+            'sensitive-value redaction and web fallback registry',
+        ],
+        'source_owner': (
+            'Desktop packaged App Agent Surface E2E owner proving the shipping private loopback App MCP '
+            'and semantic six-tool contract rather than a renderer-only fixture'
+        ),
+        'android_owner': (
+            'Native FabushiAppAgentSurface semantic state/action owner plus account-scoped '
+            'FabushiRemoteDeviceGateway transport; Coordinator/Host remain canonical business-state owners'
+        ),
+        'android_targets': [
+            'source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt',
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+            'mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiAppAgentSurfaceTest.kt',
+        ],
+        'disposition': 'not-applicable-with-replacement',
+    },
     'source/electron-main/account/auth-service-contract.ts': {
         'responsibility_id': 'ACCOUNT-SESSION-001',
         'symbols': ['FabushiDeviceAgentSession', 'AuthServicePort.deviceAgentSession'],
@@ -1162,7 +1262,7 @@ def _package_semantic_coverage(
         else:
             target_rows += 1
 
-        if path in AGENT_KV_SOURCE_SPEC_BY_PATH or path in BACKGROUND_COMPLETION_SOURCE_SPECS:
+        if path in AGENT_KV_SOURCE_SPEC_BY_PATH or path in BACKGROUND_COMPLETION_SOURCE_SPECS or path in AGENT_CORE_INTERACTION_SOURCE_SPECS:
             has_focused_tests = any(
                 isinstance(source.get('focused_tests'), list)
                 and bool(source.get('focused_tests'))
@@ -1306,6 +1406,74 @@ def _ensure_agent_kv_semantic_mapping(
         'and typed blob metadata/mirror semantics. Source-specific Android targets and focused tests are '
         'explicit; exact-head production/test evidence is added only from the successful dedicated Grok Android Architecture '
         'agent-kv evidence job steps. Mapping and CI evidence do not promote implementation_status or verification_status.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
+def _ensure_agent_core_interaction_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Map the shipping Agent v1 listener/query/update package boundary to the existing Rust Host owner."""
+    if not any(path in new_by_path for path in AGENT_CORE_INTERACTION_SOURCE_SPECS):
+        return
+    missing = sorted(set(AGENT_CORE_INTERACTION_SOURCE_SPECS) - set(new_by_path))
+    require(not missing, 'current Desktop agent-core interaction source set is incomplete: ' + ', '.join(missing))
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == AGENT_CORE_INTERACTION_RESPONSIBILITY_ID
+    ]
+    require(len(matches) == 1, 'agent-core interaction mapping requires exactly one ' + AGENT_CORE_INTERACTION_RESPONSIBILITY_ID)
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    for path, spec in AGENT_CORE_INTERACTION_SOURCE_SPECS.items():
+        source_object = new_by_path[path]
+        require(
+            source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+            'agent-core interaction Desktop source has invalid blob/mode/type: ' + path,
+        )
+        source = existing_sources.get(path, {})
+        source.update({
+            'path': path,
+            'blob_sha': source_object['sha'],
+            'source_mode': source_object['mode'],
+            'source_type': source_object['type'],
+            'source_commit': desktop_commit,
+            'mapping_quality': 'semantic',
+            'symbols': list(spec['symbols']),
+            'focused_tests': list(spec['focused_tests']),
+            'android_targets': list(spec['android_targets']),
+            'source_owner': spec['source_owner'],
+            'android_owner': spec['android_owner'],
+        })
+        existing_sources[path] = source
+    item['desktop_sources'] = sorted(existing_sources.values(), key=lambda source: source.get('path', ''))
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for spec in AGENT_CORE_INTERACTION_SOURCE_SPECS.values():
+        for target in spec['android_targets']:
+            if target not in raw_targets:
+                raw_targets.append(target)
+    item['android_target'] = raw_targets
+    item['android_disposition'] = 'android-adapted'
+    note = (
+        'Current-main Agent v1 interaction listener/query/update package sources are mapped to the existing '
+        'Rust Host/JNI shipping owner with source-specific focused tests. Mapping and same-head CI evidence '
+        'remain provenance and do not promote responsibility implementation/verification status.'
     )
     notes = item.get('notes')
     if isinstance(notes, str):
@@ -3036,6 +3204,8 @@ def merge_responsibility_mapping(
         _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
     if any(path in new_by_path for path in BACKGROUND_COMPLETION_SOURCE_SPECS):
         _ensure_background_completion_semantic_mapping(responsibilities, new_by_path, current)
+    if any(path in new_by_path for path in AGENT_CORE_INTERACTION_SOURCE_SPECS):
+        _ensure_agent_core_interaction_semantic_mapping(responsibilities, new_by_path, current)
     if CLOUD_AGENT_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_cloud_agent_constant_semantic_mapping(responsibilities, new_by_path, current)
     if AGENT_STORE_IDS_SOURCE_PATH in new_by_path:
@@ -3627,6 +3797,82 @@ def merge_responsibility_mapping(
             )
 
 
+    if all(path in new_by_path for path in AGENT_CORE_INTERACTION_SOURCE_SPECS):
+        interaction_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == AGENT_CORE_INTERACTION_RESPONSIBILITY_ID
+        )
+        interaction_paths = set(AGENT_CORE_INTERACTION_SOURCE_SPECS)
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = interaction_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            interaction_responsibility[evidence_key] = [
+                entry for entry in existing_evidence
+                if not any(path in interaction_paths for path in (
+                    entry.get('source_paths')
+                    if isinstance(entry.get('source_paths'), list)
+                    else [entry.get('source_path')]
+                ))
+            ]
+        interaction_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=AGENT_CORE_INTERACTION_PRODUCTION_STEP,
+            test_step_name=AGENT_CORE_INTERACTION_TEST_STEP,
+            evidence_label='agent-core interaction',
+        )
+        if interaction_evidence is not None:
+            for path, spec in AGENT_CORE_INTERACTION_SOURCE_SPECS.items():
+                missing_targets = [target for target in spec['android_targets'] if target not in tracked_android_paths]
+                require(
+                    not missing_targets,
+                    'agent-core interaction Android target is not tracked at exact HEAD for '
+                    + path + ': ' + ', '.join(missing_targets),
+                )
+                common = {
+                    'source_paths': [path],
+                    'source_commit': current,
+                    'desktop_commit': current,
+                    'desktop_root_tree': tree_sha,
+                    'android_pr_head_sha': android['android_pr_head_sha'],
+                    'android_tested_checkout_sha': android['android_checkout_sha'],
+                    'workflow_sha': android['workflow_sha'],
+                    'workflow_name': interaction_evidence['workflow_name'],
+                    'workflow_id': interaction_evidence['workflow_id'],
+                    'workflow_path': interaction_evidence['workflow_path'],
+                    'workflow_event': interaction_evidence['workflow_event'],
+                    'workflow_repository': interaction_evidence['workflow_repository'],
+                    'workflow_run_id': interaction_evidence['workflow_run_id'],
+                    'workflow_job_name': interaction_evidence['workflow_job_name'],
+                    'workflow_job_id': interaction_evidence['workflow_job_id'],
+                    'workflow_job_run_attempt': interaction_evidence['workflow_job_run_attempt'],
+                    'run_attempt': interaction_evidence['run_attempt'],
+                    'run_conclusion': interaction_evidence['run_conclusion'],
+                    'result': 'passed',
+                }
+                interaction_responsibility['production_evidence'].append({
+                    **common,
+                    'kind': 'production-wiring',
+                    'workflow_step_name': interaction_evidence['production_step_name'],
+                    'workflow_step_number': interaction_evidence['production_step_number'],
+                    'evidence_ref': spec['production_target'] + '#agent-core-interaction-production-owner',
+                })
+                interaction_responsibility['test_evidence'].append({
+                    **common,
+                    'kind': 'focused-unit-test',
+                    'workflow_step_name': interaction_evidence['test_step_name'],
+                    'workflow_step_number': interaction_evidence['test_step_number'],
+                    'evidence_ref': spec['test_target'] + '#agent-core-interaction-focused-tests',
+                    'focused_tests': list(spec['focused_tests']),
+                })
+        else:
+            print(
+                'WARNING: no successful same-exact-head agent-core interaction evidence; '
+                'interaction package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
+
     if all(path in new_by_path for path in BACKGROUND_COMPLETION_SOURCE_SPECS):
         background_responsibility = next(
             item for item in responsibilities
@@ -3793,6 +4039,8 @@ def merge_responsibility_mapping(
             row['disposition'] = agent_kv_spec['disposition']
         elif path in BACKGROUND_COMPLETION_SOURCE_SPECS:
             row['disposition'] = BACKGROUND_COMPLETION_SOURCE_SPECS[path]['disposition']
+        elif path in AGENT_CORE_INTERACTION_SOURCE_SPECS:
+            row['disposition'] = AGENT_CORE_INTERACTION_SOURCE_SPECS[path]['disposition']
         elif path == CLOUD_AGENT_CONSTANT_SOURCE_PATH:
             row['disposition'] = CLOUD_AGENT_CONSTANT_SOURCE_SPEC['disposition']
         elif path == AGENT_STORE_IDS_SOURCE_PATH:
