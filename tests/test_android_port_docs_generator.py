@@ -1090,10 +1090,10 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
              patch.object(module, "PRIOR_TREE_ENTRY_COUNT", 3):
             baseline = {
                 "desktop_repository": "bhrumom/fabushi-desktop",
-                "desktop_commit": current_commit,
-                "desktop_root_tree": current_tree,
-                "desktop_main_before": prior_commit,
-                "desktop_main_after": current_commit,
+                "desktop_commit": prior_commit,
+                "desktop_root_tree": prior_tree,
+                "desktop_main_before": predecessor_commit,
+                "desktop_main_after": prior_commit,
             }
             prior_rows = [
                 {"source_path": "AGENTS.md", "source_commit": prior_commit,

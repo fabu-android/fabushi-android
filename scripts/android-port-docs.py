@@ -2136,15 +2136,37 @@ def _validate_rebaseline_boundary(
             'Desktop main commit differs from the pinned current authority')
     require(tree_sha == EXPECTED_DESKTOP_TREE,
             'Desktop main tree differs from the pinned current authority')
-    require(baseline.get('desktop_commit') == current,
-            'baseline Desktop commit does not match current main')
-    require(baseline.get('desktop_root_tree') == tree_sha,
-            'baseline Desktop tree does not match current main')
-    require(baseline.get('desktop_main_before') in {
-                PREDECESSOR_DESKTOP_COMMIT, PRIOR_DESKTOP_COMMIT
+    baseline_pair = (
+        baseline.get('desktop_commit'),
+        baseline.get('desktop_root_tree'),
+    )
+    prior_pair = (PRIOR_DESKTOP_COMMIT, PRIOR_DESKTOP_TREE)
+    current_pair = (current, tree_sha)
+    require(
+        baseline_pair in {prior_pair, current_pair},
+        'baseline Desktop authority is neither the exact prior accepted authority nor current main',
+    )
+    if baseline_pair == prior_pair:
+        require(
+            baseline.get('desktop_main_after') == PRIOR_DESKTOP_COMMIT
+            and baseline.get('desktop_main_before') in {
+                PREDECESSOR_DESKTOP_COMMIT,
+                PERSISTED_INTERMEDIATE_DESKTOP_COMMIT,
+                PRIOR_DESKTOP_COMMIT,
+            },
+            'prior baseline does not preserve an accepted Desktop main lineage',
+        )
+    else:
+        require(
+            baseline.get('desktop_main_before') in {
+                PREDECESSOR_DESKTOP_COMMIT,
+                PERSISTED_INTERMEDIATE_DESKTOP_COMMIT,
+                PRIOR_DESKTOP_COMMIT,
+                current,
             }
             and baseline.get('desktop_main_after') == current,
-            'baseline does not preserve an accepted predecessor-to-current Desktop main lineage')
+            'current baseline does not preserve an accepted Desktop main lineage',
+        )
     require(tree_entry_count == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop tree must contain {EXPECTED_TREE_ENTRY_COUNT} recursive entries, got {tree_entry_count}')
     require(tracked_non_tree_count == EXPECTED_TRACKED_NON_TREE_COUNT,
