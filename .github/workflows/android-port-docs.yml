@@ -115,8 +115,8 @@ jobs:
           from urllib.request import Request, urlopen
 
           desktop_repo = 'bhrumom/fabushi-desktop'
-          desktop_commit = '7559e2a494ed45f0d21ecdab62e3b61c07747248'
-          desktop_tree = '7a232a6c8519cb4b50b3222057f26628cd497bd0'
+          desktop_commit = '48109b8807c13bb6f017b15a115bf823232422aa'
+          desktop_tree = 'a3abd72e10624478e2a1b531dff290e138955b0c'
           prior_desktop_commits = {
             '12a4e29819592e3a7e32f7435cb0cf2e3cc53848',
             'ca618ae19add78872fcac7cb86bf8754a4ad7a55',
@@ -127,6 +127,7 @@ jobs:
             'adce9f7618e80870bd89a2dee6db7f77d6e066a9',
             '0ecf132681845231b597ece11bc5f979a9a8f0cc',
             'e0c07740a8386fc01c6b9e6cc5078b3fab1bcb86',
+            '7559e2a494ed45f0d21ecdab62e3b61c07747248',
             'f6b916bbac6e578add9e33acb140d9864946880d',
             '160703057b24f6339ef2d88732c38dced8bc13aa',
             '8a38c08ea0f09e7c6fe7e8d50f776a813611aa6a',
@@ -137,8 +138,8 @@ jobs:
             'ecfaa45dcbf340f94cbd12231d1896ac15109389',
             desktop_commit,
           }
-          expected_tree_entries = 9456
-          expected_non_tree_entries = 8301
+          expected_tree_entries = 9457
+          expected_non_tree_entries = 8302
 
           def github_json(path):
             headers = {
