@@ -1,13 +1,17 @@
 use super::box_help_routed_tool::{
     waiting_user_box_help_request_id, WAITING_USER_CANCELLATION_PREFIX,
 };
+use super::agent_v1_interaction::{
+    with_ask_question_tool, AskQuestionTranscriptWindowProvider, InteractionFence,
+    SharedAgentInteractionOwner,
+};
 use super::{
     agent_v1_wire::{
         encode_routed_tool_call_initial_observation, encode_routed_tool_call_observation,
         is_agent_v1_observed_tool,
     },
     checkpoint::AttemptCheckpoint,
-    production_turn_agent_owner::SAND_AGENT_MAX_STEPS,
+    production_turn_agent_owner::{ProductionTurnPrivacyMode, SAND_AGENT_MAX_STEPS},
     stream_attempt::{ProviderFailure, StreamAttemptInput, StreamGeneration, TurnStreamProvider},
     turn_tool_session_reminders::TurnToolSessionReminderState,
 };
@@ -356,6 +360,35 @@ impl AndroidHostInferenceProvider {
     pub fn with_routed_tools(mut self, bridge: Arc<dyn AndroidRoutedToolBridge>) -> Self {
         self.routed_tools = Some(bridge);
         self
+    }
+
+    /// Binds the async AskQuestion bridge to the same canonical transcript window
+    /// used by the production turn, rather than keeping an independent receipt horizon.
+    pub fn with_ask_question_interaction(
+        mut self,
+        owner: SharedAgentInteractionOwner,
+        fence: InteractionFence,
+        privacy_mode: ProductionTurnPrivacyMode,
+        publish_query: Arc<
+            dyn Fn(u32, &[u8], &InteractionFence) -> Result<(), String> + Send + Sync,
+        >,
+        transcript_window_provider: AskQuestionTranscriptWindowProvider,
+    ) -> Result<Self, ProviderFailure> {
+        let delegate = self.routed_tools.take().ok_or_else(|| {
+            ProviderFailure::new(
+                "AskQuestion interaction requires the routed-tool bridge to be bound first",
+            )
+        })?;
+        self.routed_tools = Some(with_ask_question_tool(
+            delegate,
+            owner,
+            fence,
+            privacy_mode,
+            Arc::clone(&self.cancelled),
+            publish_query,
+            transcript_window_provider,
+        ));
+        Ok(self)
     }
 
     pub fn with_tool_call_observation_sink(
@@ -1381,6 +1414,49 @@ mod tests {
             .unwrap();
         assert!(output.chunks.concat().contains("\"echo\":\"ok\""));
         assert_eq!(live, output.chunks.concat());
+    }
+
+    #[test]
+    fn production_provider_binds_ask_question_to_the_canonical_transcript_window() {
+        let published = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let published_clone = Arc::clone(&published);
+        let window_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let window_reads_clone = Arc::clone(&window_reads);
+        let mut provider = AndroidHostInferenceProvider::new(AndroidInferenceMode::Test)
+            .with_routed_tools(Arc::new(EchoTools))
+            .with_ask_question_interaction(
+                SharedAgentInteractionOwner::default(),
+                InteractionFence {
+                    account_fence: "account-a".into(),
+                    process_epoch: 7,
+                },
+                ProductionTurnPrivacyMode::NoTraining,
+                Arc::new(move |query_id, wire, fence| {
+                    assert!(query_id > 0);
+                    assert!(!wire.is_empty());
+                    assert_eq!(fence.account_fence, "account-a");
+                    published_clone.fetch_add(1, Ordering::SeqCst);
+                    Ok(())
+                }),
+                Arc::new(move || {
+                    window_reads_clone.fetch_add(1, Ordering::SeqCst);
+                    Ok(vec![])
+                }),
+            )
+            .unwrap();
+        let output = provider
+            .start_stream_with_sink(
+                &StreamAttemptInput {
+                    prompt: r#"[[tool:AskQuestion]] {"questions":[{"id":"q1","prompt":"Choose","options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]}],"run_async":true,"async_original_tool_call_id":"original-live"}"#.into(),
+                    ..input()
+                },
+                1,
+                &mut |_| Ok(()),
+            )
+            .unwrap();
+        assert!(output.chunks.concat().contains("tool_result:"));
+        assert_eq!(published.load(Ordering::SeqCst), 1);
+        assert_eq!(window_reads.load(Ordering::SeqCst), 1);
     }
 
     #[test]

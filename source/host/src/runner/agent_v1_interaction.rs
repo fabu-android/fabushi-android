@@ -658,6 +658,9 @@ pub fn decode_response_base64(value: &str) -> Result<Vec<u8>, String> {
         .map_err(|error| format!("invalid InteractionResponse base64: {error}"))
 }
 
+pub type AskQuestionTranscriptWindowProvider =
+    Arc<dyn Fn() -> Result<Vec<serde_json::Value>, String> + Send + Sync>;
+
 pub fn with_ask_question_tool(
     delegate: Arc<dyn AndroidRoutedToolBridge>,
     owner: SharedAgentInteractionOwner,
@@ -665,6 +668,7 @@ pub fn with_ask_question_tool(
     privacy_mode: ProductionTurnPrivacyMode,
     cancelled: Arc<AtomicBool>,
     publish_query: Arc<dyn Fn(u32, &[u8], &InteractionFence) -> Result<(), String> + Send + Sync>,
+    transcript_window_provider: AskQuestionTranscriptWindowProvider,
 ) -> Arc<dyn AndroidRoutedToolBridge> {
     Arc::new(AskQuestionRoutedTool {
         delegate,
@@ -673,6 +677,7 @@ pub fn with_ask_question_tool(
         privacy_mode,
         cancelled,
         publish_query,
+        transcript_window_provider,
     })
 }
 
@@ -683,6 +688,7 @@ struct AskQuestionRoutedTool {
     privacy_mode: ProductionTurnPrivacyMode,
     cancelled: Arc<AtomicBool>,
     publish_query: Arc<dyn Fn(u32, &[u8], &InteractionFence) -> Result<(), String> + Send + Sync>,
+    transcript_window_provider: AskQuestionTranscriptWindowProvider,
 }
 
 impl AndroidRoutedToolBridge for AskQuestionRoutedTool {
@@ -726,6 +732,24 @@ impl AndroidRoutedToolBridge for AskQuestionRoutedTool {
         }
         let args = ask_question_args_from_json(&args)?;
         let run_async = args.run_async;
+        let mut transcript_window = (self.transcript_window_provider)()?;
+        // The model's current tool call may not have been persisted into the canonical
+        // transcript yet. Include it in the live window before pruning so a replayed
+        // completed receipt cannot be removed just before the duplicate is rejected.
+        transcript_window.push(json!({
+            "kind":"message",
+            "role":"assistant",
+            "content":[{
+                "type":"tool-call",
+                "toolName":ASK_QUESTION_TOOL_NAME,
+                "toolCallId":tool_call_id,
+                "args":{"async_original_tool_call_id":args.async_original_tool_call_id}
+            }]
+        }));
+        self.owner.prune_completed_async_receipts_from_transcript_window(
+            &self.fence,
+            &transcript_window,
+        )?;
         let (query_id, wire) = self.owner.begin_ask_question(
             self.fence.clone(),
             tool_call_id,
@@ -1232,6 +1256,67 @@ mod tests {
             )
             .unwrap_err()
             .contains("duplicate async AskQuestion"));
+    }
+
+
+    struct EmptyDelegate;
+
+    impl AndroidRoutedToolBridge for EmptyDelegate {
+        fn list_tools(&self) -> Result<Vec<Value>, String> {
+            Ok(vec![])
+        }
+
+        fn call_tool(&self, _name: &str, _args: Value, _tool_call_id: &str) -> Result<Value, String> {
+            Err("unexpected delegated tool call".into())
+        }
+    }
+
+    #[test]
+    fn live_tool_window_keeps_completed_receipt_until_duplicate_is_rejected() {
+        let owner = SharedAgentInteractionOwner::default();
+        let mut completed_args = args(true);
+        completed_args.async_original_tool_call_id = "original-live".into();
+        let (query_id, _) = owner
+            .begin_ask_question(
+                fence(),
+                "original-live",
+                completed_args,
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap();
+        settle_success(&owner, &fence(), query_id);
+
+        let published = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let published_clone = Arc::clone(&published);
+        let bridge = with_ask_question_tool(
+            Arc::new(EmptyDelegate),
+            owner,
+            fence(),
+            ProductionTurnPrivacyMode::NoTraining,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(move |_query_id, _wire, _fence| {
+                published_clone.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+            Arc::new(|| Ok(vec![])),
+        );
+        let error = bridge
+            .call_tool(
+                ASK_QUESTION_TOOL_NAME,
+                serde_json::json!({
+                    "questions":[{
+                        "id":"q1",
+                        "prompt":"Choose",
+                        "options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]
+                    }],
+                    "run_async":true,
+                    "async_original_tool_call_id":"original-live"
+                }),
+                "runtime-retry",
+            )
+            .unwrap_err();
+        assert!(error.contains("duplicate async AskQuestion"));
+        assert_eq!(published.load(Ordering::SeqCst), 0);
     }
 
 
