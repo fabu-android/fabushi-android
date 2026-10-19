@@ -50,8 +50,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
 EXPECTED_RESPONSIBILITY_COUNT = 306
 EXPECTED_TREE_ENTRY_COUNT = 9441
 EXPECTED_TRACKED_NON_TREE_COUNT = 8286
-PRIOR_TREE_ENTRY_COUNT = 9433
-PRIOR_TRACKED_NON_TREE_COUNT = 8278
+PRIOR_TREE_ENTRY_COUNT = 9441
+PRIOR_TRACKED_NON_TREE_COUNT = 8286
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
 PERSISTED_INTERMEDIATE_TRACKED_NON_TREE_COUNT = 8276
 PREDECESSOR_TREE_ENTRY_COUNT = 9412
@@ -69,10 +69,10 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
-EXPECTED_DESKTOP_TREE = 'd19997afb9e1c4f3473777ac9ef2b96d6ef6a6da'
-PRIOR_DESKTOP_COMMIT = '11b3459a85f90288f5d9bf2b0e5adc14ed2e3f57'
-PRIOR_DESKTOP_TREE = 'e4ed84295024c69275d03b2f2fe36c814620efd1'
+EXPECTED_DESKTOP_COMMIT = 'adce9f7618e80870bd89a2dee6db7f77d6e066a9'
+EXPECTED_DESKTOP_TREE = '927d8becb9aa019a63e3f075598995481a0430b4'
+PRIOR_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
+PRIOR_DESKTOP_TREE = 'd19997afb9e1c4f3473777ac9ef2b96d6ef6a6da'
 PERSISTED_INTERMEDIATE_DESKTOP_COMMIT = '12887d2a44ba450b13ca8390066a39418c52e0c9'
 PERSISTED_INTERMEDIATE_DESKTOP_TREE = '4bc59314edd76a51bd8f0e2d0654935d9e8ffb41'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
@@ -4389,7 +4389,7 @@ def rebaseline() -> None:
     files = [item for item in entries if item['type'] != 'tree']
     require(files, 'Empty source inventory during rebaseline')
     require(current == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
-            'Desktop authority commit/tree differs from the pinned 02eb0b51/142e8cdd lock')
+            'Desktop authority commit/tree differs from the pinned current authority lock')
     require(len(entries) == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop recursive tree count mismatch: expected {EXPECTED_TREE_ENTRY_COUNT}, got {len(entries)}')
     require(len(files) == EXPECTED_TRACKED_NON_TREE_COUNT,
@@ -4820,7 +4820,7 @@ def audit_receipt() -> None:
     require(manifest.get('tree_entries') == EXPECTED_TREE_ENTRY_COUNT
             and manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT
             and manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
-            'receipt manifest does not preserve the current 8278/9433 authority boundary')
+            'receipt manifest does not preserve the current authority boundary')
     tree_doc = docs['desktop_complete_tree']
     root_tree_doc = docs['desktop_root_tree']
     require(tree_doc.get('sha') == EXPECTED_DESKTOP_TREE

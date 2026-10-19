@@ -115,14 +115,15 @@ jobs:
           from urllib.request import Request, urlopen
 
           desktop_repo = 'bhrumom/fabushi-desktop'
-          desktop_commit = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
-          desktop_tree = 'd19997afb9e1c4f3473777ac9ef2b96d6ef6a6da'
+          desktop_commit = 'adce9f7618e80870bd89a2dee6db7f77d6e066a9'
+          desktop_tree = '927d8becb9aa019a63e3f075598995481a0430b4'
           prior_desktop_commits = {
             '12a4e29819592e3a7e32f7435cb0cf2e3cc53848',
             'ca618ae19add78872fcac7cb86bf8754a4ad7a55',
             '12887d2a44ba450b13ca8390066a39418c52e0c9',
             '4d805081f800c63c8d17ce927ea70136ec6306e9',
             '11b3459a85f90288f5d9bf2b0e5adc14ed2e3f57',
+            '72ca525b7c2f5d1d605bf4a3261485609bd2c05f',
             desktop_commit,
           }
           expected_tree_entries = 9441
