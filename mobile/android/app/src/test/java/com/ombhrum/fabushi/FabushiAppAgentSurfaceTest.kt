@@ -10,13 +10,13 @@ import org.junit.Test
 
 class FabushiAppAgentSurfaceTest {
     @Test
-    fun officialDeviceGatewayMatchesDesktopStatusOnlyRegistrationBoundary() {
+    fun officialDeviceGatewayMatchesDesktopSixToolRegistrationBoundary() {
         assertEquals(
-            listOf(FabushiAppAgentSurface.StatusTool),
+            FabushiAppAgentSurface.ToolNames,
             FabushiRemoteDeviceGateway.OfficialToolNames,
         )
-        assertFalse(FabushiRemoteDeviceGateway.OfficialToolNames.contains(FabushiAppAgentSurface.ActionTool))
-        assertFalse(FabushiRemoteDeviceGateway.OfficialToolNames.contains(FabushiAppAgentSurface.SnapshotTool))
+        assertTrue(FabushiRemoteDeviceGateway.OfficialToolNames.contains(FabushiAppAgentSurface.ActionTool))
+        assertTrue(FabushiRemoteDeviceGateway.OfficialToolNames.contains(FabushiAppAgentSurface.SnapshotTool))
     }
 
     @Test
@@ -77,6 +77,36 @@ class FabushiAppAgentSurfaceTest {
         )
         assertFalse(FabushiRemoteDeviceGateway.isReadOnlyOfficialPreflight(writeShaped))
         assertFalse(FabushiRemoteDeviceGateway.isReadOnlyOfficialPreflight(JSONObject()))
+        assertTrue(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.SnapshotTool,
+                JSONObject(),
+            ),
+        )
+        assertTrue(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.SnapshotTool,
+                readOnly,
+            ),
+        )
+        assertFalse(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.SnapshotTool,
+                writeShaped,
+            ),
+        )
+        assertFalse(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.ActionTool,
+                JSONObject(),
+            ),
+        )
+        assertTrue(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.ActionTool,
+                readOnly,
+            ),
+        )
 
         val heartbeat = JSONObject(FabushiRemoteDeviceGateway.officialHeartbeatMessage(now))
         assertEquals("heartbeat", heartbeat.getString("type"))
