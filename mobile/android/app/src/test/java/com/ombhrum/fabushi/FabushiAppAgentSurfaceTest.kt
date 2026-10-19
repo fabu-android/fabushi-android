@@ -108,6 +108,26 @@ class FabushiAppAgentSurfaceTest {
             ),
         )
 
+        assertEquals(
+            "button-a",
+            FabushiRemoteDeviceGateway.officialArguments(
+                JSONObject().put("argumentsJson", """{"agentId":"button-a"}"""),
+            ).getString("agentId"),
+        )
+        assertEquals(
+            "button-b",
+            FabushiRemoteDeviceGateway.officialArguments(
+                JSONObject().put("arguments", JSONObject().put("agentId", "button-b")),
+            ).getString("agentId"),
+        )
+        assertFalse(
+            runCatching {
+                FabushiRemoteDeviceGateway.officialArguments(
+                    JSONObject().put("argumentsJson", "{invalid-json}"),
+                )
+            }.isSuccess,
+        )
+
         val heartbeat = JSONObject(FabushiRemoteDeviceGateway.officialHeartbeatMessage(now))
         assertEquals("heartbeat", heartbeat.getString("type"))
         assertEquals(now, heartbeat.getLong("at"))
