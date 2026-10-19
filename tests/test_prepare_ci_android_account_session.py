@@ -130,7 +130,7 @@ class PrepareCiAndroidAccountSessionTest(unittest.TestCase):
                 audience="https://factory.example",
                 env={
                     "ACTIONS_ID_TOKEN_REQUEST_URL":
-                    "https://pipelines.actions.githubusercontent.com/run/oidc?x=1",
+                    "https://pipelinesghubeus6.actions.githubusercontent.com/run/oidc?x=1",
                     "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
                 },
             )
