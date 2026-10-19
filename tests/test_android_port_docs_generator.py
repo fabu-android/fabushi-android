@@ -2165,7 +2165,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "job-attempt": {"workflow_job_run_attempt": 1},
             "workflow-id": {"workflow_id": 1},
             "workflow-path": {"workflow_path": ".github/workflows/other.yml"},
-            "workflow-event": {"workflow_event": "push"},
+            "workflow-event": {"workflow_event": "workflow_dispatch"},
             "workflow-repository": {"workflow_repository": "other/repo"},
             "run-conclusion": {"run_conclusion": "failure"},
             "job-name": {"workflow_job_name": "other"},
@@ -2192,7 +2192,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
 
         run_mutations = {
             "name": {"name": "other"}, "workflow-id": {"workflow_id": 1},
-            "path": {"path": ".github/workflows/other.yml"}, "event": {"event": "push"},
+            "path": {"path": ".github/workflows/other.yml"}, "event": {"event": "workflow_dispatch"},
             "repository": {"repository": {"full_name": "other/repo"}},
             "head": {"head_sha": "b" * 40}, "status": {"status": "queued"},
             "failure": {"conclusion": "failure"}, "cancelled": {"conclusion": "cancelled"},
