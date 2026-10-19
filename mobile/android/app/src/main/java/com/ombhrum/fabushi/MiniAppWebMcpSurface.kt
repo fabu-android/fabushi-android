@@ -58,6 +58,14 @@ private class MiniAppNativeWebMcpBridge(
                 .put("error", "Native WebMCP bridge is available only to the local MiniApp document")
                 .toString()
         }
+        // Discovery is answered by the host itself: it reveals only what this MiniApp
+        // was already granted, and works before any tool is declared.
+        if (name == CAPABILITY_PROBE_TOOL) {
+            return JSONObject()
+                .put("ok", true)
+                .put("result", miniAppCapabilityAnswer(plugin.tools))
+                .toString()
+        }
         val tool = tools[name]
             ?: return JSONObject().put("ok", false).put("error", "Tool is not in this MiniApp contract").toString()
         if (tool.approval != "none" && !requestNativeApproval(tool)) {
@@ -106,8 +114,33 @@ private class MiniAppNativeWebMcpBridge(
     }
 }
 
+private const val CAPABILITY_PROBE_TOOL = "offline.capabilities"
+private val CAPABILITY_PREFIXES = setOf("offline", "selection", "transfer", "scan", "hotspot", "update")
+
+/** What this host granted to the MiniApp, derived from its declared tool contract. */
+private fun miniAppCapabilityAnswer(tools: Collection<MiniAppToolContract>): JSONObject {
+    val capabilities = tools
+        .map { it.name.substringBefore('.').lowercase() }
+        .filter { it in CAPABILITY_PREFIXES }
+        .distinct()
+        .sorted()
+    return JSONObject()
+        .put("contract", "fabushi.miniapp.tools.v1")
+        .put("platform", "android")
+        .put("capabilities", JSONArray(capabilities))
+        .put("targetPools", JSONArray())
+}
+
 private fun toolContractJson(plugin: MarketplacePlugin): String {
     val rows = JSONArray()
+    // The probe is part of the injected contract so the page can discover what it was
+    // granted before calling anything; callTool answers it without a native runtime hop.
+    rows.put(
+        JSONObject()
+            .put("name", CAPABILITY_PROBE_TOOL)
+            .put("description", "Report which capabilities this host granted to the MiniApp.")
+            .put("readOnlyHint", true),
+    )
     for (tool in plugin.tools) {
         rows.put(
             JSONObject()
