@@ -1014,7 +1014,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8295, 9450),
+            (8258, 9412, 8296, 9451),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
@@ -2182,6 +2182,11 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         module = load_generator()
         spec = module.BACKGROUND_COMPLETION_SOURCE_SPECS["source/packages/constants/system-notification.ts"]
         self.assertIn("system-notification.ts@06b02de059b028a3f8dd5e4f78fc1a27b4b92349", spec["source_owner"])
+        self.assertEqual(
+            spec["symbols"],
+            ["SYSTEM_NOTIFICATION_TAG", "SYSTEM_NOTIFICATION_OPEN_TAG", "SYSTEM_NOTIFICATION_CLOSE_TAG"],
+        )
+        self.assertIn("derives its open/close literals from that tag", spec["source_owner"])
         self.assertIn("background-task-completion.ts@f7c2bd46d2b06a48c774f70905efa915779fdb8b", spec["source_owner"])
         self.assertIn("background-task-completion-action-handler.ts@", spec["source_owner"])
         self.assertIn("source/packages/agent/index.ts@", spec["source_owner"])
@@ -2190,6 +2195,10 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("synthetic", spec["source_owner"])
         self.assertEqual(spec["disposition"], "android-adapted")
         self.assertEqual(spec["production_target"], "source/host/src/extensions/transcript/completion_revivals.rs")
+        self.assertIn(
+            "source/packages/constants/src/system_notification.rs::tests::wrapper_is_recognizable_without_matching_partial_tags",
+            spec["focused_tests"],
+        )
 
     def test_constants_structured_log_contract_is_enforced_by_host_and_exact_head_workflow(self):
         host = (ROOT / "source" / "host" / "src" / "android_structured_log_spill.rs").read_text(encoding="utf-8")

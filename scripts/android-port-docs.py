@@ -48,8 +48,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9450
-EXPECTED_TRACKED_NON_TREE_COUNT = 8295
+EXPECTED_TREE_ENTRY_COUNT = 9451
+EXPECTED_TRACKED_NON_TREE_COUNT = 8296
 PRIOR_TREE_ENTRY_COUNT = 9443
 PRIOR_TRACKED_NON_TREE_COUNT = 8288
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
@@ -69,8 +69,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = 'c4226fc2017853f20492d730dfbe6f25b4eb9fb9'
-EXPECTED_DESKTOP_TREE = 'b55a71bba37fdba271dc1bc353bcfc2de602ace0'
+EXPECTED_DESKTOP_COMMIT = '60fabff3240cb91f16456d0fd9b40b450078a931'
+EXPECTED_DESKTOP_TREE = 'c3078d31f3811f417c096d4c8f99eeffcd68708e'
 PRIOR_DESKTOP_COMMIT = '0ecf132681845231b597ece11bc5f979a9a8f0cc'
 PRIOR_DESKTOP_TREE = 'af3eb1b18ea3b6c80aa8359623e07f473f251c5b'
 PRIOR_BASELINE_PARENT_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
@@ -380,10 +380,15 @@ BACKGROUND_COMPLETION_SOURCE_SPECS = {
         'disposition': 'android-adapted',
     },
     'source/packages/constants/system-notification.ts': {
-        'symbols': ['SYSTEM_NOTIFICATION_TAG'],
+        'symbols': [
+            'SYSTEM_NOTIFICATION_TAG',
+            'SYSTEM_NOTIFICATION_OPEN_TAG',
+            'SYSTEM_NOTIFICATION_CLOSE_TAG',
+        ],
         'source_owner': (
             'Desktop source/packages/constants/system-notification.ts@06b02de059b028a3f8dd5e4f78fc1a27b4b92349 '
-            'declares the canonical system_notification tag/open/close literals. Its direct shipping consumer '
+            'declares the canonical SYSTEM_NOTIFICATION_TAG and derives its open/close literals from that tag. '
+            'The verified direct shipping consumer '
             'source/packages/agent/actions/background-task-completion.ts@f7c2bd46d2b06a48c774f70905efa915779fdb8b '
             'imports SYSTEM_NOTIFICATION_TAG and renders BackgroundCompletionsPrompt with that section title; '
             'source/packages/agent/actions/background-task-completion-action-handler.ts@'
@@ -407,6 +412,7 @@ BACKGROUND_COMPLETION_SOURCE_SPECS = {
         'production_target': 'source/host/src/extensions/transcript/completion_revivals.rs',
         'test_target': 'source/host/tests/android_background_completion_shipping_contract.rs',
         'focused_tests': [
+            'source/packages/constants/src/system_notification.rs::tests::wrapper_is_recognizable_without_matching_partial_tags',
             'source/host/tests/android_background_completion_shipping_contract.rs::background_completion_formatter_uses_canonical_system_notification_wrapper',
             'source/android-host-jni/src/lib.rs::tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host',
         ],
