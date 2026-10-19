@@ -1,2 +1,0 @@
-pub const TRANSCRIPT_FORMAT_VERSION: u32 = 1;
-pub const MAX_TRACE_RECORD_BYTES: usize = 4 * 1024 * 1024;
