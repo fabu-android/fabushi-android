@@ -1,9 +1,10 @@
 use flate2::read::GzDecoder;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::fs::File;
+use std::collections::BTreeMap;
+use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const BOX_STORE_PACK_INDEX_KEY: &str = "packs/index.json";
 pub const BOX_STORE_PACKS_PREFIX: &str = "packs";
@@ -21,12 +22,25 @@ pub struct PackEntry { pub id: String, pub bytes: u64, pub members: Vec<PackMemb
 #[serde(rename_all = "camelCase")]
 pub struct PackIndex { pub version: u64, pub max_vmtime: u64, pub packs: Vec<PackEntry> }
 
+/// Reuses a single verified file descriptor for each content-addressed pack during one
+/// hydration pass, avoiding a full-pack hash for every member restored from that pack.
+#[derive(Default)]
+pub struct PackRestoreCache {
+    verified_files: BTreeMap<(PathBuf, String), File>,
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 fn clen_bound(size: u64) -> u64 { size + 4_096 + size.div_ceil(512) }
 fn valid_member(member: &PackMember) -> bool {
-    !member.sha.is_empty() && member.size <= PACK_MEMBER_MAX_BYTES && member.clen <= clen_bound(member.size)
+    is_sha256(&member.sha) && member.size <= PACK_MEMBER_MAX_BYTES && member.clen <= clen_bound(member.size)
 }
 fn valid_pack(pack: &PackEntry) -> bool {
-    if pack.id.is_empty() || pack.bytes > PACK_OBJECT_MAX_BYTES { return false; }
+    // Desktop pack IDs are SHA-256 of the entire uploaded pack object. Enforce that
+    // content-addressed shape before using an ID as a local filesystem component.
+    if !is_sha256(&pack.id) || pack.bytes > PACK_OBJECT_MAX_BYTES { return false; }
     let mut total=0u64;
     for member in &pack.members {
         if !valid_member(member) { return false; }
@@ -40,9 +54,30 @@ fn valid_pack(pack: &PackEntry) -> bool {
 }
 fn sha256(bytes:&[u8])->String { let d=Sha256::digest(bytes); d.iter().map(|b|format!("{b:02x}")).collect() }
 
-pub fn read_pack_blob(store_dir:&Path, sha:&str, expected_size:u64) -> Result<Option<Vec<u8>>,String> {
+fn sha256_file(file: &mut File) -> Result<String, String> {
+    file.seek(SeekFrom::Start(0)).map_err(|error| error.to_string())?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer).map_err(|error| error.to_string())?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    file.seek(SeekFrom::Start(0)).map_err(|error| error.to_string())?;
+    Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+pub fn read_pack_blob(
+    store_dir: &Path,
+    sha: &str,
+    expected_size: u64,
+    cache: &mut PackRestoreCache,
+) -> Result<Option<Vec<u8>>, String> {
     let index_path=store_dir.join(BOX_STORE_PACK_INDEX_KEY);
     if !index_path.exists() { return Ok(None); }
+    if !is_sha256(sha) { return Err("invalid requested object digest".into()); }
     let index_bytes=std::fs::read(&index_path).map_err(|e|e.to_string())?;
     if index_bytes.len() as u64 > PACK_INDEX_MAX_BYTES { return Err("pack index exceeds byte cap".into()); }
     let index:PackIndex=serde_json::from_slice(&index_bytes).map_err(|_|"invalid pack index".to_string())?;
@@ -51,10 +86,26 @@ pub fn read_pack_blob(store_dir:&Path, sha:&str, expected_size:u64) -> Result<Op
     for pack in &index.packs {
         let Some(member)=pack.members.iter().find(|m|m.sha==sha && m.size==expected_size) else { continue; };
         let path=store_dir.join(BOX_STORE_PACKS_PREFIX).join(&pack.id);
-        if !path.exists() { continue; }
-        let metadata=std::fs::metadata(&path).map_err(|e|e.to_string())?;
-        if metadata.len() != pack.bytes { continue; }
-        let mut file=File::open(path).map_err(|e|e.to_string())?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.to_string()),
+        };
+        if !metadata.file_type().is_file() || metadata.len() != pack.bytes { continue; }
+        let key = (store_dir.to_path_buf(), pack.id.clone());
+        if !cache.verified_files.contains_key(&key) {
+            let mut file = File::open(&path).map_err(|error| error.to_string())?;
+            let opened_metadata = file.metadata().map_err(|error| error.to_string())?;
+            if !opened_metadata.is_file() || opened_metadata.len() != pack.bytes { continue; }
+            if sha256_file(&mut file)? != pack.id {
+                return Err("pack content digest mismatch".into());
+            }
+            cache.verified_files.insert(key.clone(), file);
+        }
+        let Some(file) = cache.verified_files.get_mut(&key) else { continue; };
+        if file.metadata().map_err(|error| error.to_string())?.len() != pack.bytes {
+            return Err("pack size changed after verification".into());
+        }
         file.seek(SeekFrom::Start(member.offset)).map_err(|e|e.to_string())?;
         let clen=usize::try_from(member.clen).map_err(|_|"pack member compressed length overflow".to_string())?;
         let mut compressed=vec![0u8;clen];
@@ -66,4 +117,92 @@ pub fn read_pack_blob(store_dir:&Path, sha:&str, expected_size:u64) -> Result<Op
         return Ok(Some(bytes));
     }
     Ok(None)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::{write::GzEncoder, Compression};
+    use std::{fs as test_fs, io::Write};
+    use tempfile::tempdir;
+
+    fn write_index(root: &Path, id: &str, pack_bytes: usize, payload: &[u8]) {
+        let index = serde_json::json!({
+            "version": 1,
+            "maxVmtime": 1,
+            "packs": [{
+                "id": id,
+                "bytes": pack_bytes as u64,
+                "members": [{
+                    "sha": sha256(payload),
+                    "size": payload.len() as u64,
+                    "offset": 0,
+                    "clen": pack_bytes as u64,
+                    "vmtime": 1
+                }]
+            }]
+        });
+        test_fs::write(
+            root.join(BOX_STORE_PACK_INDEX_KEY),
+            serde_json::to_vec(&index).unwrap(),
+        ).unwrap();
+    }
+
+    fn compressed(payload: &[u8]) -> Vec<u8> {
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(payload).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[test]
+    fn rejects_non_content_addressed_pack_ids_before_path_access() {
+        let root = tempdir().unwrap();
+        test_fs::create_dir_all(root.path().join(BOX_STORE_PACKS_PREFIX)).unwrap();
+        let payload = b"safe";
+        write_index(root.path(), "../outside", 4, payload);
+        let mut cache = PackRestoreCache::default();
+        let error = read_pack_blob(root.path(), &sha256(payload), payload.len() as u64, &mut cache)
+            .unwrap_err();
+        assert_eq!(error, "invalid pack index");
+    }
+
+    #[test]
+    fn verifies_content_addressed_pack_once_and_restores_member() {
+        let root = tempdir().unwrap();
+        let packs = root.path().join(BOX_STORE_PACKS_PREFIX);
+        test_fs::create_dir_all(&packs).unwrap();
+        let payload = b"verified packed object";
+        let bytes = compressed(payload);
+        let id = sha256(&bytes);
+        test_fs::write(packs.join(&id), &bytes).unwrap();
+        write_index(root.path(), &id, bytes.len(), payload);
+        let mut cache = PackRestoreCache::default();
+        assert_eq!(
+            read_pack_blob(root.path(), &sha256(payload), payload.len() as u64, &mut cache).unwrap(),
+            Some(payload.to_vec()),
+        );
+        assert_eq!(
+            read_pack_blob(root.path(), &sha256(payload), payload.len() as u64, &mut cache).unwrap(),
+            Some(payload.to_vec()),
+        );
+    }
+
+    #[test]
+    fn rejects_pack_file_whose_digest_does_not_match_its_index_id() {
+        let root = tempdir().unwrap();
+        let packs = root.path().join(BOX_STORE_PACKS_PREFIX);
+        test_fs::create_dir_all(&packs).unwrap();
+        let payload = b"verified packed object";
+        let bytes = compressed(payload);
+        let id = sha256(&bytes);
+        let mut corrupt = bytes.clone();
+        corrupt[0] ^= 0x01;
+        test_fs::write(packs.join(&id), &corrupt).unwrap();
+        write_index(root.path(), &id, bytes.len(), payload);
+        let mut cache = PackRestoreCache::default();
+        let error = read_pack_blob(root.path(), &sha256(payload), payload.len() as u64, &mut cache)
+            .unwrap_err();
+        assert_eq!(error, "pack content digest mismatch");
+    }
 }

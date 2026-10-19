@@ -9,7 +9,7 @@ use crate::box_store_hydration::{
     COPY_IN_STUCK_THRESHOLD_MS, INCOMPLETE_LEGACY_HYDRATE_REASON,
 };
 use crate::box_store_workspace_ignore::{load_workspace_ignore, WorkspaceIgnore};
-use crate::box_store_pack_restore::read_pack_blob;
+use crate::box_store_pack_restore::{read_pack_blob, PackRestoreCache};
 use crate::server::{
     RemoteBackendCancelOutcome, RemoteBackendReconcileOutcome, RemoteBackendStartOutcome,
     RemoteExecutionBackend, RemoteRequestIdentity,
@@ -664,6 +664,7 @@ impl RemoteBoxStoreBackend {
         )))?;
 
         let objects = source_dir.join(BOX_STORE_BLOBS_PREFIX);
+        let mut pack_restore_cache = PackRestoreCache::default();
         let mut restored = 0usize;
         let mut restored_bytes = 0u64;
         let authoritative_store_db_ids = if legacy_reconciliation {
@@ -702,7 +703,7 @@ impl RemoteBoxStoreBackend {
                     let payload = if object.exists() {
                         read_bounded_file(&object)?
                     } else {
-                        read_pack_blob(&source_dir, sha, *size)
+                        read_pack_blob(&source_dir, sha, *size, &mut pack_restore_cache)
                             .map_err(|error| ActionError::SafeReject(format!(
                                 "read frozen pack object for {rel_path}: {error}"
                             )))?
