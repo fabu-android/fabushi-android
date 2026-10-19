@@ -45,11 +45,18 @@ internal class FabushiRemoteDeviceGateway(
         private const val SessionExpiryLeewayMs = 30_000L
         private const val HeartbeatIntervalMs = 25_000L
 
-        // Canonical Desktop b614 official-device registration exposes only the
-        // bounded read-only status tool. Richer Android semantic tools remain
-        // local product capabilities until the shared authority explicitly
-        // admits them to the official same-account device gateway.
-        internal val OfficialToolNames = listOf(FabushiAppAgentSurface.StatusTool)
+        // Current Desktop authority publishes the complete bounded App Agent Surface
+        // through the official same-account device gateway. Android preserves the
+        // same six semantic operations while keeping execution inside the native
+        // surface and account-scoped device session.
+        private val ReadOnlyOfficialToolNames = setOf(
+            FabushiAppAgentSurface.StatusTool,
+            FabushiAppAgentSurface.SnapshotTool,
+            FabushiAppAgentSurface.FindTool,
+            FabushiAppAgentSurface.WaitTool,
+            FabushiAppAgentSurface.AssertTool,
+        )
+        internal val OfficialToolNames = FabushiAppAgentSurface.ToolNames
 
         internal fun isUsableOfficialSession(
             accessToken: String,
@@ -81,6 +88,16 @@ internal class FabushiRemoteDeviceGateway(
             val preflight = message.optJSONObject("diskPreflight") ?: return false
             val targets = preflight.optJSONArray("targets") ?: return false
             return preflight.optString("impact") == "none" && targets.length() == 0
+        }
+
+        internal fun officialPreflightAllowed(toolName: String, message: JSONObject): Boolean {
+            if (toolName !in OfficialToolNames) return false
+            val hasPreflight = message.has("diskPreflight") && !message.isNull("diskPreflight")
+            return if (toolName in ReadOnlyOfficialToolNames) {
+                !hasPreflight || isReadOnlyOfficialPreflight(message)
+            } else {
+                isReadOnlyOfficialPreflight(message)
+            }
         }
 
         internal fun officialHeartbeatMessage(nowMs: Long): String =
@@ -184,7 +201,7 @@ internal class FabushiRemoteDeviceGateway(
                     .put("platform", "android")
                     .put("capabilities", JSONArray(OfficialToolNames))
                     .put("tools", toolDescriptors())
-                    .put("toolSchemaVersion", "fabushi-app-status-v1")
+                    .put("toolSchemaVersion", "fabushi-app-agent-surface-v1")
                     .put("generation", session.sessionId)
                     .put("leaseSeconds", LeaseSeconds)
                     .put("metadata", JSONObject(metadata))
@@ -267,8 +284,12 @@ internal class FabushiRemoteDeviceGateway(
             stopConnection("account-revoked-before-device-call")
             return
         }
-        if (!isReadOnlyOfficialPreflight(message)) {
-            sendRemoteError(webSocket, requestId, "device_call_requires_read_only_preflight")
+        if (toolName !in OfficialToolNames) {
+            sendRemoteError(webSocket, requestId, "unknown_fabushi_app_tool")
+            return
+        }
+        if (!officialPreflightAllowed(toolName, message)) {
+            sendRemoteError(webSocket, requestId, "device_call_preflight_rejected")
             return
         }
 
@@ -533,8 +554,8 @@ internal class FabushiRemoteDeviceGateway(
                     "annotations",
                     JSONObject()
                         .put("readOnlyHint", readOnly)
-                        .put("destructiveHint", false)
-                        .put("idempotentHint", true)
+                        .put("destructiveHint", !readOnly)
+                        .put("idempotentHint", readOnly)
                         .put("openWorldHint", false),
                 )
         val stateProperties = arrayOf<Pair<String, Any>>(
@@ -544,6 +565,11 @@ internal class FabushiRemoteDeviceGateway(
         )
         return JSONArray()
             .put(descriptor(FabushiAppAgentSurface.StatusTool, "Fabushi app agent-surface status", "Report whether the active Fabushi Android application exposes its structured semantic surface.", schema(), true))
+            .put(descriptor(FabushiAppAgentSurface.SnapshotTool, "Fabushi app snapshot", "Read the bounded semantic projection of the active native Fabushi screen.", schema("maxElements" to integerSchema()), true))
+            .put(descriptor(FabushiAppAgentSurface.FindTool, "Fabushi app find", "Find bounded native semantic elements by stable identity or visible properties.", schema("ref" to stringSchema(), "agentId" to stringSchema(), "role" to stringSchema(), "name" to stringSchema(), "text" to stringSchema(), "limit" to integerSchema()), true))
+            .put(descriptor(FabushiAppAgentSurface.ActionTool, "Fabushi app action", "Invoke one allowlisted native semantic action against an exact generation.", schema("generation" to integerSchema(), "ref" to stringSchema(), "agentId" to stringSchema(), "action" to stringSchema(), "value" to stringSchema(), required = listOf("generation", "action")), false))
+            .put(descriptor(FabushiAppAgentSurface.WaitTool, "Fabushi app wait", "Wait for a bounded semantic state without mutating the application.", schema(*stateProperties, "timeoutMs" to integerSchema()), true))
+            .put(descriptor(FabushiAppAgentSurface.AssertTool, "Fabushi app assert", "Assert a bounded semantic state without mutating the application.", schema(*stateProperties), true))
     }
 
     private fun statusJson(status: FabushiAppAgentSurface.Status) = JSONObject()
@@ -590,6 +616,7 @@ internal class FabushiRemoteDeviceGateway(
         "remote_command_identity_session_mismatch", "remote_command_identity_tool_mismatch",
         "remote_command_already_pending", "remote_command_outcome_unknown_reconcile_required",
         "device_agent_session_unavailable", "device_call_requires_read_only_preflight",
+        "device_call_preflight_rejected",
         "device_status_result_too_large", "device_status_result_contains_account_token",
         "remote_command_failed",
         "app_surface_target_hidden", "app_surface_target_disabled", "sensitive_app_surface_input_requires_secure_input",
