@@ -73,6 +73,11 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p fabushi-mahayana-host live_async_ask_question_ids_follow_the_current_transcript_window_and_fallback -- --nocapture 2>&1 | tee evidence/12-tool-call-fallback.log
+      - name: "Focused 13/13 auto-answer rejection does not consume receipt"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants ask_question::tests::structured_identity_round_trips_and_legacy_prefix_remains_recognized -- --exact 2>&1 | tee evidence/13-ask-question-auto-answer-constant.log
+          cargo test -p fabushi-mahayana-host auto_answer_rejection_does_not_consume_the_completion_receipt_identity -- --nocapture 2>&1 | tee evidence/13-ask-question-auto-answer-receipt.log
       - name: Record exact SHA
         if: always()
         run: |

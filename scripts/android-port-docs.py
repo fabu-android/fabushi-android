@@ -232,6 +232,42 @@ AGENT_CORE_INTERACTION_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
 AGENT_CORE_INTERACTION_PRODUCTION_STEP = 'Verify exact-HEAD agent-core interaction production owner'
 AGENT_CORE_INTERACTION_TEST_STEP = 'Test exact-HEAD agent-core interaction production owner'
 AGENT_CORE_INTERACTION_SOURCE_SPECS = {
+    'source/packages/constants/ask-question.ts': {
+        'symbols': [
+            'ASK_QUESTION_AUTO_ANSWER_MARKER',
+            'ASK_QUESTION_AUTO_ANSWER_REASON_PREFIX',
+            'ASK_QUESTION_AUTO_ANSWER_REASON_BODY',
+            'AskQuestionAutoAnswerIdentity',
+            'createAskQuestionAutoAnswerIdentity',
+            'formatAskQuestionAutoAnswerReason',
+            'parseAskQuestionAutoAnswerIdentity',
+            'isAskQuestionAutoAnswerReason',
+            'ASK_QUESTION_AUTO_ANSWER_REASON',
+        ],
+        'source_owner': (
+            'Desktop source/packages/constants/ask-question.ts owns canonical AskQuestion auto-answer '
+            'identity/reason detection; its shipping direct caller source/packages/agent/tools/core/ask-question/index.ts '
+            'uses isAskQuestionAutoAnswerReason in shouldReceiptAskQuestionResult so timeout/auto-answer rejection '
+            'does not create a completion receipt while success, error, and user rejection do'
+        ),
+        'android_owner': (
+            'Rust fabushi-constants ask_question identity contract is consumed directly by the shipping Host '
+            'SharedAgentInteractionOwner::settle_response/should_receipt_ask_question_result owner; completed '
+            'receipt deduplication stays account/process fenced and auto-answer rejection releases the original '
+            'tool-call identity without introducing a second receipt owner'
+        ),
+        'android_targets': [
+            'source/packages/constants/src/ask_question.rs',
+            'source/host/src/runner/agent_v1_interaction.rs',
+        ],
+        'production_target': 'source/host/src/runner/agent_v1_interaction.rs',
+        'test_target': 'source/host/src/runner/agent_v1_interaction.rs',
+        'focused_tests': [
+            'source/packages/constants/src/ask_question.rs::tests::structured_identity_round_trips_and_legacy_prefix_remains_recognized',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::auto_answer_rejection_does_not_consume_the_completion_receipt_identity',
+        ],
+        'disposition': 'android-adapted',
+    },
     'source/packages/agent-core/interaction-listener.ts': {
         'symbols': ['InteractionListener', 'flushPostTurnEndedWork', 'NoopInteractionListener', 'InteractionListenerStreamClosedError'],
         'source_owner': (
