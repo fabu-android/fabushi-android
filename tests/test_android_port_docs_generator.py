@@ -2178,6 +2178,16 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("17-hour", source["source_owner"])
         self.assertIn("AndroidStructuredLogSpill", source["android_owner"])
 
+    def test_system_notification_constant_mapping_names_real_desktop_callers(self):
+        module = load_generator()
+        spec = module.BACKGROUND_COMPLETION_SOURCE_SPECS["source/packages/constants/system-notification.ts"]
+        self.assertIn("system-notification.ts@06b02de059b028a3f8dd5e4f78fc1a27b4b92349", spec["source_owner"])
+        self.assertIn("background-task-completion.ts@f7c2bd46d2b06a48c774f70905efa915779fdb8b", spec["source_owner"])
+        self.assertIn("background-task-completion-action-handler.ts@", spec["source_owner"])
+        self.assertIn("synthetic", spec["source_owner"])
+        self.assertEqual(spec["disposition"], "android-adapted")
+        self.assertEqual(spec["production_target"], "source/host/src/extensions/transcript/completion_revivals.rs")
+
     def test_constants_structured_log_contract_is_enforced_by_host_and_exact_head_workflow(self):
         host = (ROOT / "source" / "host" / "src" / "android_structured_log_spill.rs").read_text(encoding="utf-8")
         workflow = (ROOT / ".github" / "workflows" / "grok-android-architecture.yml").read_text(encoding="utf-8")
@@ -2199,7 +2209,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         )
         self.assertIn("spill_rejects_far_future_records_under_desktop_skew_contract", host)
         self.assertIn("Verify exact-HEAD constants structured log production owner", workflow)
-        self.assertIn("Test exact-HEAD constants structured log production owner", workflow)
+        self.assertIn("Test exact-HEAD constants structured log replay and Android hardening", workflow)
         self.assertIn(
             "cargo test -p fabushi-constants structured_log::tests::replay_window_rejects_old_and_far_future_entries -- --exact",
             workflow,

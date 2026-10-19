@@ -382,8 +382,14 @@ BACKGROUND_COMPLETION_SOURCE_SPECS = {
     'source/packages/constants/system-notification.ts': {
         'symbols': ['SYSTEM_NOTIFICATION_TAG'],
         'source_owner': (
-            'Desktop system-notification constant owns the canonical system_notification prompt tag '
-            'consumed by shipping background completion and continuation callers'
+            'Desktop source/packages/constants/system-notification.ts@06b02de059b028a3f8dd5e4f78fc1a27b4b92349 '
+            'declares the canonical system_notification tag/open/close literals. Its direct shipping consumer '
+            'source/packages/agent/actions/background-task-completion.ts@f7c2bd46d2b06a48c774f70905efa915779fdb8b '
+            'imports SYSTEM_NOTIFICATION_TAG and renders BackgroundCompletionsPrompt with that section title; '
+            'source/packages/agent/actions/background-task-completion-action-handler.ts@'
+            'b7e8a047584480e79ec86644648e355bdf22a9b3 calls formatBackgroundCompletions, emits the synthetic '
+            'BACKGROUND_TASK_COMPLETION user-message update, creates the follow-up Agent turn, and appends the '
+            'same prompt into the root prompt executor'
         ),
         'android_owner': (
             'Rust fabushi-constants system_notification contract consumed by shipping '
