@@ -48,10 +48,10 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9431
-EXPECTED_TRACKED_NON_TREE_COUNT = 8276
-PRIOR_TREE_ENTRY_COUNT = 9427
-PRIOR_TRACKED_NON_TREE_COUNT = 8272
+EXPECTED_TREE_ENTRY_COUNT = 9433
+EXPECTED_TRACKED_NON_TREE_COUNT = 8278
+PRIOR_TREE_ENTRY_COUNT = 9431
+PRIOR_TRACKED_NON_TREE_COUNT = 8276
 PREDECESSOR_TREE_ENTRY_COUNT = 9412
 PREDECESSOR_TRACKED_NON_TREE_COUNT = 8258
 EXPECTED_PACKAGES_SOURCE_COUNT = 852
@@ -67,10 +67,10 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '12887d2a44ba450b13ca8390066a39418c52e0c9'
-EXPECTED_DESKTOP_TREE = '4bc59314edd76a51bd8f0e2d0654935d9e8ffb41'
-PRIOR_DESKTOP_COMMIT = 'ca618ae19add78872fcac7cb86bf8754a4ad7a55'
-PRIOR_DESKTOP_TREE = 'b0337f9bd17e5dc0c7165e89331aaf2748f52a74'
+EXPECTED_DESKTOP_COMMIT = 'eabb6acfb8734a9b57db8cfc47718c22aae6bed5'
+EXPECTED_DESKTOP_TREE = 'c4a7b95042a7015d3a55fb7da24c3286d879498f'
+PRIOR_DESKTOP_COMMIT = '12887d2a44ba450b13ca8390066a39418c52e0c9'
+PRIOR_DESKTOP_TREE = '4bc59314edd76a51bd8f0e2d0654935d9e8ffb41'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
 PREDECESSOR_DESKTOP_TREE = '72fc5f777012f6e7bf5f5f471b6f121fd3612bb2'
 
@@ -1897,9 +1897,9 @@ def _parse_persisted_source_inventory(
         require(manifest.get('source_commit') == desktop_commit,
                 'local source inventory manifest source_commit mismatch')
     require(manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT,
-            'local source authority does not preserve the 8276-entry current tracked non-tree inventory')
+            'local source authority does not preserve the 8278-entry current tracked non-tree inventory')
     require(len(source_rows) == EXPECTED_TRACKED_NON_TREE_COUNT,
-            f'local source inventory must contain 8276 unique rows, got {len(source_rows)}')
+            f'local source inventory must contain 8278 unique rows, got {len(source_rows)}')
     if expected_paths is not None:
         require(set(source_rows) == set(expected_paths),
                 'persisted source inventory paths do not match the current Desktop inventory')
@@ -3985,7 +3985,7 @@ def rebaseline() -> None:
     files = [item for item in entries if item['type'] != 'tree']
     require(files, 'Empty source inventory during rebaseline')
     require(current == EXPECTED_DESKTOP_COMMIT and tree_sha == EXPECTED_DESKTOP_TREE,
-            'Desktop authority commit/tree differs from the pinned 12887d2a/4bc59314 lock')
+            'Desktop authority commit/tree differs from the pinned eabb6acf/c4a7b950 lock')
     require(len(entries) == EXPECTED_TREE_ENTRY_COUNT,
             f'current Desktop recursive tree count mismatch: expected {EXPECTED_TREE_ENTRY_COUNT}, got {len(entries)}')
     require(len(files) == EXPECTED_TRACKED_NON_TREE_COUNT,
@@ -4416,7 +4416,7 @@ def audit_receipt() -> None:
     require(manifest.get('tree_entries') == EXPECTED_TREE_ENTRY_COUNT
             and manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT
             and manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
-            'receipt manifest does not preserve the current 8276/9431 authority boundary')
+            'receipt manifest does not preserve the current 8278/9433 authority boundary')
     tree_doc = docs['desktop_complete_tree']
     root_tree_doc = docs['desktop_root_tree']
     require(tree_doc.get('sha') == EXPECTED_DESKTOP_TREE
@@ -4498,7 +4498,7 @@ def audit_receipt() -> None:
     source_paths = [row.get('source_path') for row in source_rows]
     responsibility_ids = [row.get('responsibility_id') for row in responsibility_rows]
     require(len(source_paths) == len(set(source_paths)) == EXPECTED_TRACKED_NON_TREE_COUNT,
-            'receipt requires 8276 unique current source_path values')
+            'receipt requires 8278 unique current source_path values')
     require(len(responsibility_ids) == len(set(responsibility_ids)) == EXPECTED_RESPONSIBILITY_COUNT,
             'receipt requires 306 unique responsibility IDs')
     provenance = current_android_provenance()
