@@ -3,10 +3,11 @@ use crate::box_store_manifest_format::{
 };
 use crate::box_store_hydration::{
     apply_copy_in_download_owner, build_copy_in_watchdog_event,
-    remove_hydration_handoff_marker, resolve_copy_in_download_owner,
-    write_copy_in_status_throttled, write_hydration_handoff_marker,
-    CopyInProgress, CopyInTraceStatus, BOX_STORE_HYDRATION_HANDOFF_FILE_NAME,
-    COPY_IN_STUCK_THRESHOLD_MS, INCOMPLETE_LEGACY_HYDRATE_REASON,
+    is_hydration_handoff_manifest_path, remove_hydration_handoff_marker,
+    resolve_copy_in_download_owner, write_copy_in_status_throttled,
+    write_hydration_handoff_marker, CopyInProgress, CopyInTraceStatus,
+    BOX_STORE_HYDRATION_HANDOFF_FILE_NAME, COPY_IN_STUCK_THRESHOLD_MS,
+    INCOMPLETE_LEGACY_HYDRATE_REASON,
 };
 use crate::box_store_workspace_ignore::{load_workspace_ignore, WorkspaceIgnore};
 use crate::box_store_pack_restore::{read_pack_blob, PackRestoreCache};
@@ -1158,6 +1159,11 @@ fn collect_files(
             .map_err(|_| ActionError::SafeReject("snapshot path escaped category root".into()))?
             .to_path_buf();
         let rel_path = path_to_rel_string(&relative)?;
+        if category == "sand_data"
+            && is_hydration_handoff_manifest_path(&format!("home/box/sand-data/{rel_path}"))
+        {
+            continue;
+        }
         if metadata.file_type().is_symlink() {
             if ignore.is_some_and(|rules| rules.ignores(&rel_path)) {
                 continue;
@@ -1590,6 +1596,42 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_excludes_hydration_handoff_marker_and_temporary_variants() {
+        let config = config("handoff-snapshot-excluded");
+        fs::create_dir_all(&config.sand_data_root).unwrap();
+        fs::write(
+            config.sand_data_root.join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME),
+            b"complete\n",
+        )
+        .unwrap();
+        fs::write(
+            config
+                .sand_data_root
+                .join(format!("{BOX_STORE_HYDRATION_HANDOFF_FILE_NAME}.42.tmp")),
+            b"temporary",
+        )
+        .unwrap();
+        fs::write(config.sand_data_root.join("ordinary.txt"), b"keep").unwrap();
+
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        let _ = completed(
+            backend
+                .start(
+                    &identity("handoff-snapshot", "handoff-snapshot-request"),
+                    &request("handoff-snapshot", "snapshot", None),
+                )
+                .unwrap(),
+        );
+        let store_id = "123e4567-e89b-42d3-a456-426614174000";
+        let manifest = fs::read_to_string(config.store_root.join(store_id).join("manifest.json"))
+            .unwrap();
+        assert!(manifest.contains("ordinary.txt"));
+        assert!(!manifest.contains(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME));
+
+        let _ = fs::remove_dir_all(config.store_root.parent().unwrap());
+    }
+
+    #[test]
     fn snapshot_hydrate_and_cas_are_dedicated_and_conflict_safe() {
         let config = config("roundtrip");
         fs::create_dir_all(&config.workspace_root).unwrap();
@@ -1956,6 +1998,58 @@ mod tests {
         assert_eq!(primary["fullyHydrated"], false);
         assert_eq!(primary["entries"].as_object().unwrap().len(), 0);
         assert_eq!(fs::read_to_string(marker).unwrap(), "complete\n");
+    }
+
+    #[test]
+    fn incomplete_primary_accepts_exact_legacy_store_db_identity_coverage() {
+        let mut config = config("legacy-coverage-equal");
+        let legacy_root = config.store_root.parent().unwrap().join("legacy-store");
+        config.legacy_store_root = Some(legacy_root.clone());
+        let store_id = "123e4567-e89b-42d3-a456-426614174000";
+        let store_db_path = "home/box/sand-data/agents/agent-a/store.db";
+        write_frozen_file_entry(
+            &config.store_root,
+            store_id,
+            store_db_path,
+            b"primary-store-db",
+            false,
+        );
+        write_frozen_file_entry(
+            &legacy_root,
+            store_id,
+            store_db_path,
+            b"legacy-store-db",
+            true,
+        );
+
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        let output = completed(
+            backend
+                .start(
+                    &identity("legacy-equal", "legacy-equal-request"),
+                    &request("legacy-equal", "hydrate", None),
+                )
+                .unwrap(),
+        );
+        let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(parsed["hydrateSource"], "legacy");
+        assert_eq!(parsed["storeDbEntries"], 1);
+        assert_eq!(parsed["restoredStoreDbEntries"], 1);
+        assert_eq!(
+            fs::read(config.sand_data_root.join("agents/agent-a/store.db")).unwrap(),
+            b"legacy-store-db"
+        );
+        assert_eq!(
+            fs::read_to_string(
+                config
+                    .sand_data_root
+                    .join(BOX_STORE_HYDRATION_HANDOFF_FILE_NAME)
+            )
+            .unwrap(),
+            "complete\n"
+        );
+
+        let _ = fs::remove_dir_all(config.store_root.parent().unwrap());
     }
 
     #[test]

@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 pub const BOX_STORE_PACK_INDEX_KEY: &str = "packs/index.json";
 pub const BOX_STORE_PACKS_PREFIX: &str = "packs";
+pub const BOX_STORE_PACK_RETIRED_KEY: &str = "packs/retired.json";
 const PACK_INDEX_VERSION: u64 = 1;
 const PACK_MEMBER_MAX_BYTES: u64 = 8 * 1024 * 1024;
 const PACK_MAX_MEMBER_SIZE_SUM: u64 = 256 * 1024 * 1024;
@@ -327,4 +328,132 @@ mod tests {
             .unwrap_err();
         assert_eq!(error, "pack content digest mismatch");
     }
+    #[test]
+    fn retired_v1_metadata_does_not_expand_the_active_restore_index() {
+        let root = tempdir().unwrap();
+        let packs = root.path().join(BOX_STORE_PACKS_PREFIX);
+        test_fs::create_dir_all(&packs).unwrap();
+
+        let active_payload = b"active packed object";
+        let active_bytes = compressed(active_payload);
+        let active_id = sha256(&active_bytes);
+        test_fs::write(packs.join(&active_id), &active_bytes).unwrap();
+        write_index(root.path(), &active_id, active_bytes.len(), active_payload);
+
+        let retired_payload = b"retired packed object";
+        let retired_bytes = compressed(retired_payload);
+        let retired_id = sha256(&retired_bytes);
+        test_fs::write(packs.join(&retired_id), &retired_bytes).unwrap();
+        test_fs::write(
+            root.path().join(BOX_STORE_PACK_RETIRED_KEY),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "retired": [retired_id]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let mut cache = PackRestoreCache::default();
+        assert_eq!(
+            read_pack_blob(
+                root.path(),
+                &sha256(active_payload),
+                active_payload.len() as u64,
+                &mut cache,
+            )
+            .unwrap(),
+            Some(active_payload.to_vec()),
+        );
+        assert_eq!(
+            read_pack_blob(
+                root.path(),
+                &sha256(retired_payload),
+                retired_payload.len() as u64,
+                &mut cache,
+            )
+            .unwrap(),
+            None,
+        );
+    }
+
+    #[test]
+    fn rejects_pack_member_above_desktop_restore_threshold() {
+        let root = tempdir().unwrap();
+        let index = serde_json::json!({
+            "version": 1,
+            "maxVmtime": 1,
+            "packs": [{
+                "id": "a".repeat(64),
+                "bytes": 1,
+                "members": [{
+                    "sha": "b".repeat(64),
+                    "size": PACK_MEMBER_MAX_BYTES + 1,
+                    "offset": 0,
+                    "clen": 1,
+                    "vmtime": 1
+                }]
+            }]
+        });
+        let index_path = root.path().join(BOX_STORE_PACK_INDEX_KEY);
+        test_fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        test_fs::write(&index_path, serde_json::to_vec(&index).unwrap()).unwrap();
+
+        let error = read_pack_blob(root.path(), &"b".repeat(64), 0, &mut PackRestoreCache::default())
+            .unwrap_err();
+        assert_eq!(error, "invalid pack index");
+    }
+
+    #[test]
+    fn rejects_pack_object_above_desktop_restore_threshold() {
+        let root = tempdir().unwrap();
+        let index = serde_json::json!({
+            "version": 1,
+            "maxVmtime": 1,
+            "packs": [{
+                "id": "a".repeat(64),
+                "bytes": PACK_OBJECT_MAX_BYTES + 1,
+                "members": []
+            }]
+        });
+        let index_path = root.path().join(BOX_STORE_PACK_INDEX_KEY);
+        test_fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        test_fs::write(&index_path, serde_json::to_vec(&index).unwrap()).unwrap();
+
+        let error = read_pack_blob(root.path(), &"b".repeat(64), 0, &mut PackRestoreCache::default())
+            .unwrap_err();
+        assert_eq!(error, "invalid pack index");
+    }
+
+    #[test]
+    fn rejects_pack_member_size_sum_above_desktop_restore_threshold() {
+        let root = tempdir().unwrap();
+        let members = (0..33)
+            .map(|offset| serde_json::json!({
+                "sha": "b".repeat(64),
+                "size": PACK_MEMBER_MAX_BYTES,
+                "offset": offset,
+                "clen": 1,
+                "vmtime": 1
+            }))
+            .collect::<Vec<_>>();
+        let index = serde_json::json!({
+            "version": 1,
+            "maxVmtime": 1,
+            "packs": [{
+                "id": "a".repeat(64),
+                "bytes": 33,
+                "members": members
+            }]
+        });
+        let index_path = root.path().join(BOX_STORE_PACK_INDEX_KEY);
+        test_fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        test_fs::write(&index_path, serde_json::to_vec(&index).unwrap()).unwrap();
+
+        let error = read_pack_blob(root.path(), &"b".repeat(64), 0, &mut PackRestoreCache::default())
+            .unwrap_err();
+        assert_eq!(error, "invalid pack index");
+    }
+
+
 }
