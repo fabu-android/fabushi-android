@@ -267,6 +267,29 @@ mod tests {
         assert_eq!(error, "pack index exceeds byte cap");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_pack_index_without_following_external_metadata() {
+        let root = tempdir().unwrap();
+        let external = tempdir().unwrap();
+        let external_index = external.path().join(BOX_STORE_PACK_INDEX_KEY);
+        std::fs::create_dir_all(external_index.parent().unwrap()).unwrap();
+        std::fs::write(
+            &external_index,
+            br#"{"version":1,"maxVmtime":1,"packs":[]}"#,
+        )
+        .unwrap();
+
+        let index_path = root.path().join(BOX_STORE_PACK_INDEX_KEY);
+        std::fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&external_index, &index_path).unwrap();
+
+        let mut cache = PackRestoreCache::default();
+        let error = read_pack_blob(root.path(), &sha256(b"payload"), 7, &mut cache)
+            .unwrap_err();
+        assert_eq!(error, "pack index is not a regular file");
+    }
+
     #[test]
     fn rejects_pack_file_whose_digest_does_not_match_its_index_id() {
         let root = tempdir().unwrap();
