@@ -404,7 +404,7 @@ jobs:
           assert cloud_agent_row['package_semantic_coverage_status'] == 'complete'
           assert cloud_agent_path not in coverage_gaps
           assert cloud_agent_row['mapping_status'] == 'semantic'
-          assert cloud_agent_row['android_disposition'] == 'android-adapted'
+          assert cloud_agent_row['disposition'] == 'android-adapted'
           assert 'source/packages/constants/src/cloud_agent.rs' in cloud_agent_row['android_targets']
           assert 'source/host/src/runner/android_system_prompt.rs' in cloud_agent_row['android_targets']
           assert 'source/box-exec-daemon/src/cloud_agent_production.rs' in cloud_agent_row['android_targets']
