@@ -33,7 +33,8 @@ fn external_box_runner_hydrates_frozen_manifests_with_legacy_reconciliation_pack
         "primary V2 store.db coverage is below the legacy source",
         "legacy source has no store.db identities to validate V2",
         "mark_primary_legacy_hydration_incomplete",
-        "read_pack_blob(&source_dir, sha, *size)",
+        "let mut pack_restore_cache = PackRestoreCache::default();",
+        "read_pack_blob(&source_dir, sha, *size, &mut pack_restore_cache)",
         "remove_hydration_handoff_marker",
         "write_hydration_handoff_marker",
         "write_copy_in_status_throttled",
@@ -66,4 +67,7 @@ fn external_box_runner_hydrates_frozen_manifests_with_legacy_reconciliation_pack
     assert!(pack.contains("pub fn read_pack_blob"));
     assert!(pack.contains("BOX_STORE_PACK_INDEX_KEY"));
     assert!(pack.contains("GzDecoder"));
+    assert!(pack.contains("is_sha256(&pack.id)"));
+    assert!(pack.contains("pack content digest mismatch"));
+    assert!(pack.contains("symlink_metadata"));
 }
