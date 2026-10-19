@@ -145,7 +145,10 @@ jobs:
       - name: Verify exact-HEAD official-device registration owner
         run: |
           set -euo pipefail
-          grep -Fq 'internal val OfficialToolNames = listOf(FabushiAppAgentSurface.StatusTool)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'internal val OfficialToolNames = FabushiAppAgentSurface.ToolNames' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'private val ReadOnlyOfficialToolNames = setOf(' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq '.put("toolSchemaVersion", "fabushi-app-agent-surface-v1")' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'officialPreflightAllowed(toolName, message)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
           grep -Fq '.put("capabilities", JSONArray(OfficialToolNames))' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
           grep -Fq 'require(toolName in OfficialToolNames)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
           grep -Fq 'parseAgentSession(coordinator.authDeviceAgentSession())' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
