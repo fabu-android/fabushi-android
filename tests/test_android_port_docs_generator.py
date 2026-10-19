@@ -2186,7 +2186,9 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             spec["symbols"],
             ["SYSTEM_NOTIFICATION_TAG", "SYSTEM_NOTIFICATION_OPEN_TAG", "SYSTEM_NOTIFICATION_CLOSE_TAG"],
         )
-        self.assertIn("derives its open/close literals from that tag", spec["source_owner"])
+        self.assertIn("Current Desktop production directly consumes only SYSTEM_NOTIFICATION_TAG", spec["source_owner"])
+        self.assertIn("OPEN/CLOSE constants have no direct production caller", spec["source_owner"])
+        self.assertIn("Android implementation detail", spec["android_owner"])
         self.assertIn("background-task-completion.ts@f7c2bd46d2b06a48c774f70905efa915779fdb8b", spec["source_owner"])
         self.assertIn("background-task-completion-action-handler.ts@", spec["source_owner"])
         self.assertIn("source/packages/agent/index.ts@", spec["source_owner"])

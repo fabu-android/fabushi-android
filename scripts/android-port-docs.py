@@ -387,8 +387,10 @@ BACKGROUND_COMPLETION_SOURCE_SPECS = {
         ],
         'source_owner': (
             'Desktop source/packages/constants/system-notification.ts@06b02de059b028a3f8dd5e4f78fc1a27b4b92349 '
-            'declares the canonical SYSTEM_NOTIFICATION_TAG and derives its open/close literals from that tag. '
-            'The verified direct shipping consumer '
+            'declares the canonical SYSTEM_NOTIFICATION_TAG and derives SYSTEM_NOTIFICATION_OPEN_TAG/CLOSE_TAG '
+            'as source declarations. Current Desktop production directly consumes only SYSTEM_NOTIFICATION_TAG; '
+            'the OPEN/CLOSE constants have no direct production caller, while the prompt renderer materializes '
+            'the matching section tags from the title. The verified direct shipping consumer '
             'source/packages/agent/actions/background-task-completion.ts@f7c2bd46d2b06a48c774f70905efa915779fdb8b '
             'imports SYSTEM_NOTIFICATION_TAG and renders BackgroundCompletionsPrompt with that section title; '
             'source/packages/agent/actions/background-task-completion-action-handler.ts@'
@@ -400,7 +402,9 @@ BACKGROUND_COMPLETION_SOURCE_SPECS = {
         ),
         'android_owner': (
             'Rust fabushi-constants system_notification contract consumed by shipping '
-            'Host completion_revivals formatting'
+            'Host completion_revivals formatting. Android explicitly stores the open/close literals to render '
+            'the same shipping wire shape; this is an Android implementation detail, not evidence that the '
+            'Desktop OPEN/CLOSE constants themselves have production callers'
         ),
         'android_targets': [
             'source/packages/constants/src/system_notification.rs',
