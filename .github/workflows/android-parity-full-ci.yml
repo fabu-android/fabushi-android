@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 # Keep only the newest exact HEAD runnable for this workflow/PR. Superseded SHAs are
 # predecessor evidence and must not consume the runner queue ahead of current acceptance.
@@ -412,20 +413,13 @@ jobs:
             "android-exact-head-apks-${SOURCE_SHA}" > evidence/emulator/provenance.txt
       - name: Prepare bounded authenticated App session
         env:
-          FABUSHI_CI_TEST_USERNAME: ${{ secrets.FABUSHI_CI_TEST_USERNAME }}
-          FABUSHI_CI_TEST_PASSWORD: ${{ secrets.FABUSHI_CI_TEST_PASSWORD }}
-          FABUSHI_API_BASE_URL: ${{ vars.FABUSHI_API_BASE_URL || 'https://api.ombhrum.com' }}
-          FABUSHI_CI_AUTH_BASE_URL: ${{ vars.FABUSHI_CI_AUTH_BASE_URL || 'https://mahayana-platform.bhrumom.workers.dev' }}
+          FABUSHI_CI_ACCOUNT_FACTORY_URL: ${{ vars.FABUSHI_CI_ACCOUNT_FACTORY_URL || 'https://fabushi-ci-isolated-accounts.bhrumom.workers.dev' }}
           DEVICE_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}-interactive
           FABUSHI_CI_ACCOUNT_SESSION_FILE: ${{ runner.temp }}/fabushi-android-ci/session.json
+          FABUSHI_CI_ACCOUNT_LEASE_FILE: ${{ runner.temp }}/fabushi-android-ci/lease.json
         run: |
           set -euo pipefail
-          if [ -z "$FABUSHI_CI_TEST_USERNAME" ] || [ -z "$FABUSHI_CI_TEST_PASSWORD" ]; then
-            printf 'status=blocked\nreason=missing-protected-account-secrets\nhead=%s\n' "$SOURCE_SHA" > evidence/emulator/account-prerequisite.txt
-            echo "protected Android acceptance requires FABUSHI_CI_TEST_USERNAME and FABUSHI_CI_TEST_PASSWORD" >&2
-            exit 1
-          fi
-          printf 'status=available\nhead=%s\n' "$SOURCE_SHA" > evidence/emulator/account-prerequisite.txt
+          printf 'status=account-factory\nhead=%s\n' "$SOURCE_SHA" > evidence/emulator/account-prerequisite.txt
           python scripts/prepare_ci_android_account_session.py
           test -s "$FABUSHI_CI_ACCOUNT_SESSION_FILE"
           test "$(stat -c '%a' "$FABUSHI_CI_ACCOUNT_SESSION_FILE")" = 600
@@ -452,6 +446,11 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim
           working-directory: mobile/android
           script: bash ../../scripts/android_emulator_acceptance.sh
+      - name: Clean up Account Factory lease
+        if: always()
+        env:
+          FABUSHI_CI_ACCOUNT_LEASE_FILE: ${{ runner.temp }}/fabushi-android-ci/lease.json
+        run: python scripts/cleanup_ci_android_account_lease.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

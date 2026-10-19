@@ -38,6 +38,97 @@ def normalize_base_url(value: str) -> str:
     return value
 
 
+def factory_base_url(env: dict[str, str] | os._Environ[str] | None = None) -> str:
+    values = os.environ if env is None else env
+    return normalize_base_url(
+        values.get("FABUSHI_CI_ACCOUNT_FACTORY_URL")
+        or "https://fabushi-ci-isolated-accounts.bhrumom.workers.dev"
+    )
+
+
+def oidc_token(*, audience: str, env: dict[str, str] | os._Environ[str] | None = None) -> str:
+    values = os.environ if env is None else env
+    request_url = values.get("ACTIONS_ID_TOKEN_REQUEST_URL", "").strip()
+    request_token = values.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "").strip()
+    if not request_url or not request_token:
+        raise RuntimeError("GitHub Actions OIDC is required for the isolated account factory")
+    parsed = urllib.parse.urlsplit(request_url)
+    if parsed.scheme != "https" or parsed.hostname != "token.actions.githubusercontent.com":
+        raise RuntimeError("GitHub Actions OIDC endpoint is invalid")
+    query = urllib.parse.parse_qs(parsed.query)
+    query["audience"] = [audience]
+    url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urllib.parse.urlencode(query, doseq=True), ""))
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={"Accept": "application/json", "Authorization": f"Bearer {request_token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            body = response.read(16 * 1024 + 1)
+    except Exception as error:
+        raise RuntimeError("GitHub Actions OIDC token request failed") from error
+    try:
+        value = json.loads(body.decode("utf-8"))
+    except Exception as error:
+        raise RuntimeError("GitHub Actions OIDC response was invalid") from error
+    token = value.get("value") if isinstance(value, dict) else None
+    if not isinstance(token, str) or not (24 <= len(token) <= 16 * 1024) or any(ch.isspace() for ch in token):
+        raise RuntimeError("GitHub Actions OIDC token was invalid")
+    return token
+
+
+def allocate_factory_lease(*, base_url: str, scenario_id: str, token: str) -> dict:
+    payload = json.dumps({"scenarioId": scenario_id}).encode("utf-8")
+    request = urllib.request.Request(
+        f"{normalize_base_url(base_url)}/v1/leases",
+        data=payload,
+        method="POST",
+        headers={"Accept": "application/json", "Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            body = response.read(MAX_SESSION_BYTES + 1)
+            if response.status != 201:
+                raise RuntimeError("Account Factory lease allocation was rejected")
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"Account Factory lease allocation failed with HTTP {error.code}") from None
+    except urllib.error.URLError as error:
+        raise RuntimeError("Account Factory lease allocation transport failed") from error
+    try:
+        value = json.loads(body.decode("utf-8"))
+    except Exception as error:
+        raise RuntimeError("Account Factory lease response was invalid") from error
+    if not isinstance(value, dict) or not isinstance(value.get("leaseId"), str) or not isinstance(value.get("accounts"), list):
+        raise RuntimeError("Account Factory lease response was incomplete")
+    return value
+
+
+def lease_session(lease: dict) -> tuple[dict, str, str]:
+    accounts = lease.get("accounts")
+    if len(accounts) < 1 or not isinstance(accounts[0], dict):
+        raise RuntimeError("Account Factory returned no test account")
+    account = accounts[0]
+    sessions = account.get("sessions")
+    if not isinstance(sessions, list) or not sessions or not isinstance(sessions[0], dict):
+        raise RuntimeError("Account Factory returned no account session")
+    session = sessions[0]
+    session_device_id = _credential(session.get("deviceId"))
+    if not session_device_id:
+        raise RuntimeError("Account Factory session has no device identity")
+    user = session.get("user") if isinstance(session.get("user"), dict) else {}
+    source = {
+        **session,
+        "username": account.get("username") or user.get("username"),
+        "userId": user.get("id"),
+        "user": user,
+        "provider": session.get("provider") or "official",
+        "ciRunner": False,
+        "deviceId": session_device_id,
+    }
+    return source, lease["leaseId"], session_device_id
+
+
 def ci_auth_base_url(env: dict[str, str] | os._Environ[str] | None = None) -> str:
     values = os.environ if env is None else env
     return normalize_base_url(
@@ -199,17 +290,11 @@ def main() -> int:
     device_id = _required("DEVICE_ID")
     run_id = _required("GITHUB_RUN_ID")
     run_attempt = _required("GITHUB_RUN_ATTEMPT")
-    username = _required("FABUSHI_CI_TEST_USERNAME")
-    password = os.environ.get("FABUSHI_CI_TEST_PASSWORD", "")
-    if not password:
-        raise RuntimeError("FABUSHI_CI_TEST_PASSWORD is required")
-
-    source = login(
-        base_url=ci_auth_base_url(),
-        username=username,
-        password=password,
-        device_id=device_id,
-    )
+    factory_url = factory_base_url()
+    token = oidc_token(audience=factory_url)
+    scenario_id = f"android-{run_id}-{run_attempt}"
+    lease = allocate_factory_lease(base_url=factory_url, scenario_id=scenario_id, token=token)
+    source, lease_id, session_device_id = lease_session(lease)
     exported = bounded_session(
         source,
         device_id=device_id,
@@ -217,6 +302,12 @@ def main() -> int:
         run_attempt=run_attempt,
     )
     atomic_private_write(output, exported)
+    lease_file = pathlib.Path(_required("FABUSHI_CI_ACCOUNT_LEASE_FILE")).resolve()
+    atomic_private_write(lease_file, {"leaseId": lease_id, "factoryUrl": factory_url})
+    github_env = os.environ.get("GITHUB_ENV")
+    if github_env:
+        with open(github_env, "a", encoding="utf-8") as handle:
+            handle.write(f"DEVICE_ID={session_device_id}\n")
     print("Prepared bounded refresh-token-free Fabushi Android CI application session.")
     return 0
 

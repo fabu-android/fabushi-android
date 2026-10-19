@@ -53,6 +53,26 @@ class PrepareCiAndroidAccountSessionTest(unittest.TestCase):
                 run_attempt="2",
                 now=1_000_000,
             )
+
+    def test_factory_lease_session_uses_factory_bound_device_identity(self):
+        source, lease_id, device_id = MODULE.lease_session({
+            "leaseId": "a" * 64,
+            "accounts": [{
+                "username": "ci_account_a",
+                "sessions": [{
+                    "accessToken": "a" * 40,
+                    "refreshToken": "r" * 40,
+                    "tokenType": "Bearer",
+                    "accessTokenExpiresAt": 1_003_600,
+                    "deviceId": "ci-device-a-0",
+                    "user": {"id": "user-a", "username": "ci_account_a"},
+                }],
+            }],
+        })
+        self.assertEqual("a" * 64, lease_id)
+        self.assertEqual("ci-device-a-0", device_id)
+        self.assertEqual("ci-device-a-0", source["deviceId"])
+        self.assertEqual("user-a", source["userId"])
         source = self.source()
         source["accessTokenExpiresAt"] = 1_000_000 + MODULE.MAX_LIFETIME_SECONDS + 1
         with self.assertRaises(ValueError):
