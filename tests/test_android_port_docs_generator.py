@@ -1133,17 +1133,17 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         prior_commit, prior_tree = "c" * 40, "b" * 40
         intermediate_commit, intermediate_tree = "7" * 40, "6" * 40
         predecessor_commit, predecessor_tree = "a" * 40, "9" * 40
-        with patch.object(module, "EXPECTED_DESKTOP_COMMIT", current_commit), \\
-             patch.object(module, "EXPECTED_DESKTOP_TREE", current_tree), \\
-             patch.object(module, "PRIOR_DESKTOP_COMMIT", prior_commit), \\
-             patch.object(module, "PRIOR_DESKTOP_TREE", prior_tree), \\
-             patch.object(module, "PERSISTED_INTERMEDIATE_DESKTOP_COMMIT", intermediate_commit), \\
-             patch.object(module, "PERSISTED_INTERMEDIATE_DESKTOP_TREE", intermediate_tree), \\
-             patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", predecessor_commit), \\
-             patch.object(module, "PREDECESSOR_DESKTOP_TREE", predecessor_tree), \\
-             patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \\
-             patch.object(module, "EXPECTED_TREE_ENTRY_COUNT", 3), \\
-             patch.object(module, "PERSISTED_INTERMEDIATE_TRACKED_NON_TREE_COUNT", 2), \\
+        with patch.object(module, "EXPECTED_DESKTOP_COMMIT", current_commit), \
+             patch.object(module, "EXPECTED_DESKTOP_TREE", current_tree), \
+             patch.object(module, "PRIOR_DESKTOP_COMMIT", prior_commit), \
+             patch.object(module, "PRIOR_DESKTOP_TREE", prior_tree), \
+             patch.object(module, "PERSISTED_INTERMEDIATE_DESKTOP_COMMIT", intermediate_commit), \
+             patch.object(module, "PERSISTED_INTERMEDIATE_DESKTOP_TREE", intermediate_tree), \
+             patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", predecessor_commit), \
+             patch.object(module, "PREDECESSOR_DESKTOP_TREE", predecessor_tree), \
+             patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \
+             patch.object(module, "EXPECTED_TREE_ENTRY_COUNT", 3), \
+             patch.object(module, "PERSISTED_INTERMEDIATE_TRACKED_NON_TREE_COUNT", 2), \
              patch.object(module, "PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT", 3):
             baseline = {
                 "desktop_repository": "bhrumom/fabushi-desktop",
@@ -1158,7 +1158,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 {"source_path": "source/file.rs", "source_commit": intermediate_commit,
                  "source_blob_sha": "2" * 40, "source_type": "blob", "source_mode": "100755"},
             ]
-            ledger_text = "".join(json.dumps(row, sort_keys=True) + "\\n" for row in rows)
+            ledger_text = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
             manifest = {
                 "authority_current": True,
                 "desktop_commit": intermediate_commit,
