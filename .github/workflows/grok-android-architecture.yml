@@ -1,0 +1,272 @@
+name: Grok Android Architecture
+
+on:
+  push:
+    branches:
+      - spec/grok-bot-018-android-parity-20260922
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep only the newest exact HEAD runnable for this workflow/PR. Superseded SHAs are
+# predecessor evidence and must not consume the runner queue ahead of current acceptance.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  agent-kv-exact-head-evidence:
+    name: agent-kv-exact-head-evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: android-actions/setup-android@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Install Android NDK for agent-kv production evidence
+        run: |
+          set -euo pipefail
+          NDK_PACKAGE='ndk;28.2.13676358'
+          NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          NDK_CLANG="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          for attempt in 1 2 3; do
+            if sdkmanager "$NDK_PACKAGE" && test -x "$NDK_CLANG"; then
+              exit 0
+            fi
+            rm -rf "$NDK_HOME" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          exit 1
+      - name: Install cargo-ndk for agent-kv production evidence
+        run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
+      - name: Build exact-HEAD agent-kv production owners
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          set -euo pipefail
+          rm -rf evidence/agent-kv-jni
+          cargo ndk -t arm64-v8a -o evidence/agent-kv-jni build --release -p fabushi-android-host-jni
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+      - name: Test exact-HEAD agent-kv production owners
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-agent-kv --all-targets
+      - name: Verify exact-HEAD agent-core interaction production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'pub struct InteractionQuery' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'pub struct InteractionResponse' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'pub struct SharedAgentInteractionOwner' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'pub fn drain_post_turn' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'fabushi_constants::ask_question::is_ask_question_auto_answer_reason' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'fn should_receipt_ask_question_result' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'pub fn is_ask_question_auto_answer_reason' source/packages/constants/src/ask_question.rs
+          grep -Fq 'native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host' source/android-host-jni/src/lib.rs
+      - name: Test exact-HEAD agent-core interaction production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host generated_compatible_interaction_query_response_wire_roundtrip -- --nocapture
+          cargo test -p fabushi-mahayana-host run_async_completion_is_enqueued_and_privacy_projection_is_redacted -- --nocapture
+          cargo test -p fabushi-mahayana-host stale_account_and_process_epoch_responses_fail_closed -- --nocapture
+          cargo test -p fabushi-mahayana-host android_json_host_settles_generated_ask_question_response_with_exact_fence -- --nocapture
+          cargo test -p fabushi-mahayana-host android_json_host_rejects_stale_interaction_response_after_account_or_process_change -- --nocapture
+          cargo test -p fabushi-constants ask_question::tests::structured_identity_round_trips_and_legacy_prefix_remains_recognized -- --exact
+          cargo test -p fabushi-mahayana-host auto_answer_rejection_does_not_consume_the_completion_receipt_identity -- --nocapture
+          cargo test -p fabushi-android-host-jni native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host -- --nocapture
+      - name: Verify exact-HEAD background completion production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'use fabushi_constants::system_notification::wrap_system_notification;' source/host/src/extensions/transcript/completion_revivals.rs
+          grep -Fq 'wrap_system_notification(&neutralize_background_task_detail_close_tags(&body))' source/host/src/extensions/transcript/completion_revivals.rs
+          grep -Fq '"text":build_shell_revival_prompt(completions)' source/host/src/android_json_runtime.rs
+          grep -Fq '"requestSource":"background-shell-revival"' source/host/src/android_json_runtime.rs
+          grep -Fq '"text":build_subagent_revival_prompt(completions)' source/host/src/android_json_runtime.rs
+          grep -Fq '"requestSource":"cloud-agent-revival"' source/host/src/android_json_runtime.rs
+          grep -Fq 'runtime: AndroidJsonHost' source/android-host-jni/src/lib.rs
+      - name: Test exact-HEAD background completion production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host extensions::transcript::completion_revivals::tests::revival_prompts_use_canonical_system_notification_and_neutralize_nested_tags -- --exact
+          cargo test -p fabushi-mahayana-host --test android_background_completion_shipping_contract -- --nocapture
+          cargo test -p fabushi-android-host-jni tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host -- --exact
+
+      - name: Verify exact-HEAD cloud-agent artifact prompt owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::cloud_agent::CLOUD_AGENT_ARTIFACTS_DIR' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'sections.push(render_android_walkthrough_artifacts_system_prompt(None));' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'build_android_root_system_instructions(' source/host/src/android_json_runtime.rs
+      - name: Test exact-HEAD cloud-agent artifact prompt owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_directory_uses_canonical_cloud_agent_fallback_and_normalizes_override -- --exact
+          cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_prompt_is_deduped_and_does_not_grant_capability -- --exact
+
+      - name: Verify exact-HEAD agent-store id production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::agent_store_ids::is_agent_store_source_id' source/host/src/remote_box_store_sync.rs
+          grep -Fq 'fabushi_constants::agent_store_ids::is_agent_store_source_id' source/box-exec-daemon/src/box_store_sync_backend.rs
+          grep -Fq 'fabushi_constants::agent_store_ids::is_agent_store_source_id' source/box-exec-daemon/src/box_store_backend.rs
+      - name: Test exact-HEAD agent-store id production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants agent_store_ids::tests::validates_store_identifiers_fail_closed -- --exact
+          cargo test -p fabushi-mahayana-host remote_box_store_sync::tests::store_id_uses_canonical_agent_store_source_contract -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_sync_backend::tests::rejects_noncanonical_agent_store_source_id_before_executor -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::store_id_must_match_canonical_agent_store_source_contract -- --exact
+      - name: Test exact-HEAD Box Store Desktop restore and handoff parity
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::vacuum_preserves_desktop_retired_pack_metadata -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::retired_v1_metadata_does_not_expand_the_active_restore_index -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_member_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_object_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_member_size_sum_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_hydration::tests::hydration_marker_is_atomic_and_removable -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_hydration::tests::hydration_handoff_path_fences_temporary_marker_variants -- --exact
+
+      - name: Verify exact-HEAD constants composer production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::composer::text_size_allowed' source/host/src/composer_draft.rs
+          grep -Fq 'validate_prompt(prompt)?;' source/host/src/composer_draft.rs
+      - name: Test exact-HEAD constants composer production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants composer::tests::text_limit_is_inclusive -- --exact
+          cargo test -p fabushi-mahayana-host composer_draft::tests::prompt_size_limit_matches_desktop_composer_contract -- --exact
+      - name: Verify exact-HEAD constants structured log production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::structured_log::STRUCTURED_LOG_REPLAY_MAX_AGE_MS' source/host/src/android_structured_log_spill.rs
+          grep -Fq 'fabushi_constants::structured_log::structured_log_timestamp_allowed' source/host/src/android_structured_log_spill.rs
+      - name: Test exact-HEAD constants structured log production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants structured_log::tests::replay_window_rejects_old_and_far_future_entries -- --exact
+          cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::replay_age_matches_desktop_structured_log_contract -- --exact
+          cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::spill_rejects_far_future_records_under_desktop_skew_contract -- --exact
+      - name: Verify exact-HEAD official-device registration owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'internal val OfficialToolNames = FabushiAppAgentSurface.ToolNames' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'private val ReadOnlyOfficialToolNames = setOf(' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq '.put("toolSchemaVersion", "fabushi-app-agent-surface-v1")' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'officialPreflightAllowed(toolName, message)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq '.put("capabilities", JSONArray(OfficialToolNames))' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'require(toolName in OfficialToolNames)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'parseAgentSession(coordinator.authDeviceAgentSession())' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'isReadOnlyOfficialPreflight(message)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'account-changed-during-device-call' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'officialHeartbeatMessage(System.currentTimeMillis())' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+      - name: Test exact-HEAD official-device registration owner
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.FabushiAppAgentSurfaceTest --tests com.ombhrum.fabushi.RemoteCommandJournalTest
+
+      - name: Verify exact-HEAD automation schedule production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          cmp source/host/src/automation_schedule.rs source/host/src/automations/automation_schedule.rs
+          grep -Fq 'use crate::automation_schedule::{compute_next_run_at, normalize_schedule};' source/host/src/automation_runtime.rs
+          grep -Fq 'compute_next_run_at(&spec.schedule, anchor as f64, fallback_time_zone)' source/host/src/automation_runtime.rs
+          grep -Fq 'use super::automation_schedule::{compute_next_run_at,normalize_schedule};' source/host/src/automations/automation_store.rs
+      - name: Test exact-HEAD automation schedule production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host --test automation_schedule_contract frozen_next_run_contract_supports_every_alias_timezone_and_explicit_cron_timezone -- --exact
+          cargo test -p fabushi-mahayana-host automation_runtime::tests::schedule_is_normalized_and_next_run_is_host_owned -- --exact
+
+      - name: Verify exact-HEAD MCP tool timeout production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_android_mcp_core::config::mcp_tool_call_timeout::DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS' source/host/src/runner/mcp_meta_routed_tools.rs
+          grep -Fq 'pub const LONG_TOOL_TIMEOUT_MS: u64 = DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS;' source/host/src/runner/mcp_meta_routed_tools.rs
+      - name: Test exact-HEAD MCP tool timeout production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-mcp-core config::mcp_tool_call_timeout::tests::desktop_default_and_legacy_timeouts_are_one_hour -- --exact
+          cargo test -p fabushi-mahayana-host runner::mcp_meta_routed_tools::tests::long_timeout_tier_uses_desktop_mcp_default_contract -- --exact
+
+      - name: Verify exact-HEAD client-side tool v2 relay production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'use crate::client_side_tool_v2_relay::{ClientSideToolV2Relay, RendererToolEvent};' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'client_side_tool_v2: ClientSideToolV2Relay' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn accept_client_side_tool_v2_wire' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn replay_client_side_tool_v2' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn retire_client_side_tool_v2_for_account_switch' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq '"coordinator.clientSideToolV2.accept"' source/android-host-jni/src/lib.rs
+          grep -Fq 'self.coordinator.accept_client_side_tool_v2_wire(event.clone())' source/android-host-jni/src/lib.rs
+          grep -Fq '"coordinator.clientSideToolV2.replay"' source/android-host-jni/src/lib.rs
+          grep -Fq 'self.coordinator.replay_client_side_tool_v2()' source/android-host-jni/src/lib.rs
+      - name: Test exact-HEAD client-side tool v2 relay production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::malformed_wire_version_account_base64_type_and_identity_fail_closed -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::duplicate_out_of_order_inconsistent_result_and_stale_epoch_are_rejected -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::reset_account_switch_and_serialized_reopen_replay_are_fenced -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator main::tests::client_side_tool_v2_replay_survives_process_reopen_and_account_retirement_is_durable -- --exact
+          cargo test -p fabushi-android-host-jni tests::client_side_tool_v2_wire_ingress_is_reachable_only_through_rust_coordinator -- --exact
+
+  parity-ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Validate complete file-level parity ledger
+        run: python scripts/check_grok_android_parity.py
+      - name: Test architecture checker
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+  rust-runtime-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test Android-owned Coordinator Host Runner foundation
+        run: cargo test --workspace --all-targets
+
+  existing-android-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run existing Android unit tests
+        working-directory: mobile/android
+        run: ./gradlew testCiAcceptanceUnitTest

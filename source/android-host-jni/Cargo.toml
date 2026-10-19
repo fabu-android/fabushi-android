@@ -1,0 +1,22 @@
+[package]
+name = "fabushi-android-host-jni"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "mahayana_app_host"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+ci-account-session-import = ["fabushi-mahayana-host/ci-account-session-import"]
+
+[dependencies]
+fabushi-android-shared = { path = "../shared" }
+fabushi-mahayana-agent-coordinator = { path = "../mahayana-agent-coordinator" }
+fabushi-mahayana-host = { path = "../host" }
+serde_json = "1"
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

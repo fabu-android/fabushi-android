@@ -1,0 +1,15 @@
+[package]
+name = "fabushi-android-shared"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+fabushi-constants = { path = "../packages/constants" }
+url = "2"
+serde_json = "1"
+urlencoding = "2"
+httpdate = "1"
