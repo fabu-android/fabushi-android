@@ -1127,6 +1127,63 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 )
 
 
+    def test_rebaseline_boundary_accepts_persisted_intermediate_authority(self):
+        module = load_generator()
+        current_commit, current_tree = "d" * 40, "e" * 40
+        prior_commit, prior_tree = "c" * 40, "b" * 40
+        intermediate_commit, intermediate_tree = "7" * 40, "6" * 40
+        predecessor_commit, predecessor_tree = "a" * 40, "9" * 40
+        with patch.object(module, "EXPECTED_DESKTOP_COMMIT", current_commit), \\
+             patch.object(module, "EXPECTED_DESKTOP_TREE", current_tree), \\
+             patch.object(module, "PRIOR_DESKTOP_COMMIT", prior_commit), \\
+             patch.object(module, "PRIOR_DESKTOP_TREE", prior_tree), \\
+             patch.object(module, "PERSISTED_INTERMEDIATE_DESKTOP_COMMIT", intermediate_commit), \\
+             patch.object(module, "PERSISTED_INTERMEDIATE_DESKTOP_TREE", intermediate_tree), \\
+             patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", predecessor_commit), \\
+             patch.object(module, "PREDECESSOR_DESKTOP_TREE", predecessor_tree), \\
+             patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \\
+             patch.object(module, "EXPECTED_TREE_ENTRY_COUNT", 3), \\
+             patch.object(module, "PERSISTED_INTERMEDIATE_TRACKED_NON_TREE_COUNT", 2), \\
+             patch.object(module, "PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT", 3):
+            baseline = {
+                "desktop_repository": "bhrumom/fabushi-desktop",
+                "desktop_commit": current_commit,
+                "desktop_root_tree": current_tree,
+                "desktop_main_before": prior_commit,
+                "desktop_main_after": current_commit,
+            }
+            rows = [
+                {"source_path": "AGENTS.md", "source_commit": intermediate_commit,
+                 "source_blob_sha": "1" * 40, "source_type": "blob", "source_mode": "100644"},
+                {"source_path": "source/file.rs", "source_commit": intermediate_commit,
+                 "source_blob_sha": "2" * 40, "source_type": "blob", "source_mode": "100755"},
+            ]
+            ledger_text = "".join(json.dumps(row, sort_keys=True) + "\\n" for row in rows)
+            manifest = {
+                "authority_current": True,
+                "desktop_commit": intermediate_commit,
+                "source_commit": intermediate_commit,
+                "desktop_root_tree": intermediate_tree,
+                "desktop_main_before": intermediate_commit,
+                "desktop_main_after": intermediate_commit,
+                "tree_entries": 3,
+                "tracked_non_tree_entries": 2,
+                "authority_ledger_rows": 2,
+                "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
+            }
+            accepted = module._validate_rebaseline_boundary(
+                baseline, manifest, ledger_text, current_commit, current_tree, 3, 2
+            )
+            self.assertEqual([row["source_path"] for row in accepted], ["AGENTS.md", "source/file.rs"])
+
+            stale_lineage = dict(manifest)
+            stale_lineage["desktop_main_before"] = predecessor_commit
+            with self.assertRaisesRegex(ValueError, "persisted intermediate source manifest Desktop main lineage mismatch"):
+                module._validate_rebaseline_boundary(
+                    baseline, stale_lineage, ledger_text, current_commit, current_tree, 3, 2
+                )
+
+
     def test_predecessor_redirect_does_not_forward_bearer_and_uses_real_zip_magic(self):
         module = load_generator()
         endpoint = "https://api.github.com/repos/fabu-android/fabushi-android/actions/artifacts/123/zip"
