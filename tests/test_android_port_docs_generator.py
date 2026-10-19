@@ -1036,7 +1036,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8298, 9453),
+            (8258, 9412, 8299, 9454),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
@@ -2280,6 +2280,8 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("Test exact-HEAD auto-spillover usage UI replacement", workflow)
         self.assertIn("grep -n -F 'AUTO_SPILLOVER_UI_DEFAULTS'", workflow)
         self.assertIn("AUTO_SPILLOVER_MATCHES", workflow)
+        self.assertIn("ANDROID_AUTO_SPILLOVER_FILES", workflow)
+        self.assertIn("git grep -l -F 'AUTO_SPILLOVER_UI_DEFAULTS' -- source frontend mobile/android", workflow)
         self.assertIn("source/shared/node/experiments/experiment-config.gen.ts", workflow)
         self.assertIn("auto_spillover_ui_config", workflow)
         self.assertIn("cursor-experiments.ts", workflow)

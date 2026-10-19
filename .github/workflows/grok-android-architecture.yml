@@ -185,6 +185,11 @@ jobs:
           grep -Fq 'pub const AUTO_SPILLOVER_UI_DEFAULTS: AutoSpilloverUiDefaults = AutoSpilloverUiDefaults {' source/packages/constants/src/auto_spillover_ui.rs
           grep -Fq 'auto_title: "Cursor Models",' source/packages/constants/src/auto_spillover_ui.rs
           grep -Fq 'api_title: "Other Models",' source/packages/constants/src/auto_spillover_ui.rs
+          grep -Fq 'pub mod auto_spillover_ui;' source/packages/constants/src/lib.rs
+          mapfile -t ANDROID_AUTO_SPILLOVER_FILES < <(git grep -l -F 'AUTO_SPILLOVER_UI_DEFAULTS' -- source frontend mobile/android)
+          printf '%s\n' "${ANDROID_AUTO_SPILLOVER_FILES[@]}"
+          test "${#ANDROID_AUTO_SPILLOVER_FILES[@]}" -eq 1
+          test "${ANDROID_AUTO_SPILLOVER_FILES[0]}" = "source/packages/constants/src/auto_spillover_ui.rs"
           grep -Fq 'pub fn resolve_sand_usage_summary(&self) -> Result<Value, String> {' source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs
           grep -Fq 'DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH' source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs
           grep -Fq '"feature.account.usageSummary" => self.account_usage_summary(),' source/host/src/android_json_runtime.rs
