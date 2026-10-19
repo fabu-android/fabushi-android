@@ -1005,7 +1005,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("declares only the default/min/max environment-setup resume-age policy literals", spec["source_owner"])
         self.assertIn("full-tree git-grep", spec["source_owner"])
         self.assertIn("has no current Desktop production import/caller", spec["source_owner"])
-        self.assertIn("does not fabricate a production consumer", spec["android_owner"])
+        self.assertIn("No production caller is invented", spec["android_owner"])
         self.assertEqual(spec["production_target"], "source/host/src/runner/remote_routed_tools.rs")
         self.assertEqual(spec["test_target"], "source/packages/constants/src/environment_setup.rs")
         self.assertEqual(spec["disposition"], "android-adapted")
