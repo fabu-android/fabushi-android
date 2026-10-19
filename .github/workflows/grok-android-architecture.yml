@@ -164,7 +164,10 @@ jobs:
           test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
           grep -Fq 'fabushi_constants::structured_log::STRUCTURED_LOG_REPLAY_MAX_AGE_MS' source/host/src/android_structured_log_spill.rs
           grep -Fq 'fabushi_constants::structured_log::structured_log_timestamp_allowed' source/host/src/android_structured_log_spill.rs
-      - name: Test exact-HEAD constants structured log production owner
+          grep -Fq 'self.schedule_structured_log_ship();' source/host/src/android_json_runtime.rs
+          grep -Fq 'let receipt = backend.submit_structured_logs(&batch);' source/host/src/android_json_runtime.rs
+          grep -Fq 'pub fn submit_structured_logs(' source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs
+      - name: Test exact-HEAD constants structured log replay and Android hardening
         run: |
           set -euo pipefail
           cargo test -p fabushi-constants structured_log::tests::replay_window_rejects_old_and_far_future_entries -- --exact

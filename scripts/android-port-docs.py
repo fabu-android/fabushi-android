@@ -48,8 +48,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9448
-EXPECTED_TRACKED_NON_TREE_COUNT = 8293
+EXPECTED_TREE_ENTRY_COUNT = 9449
+EXPECTED_TRACKED_NON_TREE_COUNT = 8294
 PRIOR_TREE_ENTRY_COUNT = 9443
 PRIOR_TRACKED_NON_TREE_COUNT = 8288
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
@@ -69,8 +69,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '8a38c08ea0f09e7c6fe7e8d50f776a813611aa6a'
-EXPECTED_DESKTOP_TREE = 'b0b1a23529004d86b06fe0a62a43f6e184be2a35'
+EXPECTED_DESKTOP_COMMIT = 'ad03fb1c803d79ff1a90a6bed7a72a702623392b'
+EXPECTED_DESKTOP_TREE = 'eba79b6623a78d7e9d5bbd35a64e3dadf5ee3237'
 PRIOR_DESKTOP_COMMIT = '0ecf132681845231b597ece11bc5f979a9a8f0cc'
 PRIOR_DESKTOP_TREE = 'af3eb1b18ea3b6c80aa8359623e07f473f251c5b'
 PRIOR_BASELINE_PARENT_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
@@ -431,31 +431,49 @@ COMPOSER_CONSTANT_SOURCE_SPEC = {
 STRUCTURED_LOG_CONSTANT_SOURCE_PATH = 'source/packages/constants/structured-log.ts'
 STRUCTURED_LOG_CONSTANT_RESPONSIBILITY_ID = 'OBSERVABILITY-STRUCTURED-LOG-001'
 STRUCTURED_LOG_CONSTANT_PRODUCTION_STEP = 'Verify exact-HEAD constants structured log production owner'
-STRUCTURED_LOG_CONSTANT_TEST_STEP = 'Test exact-HEAD constants structured log production owner'
+STRUCTURED_LOG_CONSTANT_TEST_STEP = 'Test exact-HEAD constants structured log replay and Android hardening'
 STRUCTURED_LOG_CONSTANT_SOURCE_SPEC = {
     'symbols': [
         'STRUCTURED_LOG_REPLAY_MAX_AGE_MS',
         'STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS',
     ],
     'source_owner': (
-        'Desktop source/packages/constants/structured-log.ts owns the canonical 17-hour replay '
-        'window and 2-hour future timestamp skew contract'
+        'Desktop source/packages/constants/structured-log.ts@d848ec0619f1ca0f8e46e50ff5da47d6178f95fc '
+        'declares 17-hour replay and 2-hour future-timestamp constants only. Current Desktop shipping '
+        '17-hour replay enforcement is independently owned by '
+        'source/shared/observability/structured-log-transport.ts@742bffb8e5e9653b70798d63875cd5c4f775e935 '
+        'and source/host/src/extensions/telemetry/structured_log_telemetry.rs@'
+        '5c6cb25a4ec4f28a3f09127cb5bd358e0f4f325f; '
+        'STRUCTURED_LOG_FUTURE_TIMESTAMP_MAX_SKEW_MS has no current Desktop production caller'
     ),
     'android_owner': (
-        'Rust fabushi-constants structured-log policy consumed by the Host '
-        'AndroidStructuredLogSpill durable telemetry owner'
+        'Rust fabushi-constants structured-log policy is enforced by the Host '
+        'AndroidStructuredLogSpill durable telemetry owner and shipped by AndroidJsonHost through '
+        'CursorDashboardMcpAuthBackend. The 17-hour replay bound is Desktop-shipping-equivalent; '
+        'the 2-hour future-timestamp rejection is Android-adapted hardening, not Desktop shipping parity'
     ),
     'android_targets': [
         'source/packages/constants/src/structured_log.rs',
         'source/host/src/android_structured_log_spill.rs',
+        'source/host/src/android_json_runtime.rs',
+        'source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs',
     ],
-    'production_target': 'source/host/src/android_structured_log_spill.rs',
+    'production_target': 'source/host/src/android_json_runtime.rs',
     'test_target': 'source/host/src/android_structured_log_spill.rs',
     'focused_tests': [
         'source/packages/constants/src/structured_log.rs::tests::replay_window_rejects_old_and_far_future_entries',
         'source/host/src/android_structured_log_spill.rs::tests::replay_age_matches_desktop_structured_log_contract',
         'source/host/src/android_structured_log_spill.rs::tests::spill_rejects_far_future_records_under_desktop_skew_contract',
     ],
+    'platform_delta': (
+        'Desktop shipping enforces the 17-hour replay horizon but has no production consumer of the '
+        'declared 2-hour future-skew constant; Android deliberately enforces both bounds, with future-skew '
+        'rejection classified as Android-adapted hardening'
+    ),
+    'evidence_semantics': (
+        'Same-head CI evidence proves Android 17-hour replay wiring plus Android-adapted 2-hour '
+        'future-skew hardening; it must not be cited as evidence of Desktop 2-hour shipping enforcement'
+    ),
     'disposition': 'android-adapted',
 }
 
@@ -2740,6 +2758,8 @@ def _ensure_constants_structured_log_semantic_mapping(
         'android_targets': list(STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['android_targets']),
         'source_owner': STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['source_owner'],
         'android_owner': STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['android_owner'],
+        'platform_delta': STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['platform_delta'],
+        'evidence_semantics': STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['evidence_semantics'],
     })
     existing_sources[STRUCTURED_LOG_CONSTANT_SOURCE_PATH] = source
     item['desktop_sources'] = sorted(
@@ -2752,16 +2772,26 @@ def _ensure_constants_structured_log_semantic_mapping(
         if target not in raw_targets:
             raw_targets.append(target)
     item['android_target'] = raw_targets
-    note = (
+    item['android_disposition'] = STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['disposition']
+    stale_note = (
         'Desktop structured-log replay age/future-skew constants are semantically mapped to '
         'fabushi-constants and enforced by AndroidStructuredLogSpill before recovered telemetry '
         'can re-enter the shipper. Same-head production/test evidence is required for package closure.'
     )
+    note = (
+        'Desktop structured-log.ts is declaration-only for these constants: shipping 17-hour replay '
+        'enforcement lives in structured-log-transport.ts and structured_log_telemetry.rs, while the '
+        '2-hour future-skew declaration has no current Desktop production caller. AndroidStructuredLogSpill '
+        'preserves the 17-hour shipping behavior and additionally rejects timestamps beyond the declared '
+        '2-hour future horizon as Android-adapted hardening. Same-head production/test evidence proves the '
+        'Android wiring and hardening only; it does not prove Desktop 2-hour shipping parity.'
+    )
     notes = item.get('notes')
     if isinstance(notes, str):
-        if note not in notes:
-            item['notes'] = notes + ' ' + note
+        notes = notes.replace(stale_note, '').strip()
+        item['notes'] = (notes + ' ' + note).strip() if note not in notes else notes
     elif isinstance(notes, list):
+        notes[:] = [value for value in notes if value != stale_note]
         if note not in notes:
             notes.append(note)
     else:
@@ -3572,7 +3602,7 @@ def merge_responsibility_mapping(
             android['android_pr_head_sha'],
             production_step_name=STRUCTURED_LOG_CONSTANT_PRODUCTION_STEP,
             test_step_name=STRUCTURED_LOG_CONSTANT_TEST_STEP,
-            evidence_label='constants structured log',
+            evidence_label='constants structured log replay plus Android hardening',
         )
         if structured_evidence is not None:
             production_target = STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['production_target']
@@ -3601,20 +3631,21 @@ def merge_responsibility_mapping(
                 'run_attempt': structured_evidence['run_attempt'],
                 'run_conclusion': structured_evidence['run_conclusion'],
                 'result': 'passed',
+                'evidence_semantics': STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['evidence_semantics'],
             }
             structured_responsibility['production_evidence'].append({
                 **common,
                 'kind': 'production-wiring',
                 'workflow_step_name': structured_evidence['production_step_name'],
                 'workflow_step_number': structured_evidence['production_step_number'],
-                'evidence_ref': production_target + '#structured-log-replay-skew-production-owner',
+                'evidence_ref': production_target + '#structured-log-replay-production-and-android-hardening-owner',
             })
             structured_responsibility['test_evidence'].append({
                 **common,
                 'kind': 'focused-unit-test',
                 'workflow_step_name': structured_evidence['test_step_name'],
                 'workflow_step_number': structured_evidence['test_step_number'],
-                'evidence_ref': test_target + '#structured-log-replay-skew-focused-tests',
+                'evidence_ref': test_target + '#structured-log-replay-and-android-hardening-focused-tests',
                 'focused_tests': list(STRUCTURED_LOG_CONSTANT_SOURCE_SPEC['focused_tests']),
             })
         else:

@@ -997,12 +997,24 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                     module.load_predecessor_responsibility_mapping(path)
 
 
+    def test_structured_log_source_spec_distinguishes_declaration_shipping_and_android_hardening(self):
+        module = load_generator()
+        spec = module.STRUCTURED_LOG_CONSTANT_SOURCE_SPEC
+        self.assertIn("declares 17-hour replay and 2-hour future-timestamp constants only", spec["source_owner"])
+        self.assertIn("no current Desktop production caller", spec["source_owner"])
+        self.assertIn("Android-adapted hardening, not Desktop shipping parity", spec["android_owner"])
+        self.assertIn("structured-log-transport.ts@742bffb8e5e9653b70798d63875cd5c4f775e935", spec["source_owner"])
+        self.assertIn("structured_log_telemetry.rs@", spec["source_owner"])
+        self.assertEqual(spec["production_target"], "source/host/src/android_json_runtime.rs")
+        self.assertEqual(spec["disposition"], "android-adapted")
+        self.assertIn("must not be cited as evidence of Desktop 2-hour shipping enforcement", spec["evidence_semantics"])
+
     def test_rebaseline_boundary_distinguishes_historical_and_current_counts(self):
         module = load_generator()
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8293, 9448),
+            (8258, 9412, 8294, 9449),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
