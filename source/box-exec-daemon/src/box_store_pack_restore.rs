@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 pub const BOX_STORE_PACK_INDEX_KEY: &str = "packs/index.json";
 pub const BOX_STORE_PACKS_PREFIX: &str = "packs";
@@ -27,6 +28,9 @@ pub struct PackIndex { pub version: u64, pub max_vmtime: u64, pub packs: Vec<Pac
 #[derive(Default)]
 pub struct PackRestoreCache {
     verified_files: BTreeMap<(PathBuf, String), File>,
+    // The pack index is an immutable snapshot for one hydration pass. Reuse it
+    // across members just as the Desktop bulk-restore path does.
+    index: Option<(PathBuf, Arc<PackIndex>)>,
 }
 
 fn is_sha256(value: &str) -> bool {
@@ -69,19 +73,78 @@ fn sha256_file(file: &mut File) -> Result<String, String> {
     Ok(hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+fn load_pack_index(
+    store_dir: &Path,
+    cache: &mut PackRestoreCache,
+) -> Result<Option<Arc<PackIndex>>, String> {
+    let index_path = store_dir.join(BOX_STORE_PACK_INDEX_KEY);
+    if let Some((cached_path, index)) = cache.index.as_ref() {
+        if cached_path == &index_path {
+            return Ok(Some(Arc::clone(index)));
+        }
+    }
+
+    let metadata = match fs::symlink_metadata(&index_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error.to_string()),
+    };
+    if !metadata.file_type().is_file() {
+        return Err("pack index is not a regular file".into());
+    }
+    if metadata.len() > PACK_INDEX_MAX_BYTES {
+        return Err("pack index exceeds byte cap".into());
+    }
+
+    // Check the opened file too, then cap the read itself. Checking only the
+    // Vec length after fs::read would allocate an attacker-controlled file
+    // before enforcing PACK_INDEX_MAX_BYTES.
+    let file = File::open(&index_path).map_err(|error| error.to_string())?;
+    let opened_metadata = file.metadata().map_err(|error| error.to_string())?;
+    if !opened_metadata.is_file() {
+        return Err("pack index is not a regular file".into());
+    }
+    if opened_metadata.len() > PACK_INDEX_MAX_BYTES {
+        return Err("pack index exceeds byte cap".into());
+    }
+    let mut index_bytes = Vec::with_capacity(opened_metadata.len() as usize);
+    file.take(PACK_INDEX_MAX_BYTES.saturating_add(1))
+        .read_to_end(&mut index_bytes)
+        .map_err(|error| error.to_string())?;
+    if index_bytes.len() as u64 > PACK_INDEX_MAX_BYTES {
+        return Err("pack index exceeds byte cap".into());
+    }
+    if index_bytes.len() as u64 != opened_metadata.len() {
+        return Err("pack index changed while reading".into());
+    }
+
+    let index: PackIndex =
+        serde_json::from_slice(&index_bytes).map_err(|_| "invalid pack index".to_string())?;
+    if index.version != PACK_INDEX_VERSION || index.packs.iter().any(|pack| !valid_pack(pack)) {
+        return Err("invalid pack index".into());
+    }
+
+    let index = Arc::new(index);
+    cache.index = Some((index_path, Arc::clone(&index)));
+    Ok(Some(index))
+}
+
 pub fn read_pack_blob(
     store_dir: &Path,
     sha: &str,
     expected_size: u64,
     cache: &mut PackRestoreCache,
 ) -> Result<Option<Vec<u8>>, String> {
-    let index_path=store_dir.join(BOX_STORE_PACK_INDEX_KEY);
-    if !index_path.exists() { return Ok(None); }
-    if !is_sha256(sha) { return Err("invalid requested object digest".into()); }
-    let index_bytes=std::fs::read(&index_path).map_err(|e|e.to_string())?;
-    if index_bytes.len() as u64 > PACK_INDEX_MAX_BYTES { return Err("pack index exceeds byte cap".into()); }
-    let index:PackIndex=serde_json::from_slice(&index_bytes).map_err(|_|"invalid pack index".to_string())?;
-    if index.version != PACK_INDEX_VERSION || index.packs.iter().any(|p|!valid_pack(p)) { return Err("invalid pack index".into()); }
+    let index_path = store_dir.join(BOX_STORE_PACK_INDEX_KEY);
+    if !index_path.exists() {
+        return Ok(None);
+    }
+    if !is_sha256(sha) {
+        return Err("invalid requested object digest".into());
+    }
+    let Some(index) = load_pack_index(store_dir, cache)? else {
+        return Ok(None);
+    };
     let _ = index.max_vmtime;
     for pack in &index.packs {
         let Some(member)=pack.members.iter().find(|m|m.sha==sha && m.size==expected_size) else { continue; };
@@ -182,10 +245,26 @@ mod tests {
             read_pack_blob(root.path(), &sha256(payload), payload.len() as u64, &mut cache).unwrap(),
             Some(payload.to_vec()),
         );
+        // A hydration pass uses one index snapshot; member lookups must not
+        // re-read and re-parse the index for every manifest entry.
+        test_fs::write(root.path().join(BOX_STORE_PACK_INDEX_KEY), b"{invalid").unwrap();
         assert_eq!(
             read_pack_blob(root.path(), &sha256(payload), payload.len() as u64, &mut cache).unwrap(),
             Some(payload.to_vec()),
         );
+    }
+
+    #[test]
+    fn rejects_oversized_pack_index_before_reading_it() {
+        let root = tempdir().unwrap();
+        let index_path = root.path().join(BOX_STORE_PACK_INDEX_KEY);
+        test_fs::create_dir_all(index_path.parent().unwrap()).unwrap();
+        let file = File::create(&index_path).unwrap();
+        file.set_len(PACK_INDEX_MAX_BYTES + 1).unwrap();
+
+        let mut cache = PackRestoreCache::default();
+        let error = read_pack_blob(root.path(), &"a".repeat(64), 0, &mut cache).unwrap_err();
+        assert_eq!(error, "pack index exceeds byte cap");
     }
 
     #[test]
