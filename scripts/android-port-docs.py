@@ -566,29 +566,32 @@ CLIENT_SIDE_TOOL_V2_TEST_TARGETS = {
 }
 
 
+APP_AGENT_SURFACE_E2E_SOURCE_PATH = 'desktop/e2e/app-agent-surface.spec.ts'
+APP_AGENT_SURFACE_E2E_RESPONSIBILITY_ID = 'APP-AGENT-SURFACE-ANDROID-001'
+APP_AGENT_SURFACE_E2E_SOURCE_SPEC = {
+    'symbols': [
+        'packaged Fabushi publishes a generation-safe semantic App MCP over the private loopback bridge',
+        'snapshot/find/action/assert generation fencing',
+        'sensitive-value redaction and web fallback registry',
+    ],
+    'source_owner': (
+        'Desktop packaged App Agent Surface E2E owner proving the shipping private loopback App MCP '
+        'and semantic six-tool contract rather than a renderer-only fixture'
+    ),
+    'android_owner': (
+        'Native FabushiAppAgentSurface semantic state/action owner plus account-scoped '
+        'FabushiRemoteDeviceGateway transport; Coordinator/Host remain canonical business-state owners'
+    ),
+    'android_targets': [
+        'source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt',
+        'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+        'mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiAppAgentSurfaceTest.kt',
+    ],
+    'disposition': 'not-applicable-with-replacement',
+}
+
+
 OFFICIAL_DEVICE_SOURCE_SPECS = {
-    'desktop/e2e/app-agent-surface.spec.ts': {
-        'responsibility_id': 'APP-AGENT-SURFACE-ANDROID-001',
-        'symbols': [
-            'packaged Fabushi publishes a generation-safe semantic App MCP over the private loopback bridge',
-            'snapshot/find/action/assert generation fencing',
-            'sensitive-value redaction and web fallback registry',
-        ],
-        'source_owner': (
-            'Desktop packaged App Agent Surface E2E owner proving the shipping private loopback App MCP '
-            'and semantic six-tool contract rather than a renderer-only fixture'
-        ),
-        'android_owner': (
-            'Native FabushiAppAgentSurface semantic state/action owner plus account-scoped '
-            'FabushiRemoteDeviceGateway transport; Coordinator/Host remain canonical business-state owners'
-        ),
-        'android_targets': [
-            'source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt',
-            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
-            'mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiAppAgentSurfaceTest.kt',
-        ],
-        'disposition': 'not-applicable-with-replacement',
-    },
     'source/electron-main/account/auth-service-contract.ts': {
         'responsibility_id': 'ACCOUNT-SESSION-001',
         'symbols': ['FabushiDeviceAgentSession', 'AuthServicePort.deviceAgentSession'],
@@ -3005,6 +3008,54 @@ def _attach_client_side_tool_v2_exact_head_evidence(
             'focused_tests': list(focused_tests),
         })
 
+def _ensure_app_agent_surface_e2e_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach the packaged Desktop App Agent E2E anchor without coupling official-device fixtures."""
+    source_object = new_by_path.get(APP_AGENT_SURFACE_E2E_SOURCE_PATH)
+    if source_object is None:
+        return
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == APP_AGENT_SURFACE_E2E_RESPONSIBILITY_ID
+    ]
+    require(len(matches) == 1, 'App Agent Surface E2E mapping requires exactly one ' + APP_AGENT_SURFACE_E2E_RESPONSIBILITY_ID)
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'App Agent Surface E2E Desktop source has invalid blob/mode/type',
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(APP_AGENT_SURFACE_E2E_SOURCE_PATH, {})
+    source.update({
+        'path': APP_AGENT_SURFACE_E2E_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(APP_AGENT_SURFACE_E2E_SOURCE_SPEC['symbols']),
+        'android_targets': list(APP_AGENT_SURFACE_E2E_SOURCE_SPEC['android_targets']),
+        'source_owner': APP_AGENT_SURFACE_E2E_SOURCE_SPEC['source_owner'],
+        'android_owner': APP_AGENT_SURFACE_E2E_SOURCE_SPEC['android_owner'],
+    })
+    existing_sources[APP_AGENT_SURFACE_E2E_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(existing_sources.values(), key=lambda value: value.get('path', ''))
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in APP_AGENT_SURFACE_E2E_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+
+
 def _ensure_official_device_registration_semantic_mapping(
     responsibilities: list[dict],
     new_by_path: dict[str, dict],
@@ -3220,6 +3271,8 @@ def merge_responsibility_mapping(
         _ensure_automation_schedule_semantic_mapping(responsibilities, new_by_path, current)
     if all(path in new_by_path for path in CLIENT_SIDE_TOOL_V2_SOURCE_SPECS):
         _ensure_client_side_tool_v2_semantic_mapping(responsibilities, new_by_path, current)
+    if APP_AGENT_SURFACE_E2E_SOURCE_PATH in new_by_path:
+        _ensure_app_agent_surface_e2e_semantic_mapping(responsibilities, new_by_path, current)
     if any(path in new_by_path for path in OFFICIAL_DEVICE_SOURCE_SPECS):
         _ensure_official_device_registration_semantic_mapping(responsibilities, new_by_path, current)
     if expected_responsibility_count is not None:
@@ -4055,6 +4108,8 @@ def merge_responsibility_mapping(
             row['disposition'] = AUTOMATION_SCHEDULE_SOURCE_SPEC['disposition']
         elif path in CLIENT_SIDE_TOOL_V2_SOURCE_SPECS:
             row['disposition'] = CLIENT_SIDE_TOOL_V2_SOURCE_SPECS[path]['disposition']
+        elif path == APP_AGENT_SURFACE_E2E_SOURCE_PATH:
+            row['disposition'] = APP_AGENT_SURFACE_E2E_SOURCE_SPEC['disposition']
         elif path in OFFICIAL_DEVICE_SOURCE_SPECS:
             row['disposition'] = OFFICIAL_DEVICE_SOURCE_SPECS[path]['disposition']
         else:
