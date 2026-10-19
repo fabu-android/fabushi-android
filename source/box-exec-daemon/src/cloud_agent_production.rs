@@ -10,6 +10,7 @@ use fabushi_android_shared::model_catalog::{
     find_catalog_entry, validate_model_params, SandModelCatalogEntry, SandModelCatalogParameterType,
 };
 use fabushi_android_shared::ExecutionError;
+use fabushi_constants::cloud_agent::CLOUD_AGENT_SINGLE_REPO_WORKSPACE_ROOT;
 use prost::Message;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -346,7 +347,7 @@ impl ProductionCloudAgentExecutor {
                     path_encryption_key: String::new(),
                     should_sync_index: false,
                 }),
-                snapshot_workspace_root_path: "/workspace".into(),
+                snapshot_workspace_root_path: CLOUD_AGENT_SINGLE_REPO_WORKSPACE_ROOT.into(),
                 auto_branch: true,
                 return_immediately: true,
                 devcontainer_starting_point: Some(DevcontainerStartingPointWire {

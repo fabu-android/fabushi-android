@@ -116,16 +116,54 @@ jobs:
           cargo test -p fabushi-mahayana-host --test android_background_completion_shipping_contract -- --nocapture
           cargo test -p fabushi-android-host-jni tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host -- --exact
 
-      - name: Verify exact-HEAD cloud-agent artifact prompt owner
+      - name: Verify exact-HEAD cloud-agent constants production owners
         run: |
           set -euo pipefail
           test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
-          grep -Fq 'fabushi_constants::cloud_agent::CLOUD_AGENT_ARTIFACTS_DIR' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'CLOUD_AGENT_ARTIFACTS_DIR, ENV_SETUP_SKILL_ID' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'name == "canvas" || name == ENV_SETUP_SKILL_ID' source/host/src/runner/android_system_prompt.rs
           grep -Fq 'sections.push(render_android_walkthrough_artifacts_system_prompt(None));' source/host/src/runner/android_system_prompt.rs
           grep -Fq 'build_android_root_system_instructions(' source/host/src/android_json_runtime.rs
-      - name: Test exact-HEAD cloud-agent artifact prompt owner
+          grep -Fq 'use fabushi_constants::cloud_agent::CLOUD_AGENT_SINGLE_REPO_WORKSPACE_ROOT;' source/box-exec-daemon/src/cloud_agent_production.rs
+          grep -Fq 'snapshot_workspace_root_path: CLOUD_AGENT_SINGLE_REPO_WORKSPACE_ROOT.into(),' source/box-exec-daemon/src/cloud_agent_production.rs
+          grep -Fq 'pub const ENV_SETUP_MANAGED_SKILL_DIRECTORY: &str = "/.cursor/skills-cursor/env-setup/";' source/packages/constants/src/cloud_agent.rs
+          grep -Fq 'pub const ENV_SETUP_MANAGED_SKILL_PATH: &str = "/.cursor/skills-cursor/env-setup/SKILL.md";' source/packages/constants/src/cloud_agent.rs
+
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-cloud-agent-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/cloud-agent.ts)" = "7f42b8ea9c047959f422a63886931403d3da86ff"
+
+          assert_symbol_count() {
+            local symbol="$1"
+            local expected="$2"
+            mapfile -t matches < <(git -C "$DESKTOP_DIR" grep -n -F "$symbol" -- .)
+            printf '%s\n' "${matches[@]}"
+            test "${#matches[@]}" -eq "$expected"
+          }
+          assert_symbol_count ENV_SETUP_SKILL_ID 2
+          assert_symbol_count ENV_SETUP_MANAGED_SKILL_DIRECTORY 2
+          assert_symbol_count ENV_SETUP_MANAGED_SKILL_PATH 1
+          assert_symbol_count CLOUD_AGENT_SINGLE_REPO_WORKSPACE_ROOT 1
+          assert_symbol_count CLOUD_AGENT_ARTIFACTS_DIR 3
+          grep -Fq 'import { CLOUD_AGENT_ARTIFACTS_DIR } from "../../constants/cloud-agent.js";' "$DESKTOP_DIR/source/packages/agent/prompts/shared.ts"
+          grep -Fq 'resolvePromptArtifactsDir(props)' "$DESKTOP_DIR/source/packages/agent/prompts/testing/parent.ts"
+          grep -Fq 'snapshot_workspace_root_path: "/workspace".into(),' "$DESKTOP_DIR/source/host/src/extensions/cloud_agents/cloud_agents_service.rs"
+          grep -Fq 'matches!(skill_name(&item.full_path).as_str(), "canvas" | "env-setup")' "$DESKTOP_DIR/source/host/src/runner/system_prompt_assembly.rs"
+      - name: Test exact-HEAD cloud-agent constants contracts
         run: |
           set -euo pipefail
+          cargo test -p fabushi-constants cloud_agent::tests::constants_match_desktop_cloud_agent_contract -- --exact
+          cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::env_setup_skill_uses_canonical_cloud_agent_identity_and_remains_protected -- --exact
           cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_directory_uses_canonical_cloud_agent_fallback_and_normalizes_override -- --exact
           cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_prompt_is_deduped_and_does_not_grant_capability -- --exact
 

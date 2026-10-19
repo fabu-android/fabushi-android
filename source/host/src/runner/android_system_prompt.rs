@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use fabushi_constants::cloud_agent::CLOUD_AGENT_ARTIFACTS_DIR;
+use fabushi_constants::cloud_agent::{CLOUD_AGENT_ARTIFACTS_DIR, ENV_SETUP_SKILL_ID};
 use serde_json::Value;
 
 /// Android-adapted root Agent instructions.
@@ -377,7 +377,8 @@ fn skill_name(full_path: &str) -> String {
 }
 
 fn is_protected_skill(item: &AndroidSkillPromptItem) -> bool {
-    matches!(skill_name(&item.full_path).as_str(), "canvas" | "env-setup")
+    let name = skill_name(&item.full_path);
+    name == "canvas" || name == ENV_SETUP_SKILL_ID
 }
 
 fn skill_directory_hint(full_path: &str) -> String {
@@ -1064,6 +1065,16 @@ mod tests {
             resolve_android_prompt_artifacts_dir(Some("C:\\walkthroughs")),
             "C:\\walkthroughs\\"
         );
+    }
+
+    #[test]
+    fn env_setup_skill_uses_canonical_cloud_agent_identity_and_remains_protected() {
+        let item = AndroidSkillPromptItem {
+            full_path: format!("/.cursor/skills-cursor/{ENV_SETUP_SKILL_ID}/SKILL.md"),
+            description: Some("Managed environment setup".into()),
+        };
+        assert_eq!(skill_name(&item.full_path), ENV_SETUP_SKILL_ID);
+        assert!(is_protected_skill(&item));
     }
 
     #[test]
