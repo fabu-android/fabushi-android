@@ -589,6 +589,32 @@ APP_AGENT_SURFACE_E2E_SOURCE_SPEC = {
     ],
     'disposition': 'not-applicable-with-replacement',
 }
+APP_AGENT_SURFACE_CROSS_SOURCE_SPECS = {
+    'source/product/fabushi/fabushi-official-device-registry.ts': {
+        'symbols': ['FabushiOfficialDeviceRegistryService', 'FABUSHI_APP_AGENT_TOOLS', 'handleAgentToolRequest'],
+        'source_owner': (
+            'Desktop official-device registry publishes and dispatches the six App Agent Surface tools '
+            'through the account-fenced production WSS registration'
+        ),
+        'android_owner': (
+            'FabushiRemoteDeviceGateway publishes the same six FabushiAppAgentSurface.ToolNames and '
+            'dispatches into the native FabushiAppAgentSurface under session/account fencing'
+        ),
+        'android_targets': [
+            'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt',
+            'source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/semantic/FabushiAppAgentSurface.kt',
+        ],
+    },
+    'source/product/fabushi/fabushi-official-device-registry.contract.test.ts': {
+        'symbols': ['official registry App Agent tool/account/revoke/non-retry contract tests'],
+        'source_owner': 'Desktop official-device registry contract tests for the production App Agent transport boundary',
+        'android_owner': 'FabushiAppAgentSurfaceTest plus RemoteCommandJournalTest focused production-boundary tests',
+        'android_targets': [
+            'mobile/android/app/src/test/java/com/ombhrum/fabushi/FabushiAppAgentSurfaceTest.kt',
+            'mobile/android/app/src/test/java/com/ombhrum/fabushi/RemoteCommandJournalTest.kt',
+        ],
+    },
+}
 
 
 OFFICIAL_DEVICE_SOURCE_SPECS = {
@@ -3046,6 +3072,27 @@ def _ensure_app_agent_surface_e2e_semantic_mapping(
         'android_owner': APP_AGENT_SURFACE_E2E_SOURCE_SPEC['android_owner'],
     })
     existing_sources[APP_AGENT_SURFACE_E2E_SOURCE_PATH] = source
+    for path, spec in APP_AGENT_SURFACE_CROSS_SOURCE_SPECS.items():
+        cross_object = new_by_path.get(path)
+        require(cross_object is not None, 'App Agent Surface cross-anchor is absent from current Desktop tree: ' + path)
+        require(
+            cross_object.get('type') == 'blob' and cross_object.get('mode') in ALLOWED_SOURCE_MODES,
+            'App Agent Surface cross-anchor has invalid blob/mode/type: ' + path,
+        )
+        cross = existing_sources.get(path, {})
+        cross.update({
+            'path': path,
+            'blob_sha': cross_object['sha'],
+            'source_mode': cross_object['mode'],
+            'source_type': cross_object['type'],
+            'source_commit': desktop_commit,
+            'mapping_quality': 'semantic',
+            'symbols': list(spec['symbols']),
+            'android_targets': list(spec['android_targets']),
+            'source_owner': spec['source_owner'],
+            'android_owner': spec['android_owner'],
+        })
+        existing_sources[path] = cross
     item['desktop_sources'] = sorted(existing_sources.values(), key=lambda value: value.get('path', ''))
     raw_targets = item.get('android_target')
     if not isinstance(raw_targets, list):
@@ -3053,6 +3100,10 @@ def _ensure_app_agent_surface_e2e_semantic_mapping(
     for target in APP_AGENT_SURFACE_E2E_SOURCE_SPEC['android_targets']:
         if target not in raw_targets:
             raw_targets.append(target)
+    for spec in APP_AGENT_SURFACE_CROSS_SOURCE_SPECS.values():
+        for target in spec['android_targets']:
+            if target not in raw_targets:
+                raw_targets.append(target)
     item['android_target'] = raw_targets
 
 
