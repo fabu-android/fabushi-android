@@ -249,6 +249,24 @@ jobs:
         run: |
           set -eu
           ./gradlew --no-daemon clean assembleGithubRelease bundleGithubRelease assembleCiAcceptance
+      - name: Normalize signed GitHub APK for 16KB zip alignment
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)"
+          ZIPALIGN="$BUILD_TOOLS/zipalign"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          GITHUB_APK="$(find app/build/outputs/apk/githubRelease -type f -name '*.apk' -print -quit)"
+          ALIGNED_APK="$RUNNER_TEMP/fabushi-github-release-aligned.apk"
+          test -x "$ZIPALIGN" && test -x "$APKSIGNER" && test -s "$GITHUB_APK"
+          "$ZIPALIGN" -P 16 -f 4 "$GITHUB_APK" "$ALIGNED_APK"
+          "$APKSIGNER" sign \
+            --ks "$ANDROID_KEYSTORE_PATH" \
+            --ks-pass "env:ANDROID_KEYSTORE_PASSWORD" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" \
+            --key-pass "env:ANDROID_KEY_PASSWORD" \
+            --out "$GITHUB_APK" "$ALIGNED_APK"
+          rm -f "$ALIGNED_APK"
       - name: Test release SBOM dependency parser
         run: python scripts/test_generate_android_release_sbom.py
       - name: Generate release SBOM and license inventory
