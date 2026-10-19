@@ -2469,6 +2469,74 @@ def _ensure_cloud_agent_constant_semantic_mapping(
 
 
 
+SAND_BOX_ARCHIVE_SOURCE_PATH = 'source/packages/constants/sand-box-archive.ts'
+SAND_BOX_ARCHIVE_RESPONSIBILITY_ID = 'REMOTE-BOX-STORE-SYNC-ANDROID-001'
+SAND_BOX_ARCHIVE_SOURCE_SPEC = {
+    'symbols': ['SAND_BOX_PERSIST_ARCHIVE_EXCLUDES', 'SAND_BOX_WORKSPACE_IGNORE_FILE', 'SAND_BOX_WORKSPACE_DEFAULT_IGNORE_PATTERNS'],
+    'source_owner': (
+        'Desktop constants mirror declares archive exclusions and workspace-ignore names; shipping ownership '
+        'is Host box_store_sync::production/workspace_ignore, where chrome-profile owns the four cache '
+        'exclusions and workspace snapshot owns .sandignore/default ignore semantics'
+    ),
+    'android_owner': (
+        'External RemoteBoxStoreBackend plus box_store_workspace_ignore are the canonical Remote Runner '
+        'owners; source/packages/constants/src/sand_box_archive.rs is retained only as duplicate mirror/non-owner'
+    ),
+    'android_targets': [
+        'source/box-exec-daemon/src/box_store_backend.rs',
+        'source/box-exec-daemon/src/box_store_workspace_ignore.rs',
+        'source/packages/constants/src/sand_box_archive.rs',
+    ],
+    'focused_tests': [
+        'source/box-exec-daemon/src/box_store_backend.rs::tests::snapshot_and_hydrate_keep_profile_state_without_cache_and_do_not_filter_chrome_session',
+        'source/box-exec-daemon/src/box_store_backend.rs::tests::frozen_destination_routes_desktop_chrome_profile_to_dedicated_root',
+        'source/box-exec-daemon/src/box_store_backend.rs::tests::snapshot_applies_desktop_workspace_ignore_and_negation_semantics',
+    ],
+    'disposition': 'android-adapted',
+}
+
+
+def _ensure_sand_box_archive_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    source_object = new_by_path.get(SAND_BOX_ARCHIVE_SOURCE_PATH)
+    if source_object is None:
+        return
+    matches = [item for item in responsibilities if item.get('responsibility_id') == SAND_BOX_ARCHIVE_RESPONSIBILITY_ID]
+    require(len(matches) == 1, 'sand-box-archive semantic mapping requires exactly one ' + SAND_BOX_ARCHIVE_RESPONSIBILITY_ID)
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(SAND_BOX_ARCHIVE_SOURCE_PATH, {})
+    source.update({
+        'path': SAND_BOX_ARCHIVE_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(SAND_BOX_ARCHIVE_SOURCE_SPEC['symbols']),
+        'focused_tests': list(SAND_BOX_ARCHIVE_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(SAND_BOX_ARCHIVE_SOURCE_SPEC['android_targets']),
+        'source_owner': SAND_BOX_ARCHIVE_SOURCE_SPEC['source_owner'],
+        'android_owner': SAND_BOX_ARCHIVE_SOURCE_SPEC['android_owner'],
+    })
+    existing_sources[SAND_BOX_ARCHIVE_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(existing_sources.values(), key=lambda value: value.get('path', ''))
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in SAND_BOX_ARCHIVE_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+
+
 CLOUD_AGENT_CONSTANT_INCOMPLETE_SOURCE_PATH = CLOUD_AGENT_CONSTANT_SOURCE_PATH
 
 
@@ -3377,6 +3445,8 @@ def merge_responsibility_mapping(
         _ensure_background_completion_semantic_mapping(responsibilities, new_by_path, current)
     if any(path in new_by_path for path in AGENT_CORE_INTERACTION_SOURCE_SPECS):
         _ensure_agent_core_interaction_semantic_mapping(responsibilities, new_by_path, current)
+    if SAND_BOX_ARCHIVE_SOURCE_PATH in new_by_path:
+        _ensure_sand_box_archive_semantic_mapping(responsibilities, new_by_path, current)
     _keep_cloud_agent_constant_incomplete(responsibilities)
     _keep_agent_store_ids_incomplete(responsibilities)
     _keep_mcp_constant_incomplete(responsibilities)
@@ -4144,6 +4214,8 @@ def merge_responsibility_mapping(
             row['disposition'] = BACKGROUND_COMPLETION_SOURCE_SPECS[path]['disposition']
         elif path in AGENT_CORE_INTERACTION_SOURCE_SPECS:
             row['disposition'] = AGENT_CORE_INTERACTION_SOURCE_SPECS[path]['disposition']
+        elif path == SAND_BOX_ARCHIVE_SOURCE_PATH:
+            row['disposition'] = SAND_BOX_ARCHIVE_SOURCE_SPEC['disposition']
         elif path == CLOUD_AGENT_CONSTANT_SOURCE_PATH:
             row['disposition'] = CLOUD_AGENT_CONSTANT_SOURCE_SPEC['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
