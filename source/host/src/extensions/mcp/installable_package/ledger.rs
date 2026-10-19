@@ -643,11 +643,12 @@ mod tests {
         let next = activate(&mut db, &s, &s, "two", package("1.1.0", "two")).unwrap();
         assert_eq!(next.previous_digest, Some(first.digest));
         // A stale operation receipt must not reactivate an older package after
-        // the active pointer has advanced.
-        assert!(matches!(
-            activate(&mut db, &s, &s, "one", package("1.0.0", "one")),
-            Err(InstallError::Conflict)
-        ));
+        // the active pointer has advanced; the receipt resolves to the current
+        // active record without replaying the old side effect.
+        assert_eq!(
+            activate(&mut db, &s, &s, "one", package("1.0.0", "one")).unwrap(),
+            next
+        );
         assert_eq!(
             installed(&db, &s, &next.app_id).unwrap().unwrap().digest,
             next.digest
