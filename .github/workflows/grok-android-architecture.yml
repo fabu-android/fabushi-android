@@ -209,10 +209,23 @@ jobs:
           git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
           test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
           test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/auto-spillover-ui.ts)" = "16af77656b1b1a01b0dba7541737c0ef233fe760"
-          if git -C "$DESKTOP_DIR" grep -n -F 'AUTO_SPILLOVER_UI_DEFAULTS' -- . ':(exclude)source/packages/constants/auto-spillover-ui.ts'; then
-            echo "AUTO_SPILLOVER_UI_DEFAULTS gained a direct Desktop caller; semantic closure must be re-reviewed" >&2
-            exit 1
-          fi
+          mapfile -t AUTO_SPILLOVER_MATCHES < <(git -C "$DESKTOP_DIR" grep -n -F 'AUTO_SPILLOVER_UI_DEFAULTS' -- .)
+          printf '%s\n' "${AUTO_SPILLOVER_MATCHES[@]}"
+          test "${#AUTO_SPILLOVER_MATCHES[@]}" -eq 3
+          test "$(printf '%s\n' "${AUTO_SPILLOVER_MATCHES[@]}" | grep -c '^source/packages/constants/auto-spillover-ui.ts:')" -eq 1
+          test "$(printf '%s\n' "${AUTO_SPILLOVER_MATCHES[@]}" | grep -c '^source/shared/node/experiments/experiment-config.gen.ts:')" -eq 2
+          grep -Fq 'const AUTO_SPILLOVER_UI_DEFAULTS = {' "$DESKTOP_DIR/source/shared/node/experiments/experiment-config.gen.ts"
+          grep -Fq 'auto_spillover_ui_config: {' "$DESKTOP_DIR/source/shared/node/experiments/experiment-config.gen.ts"
+          grep -Fq 'fallbackValues: AUTO_SPILLOVER_UI_DEFAULTS' "$DESKTOP_DIR/source/shared/node/experiments/experiment-config.gen.ts"
+          mapfile -t AUTO_SPILLOVER_CONFIG_FILES < <(git -C "$DESKTOP_DIR" grep -l -F 'auto_spillover_ui_config' -- .)
+          printf '%s\n' "${AUTO_SPILLOVER_CONFIG_FILES[@]}"
+          test "${#AUTO_SPILLOVER_CONFIG_FILES[@]}" -eq 1
+          test "${AUTO_SPILLOVER_CONFIG_FILES[0]}" = "source/shared/node/experiments/experiment-config.gen.ts"
+          grep -Fq 'import { DYNAMIC_CONFIGS, EXPERIMENTS, FLAGS' "$DESKTOP_DIR/source/shared/node/experiments/cursor-experiments.ts"
+          grep -Fq 'getExperiment(name: ExperimentName)' "$DESKTOP_DIR/source/shared/node/experiments/cursor-experiments.ts"
+          grep -Fq 'for (const name of Object.keys(EXPERIMENTS) as ExperimentName[]) experiments[name] = this.getExperiment(name);' "$DESKTOP_DIR/source/shared/node/experiments/cursor-experiments.ts"
+          grep -Fq 'createExperimentService: (options) => new SandExperimentService(options)' "$DESKTOP_DIR/source/electron-main/adapters/experiments.ts"
+          grep -Fq 'emitSnapshotChanged: (snapshot) => context.requireMainEdge().emit("experiments-changed", snapshot)' "$DESKTOP_DIR/source/electron-main/adapters/experiments.ts"
           grep -Fq 'export async function fetchSandUsageSummary' "$DESKTOP_DIR/source/electron-main/account/cursor-profile.ts"
           grep -Fq 'bridge.cursorAccount.getUsageSummary()' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop.ts"
           grep -Fq '<UsageSettingsPanel' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop-surface.tsx"

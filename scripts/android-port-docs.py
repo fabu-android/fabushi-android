@@ -464,16 +464,24 @@ AUTO_SPILLOVER_UI_SOURCE_SPEC = {
     ],
     'source_owner': (
         'Desktop source/packages/constants/auto-spillover-ui.ts@16af77656b1b1a01b0dba7541737c0ef233fe760 '
-        'declares seven recovered spillover copy defaults only. An exact-authority full-tree git-grep must '
-        'find no direct AUTO_SPILLOVER_UI_DEFAULTS production import outside that declaration. Current '
-        'shipping usage state and UI are independently owned by source/electron-main/account/cursor-profile.ts@'
+        'declares seven recovered spillover copy defaults only and has no runtime import at current authority. '
+        'The mechanically recovered source/shared/node/experiments/experiment-config.gen.ts@'
+        'b4ac08fbb9ec2bf6cccc77c1b1245e08d295ff5e independently declares the same local defaults and assigns '
+        'them to EXPERIMENTS.auto_spillover_ui_config.fallbackValues. source/shared/node/experiments/'
+        'cursor-experiments.ts@b9f644e1795bccc5c27aacc5b0e90b5953409de9 imports the EXPERIMENTS registry, resolves fallback/live '
+        'experiment values, and includes every experiment in its snapshot; electron-main adapters/experiments.ts@'
+        '4cefd20a838019c34ac1e954ef5d6d86d223e013 ships that SandExperimentService and emits snapshots. '
+        'An exact-authority full-tree git-grep must prove the AUTO_SPILLOVER_UI_DEFAULTS occurrences are limited '
+        'to the standalone constants declaration plus the generated registry declaration/fallback reference, and '
+        'that auto_spillover_ui_config has no named consumer outside the generated registry. Current shipping '
+        'Usage & Billing state/UI is independently owned by source/electron-main/account/cursor-profile.ts@'
         '69645a4dee5b40a700fef5199c044892f46eaf3a fetchSandUsageSummary/buildSandUsageSummary, then '
         'frontend/src/recovered/features/settings/overlay/desktop.ts@ff8e61b13ea9475c502da6ed58a0906fd44538d6 '
         'bridge.cursorAccount.getUsageSummary, desktop-surface.tsx@2ccb6c4f94c094495c24907be32cee6447796d6d '
         'UsageSettingsPanel wiring and panels.tsx@994d0e009430e6dfb0b1edb39f717b673be40a8f '
         'usageMetersFromSummary; those shipping views use Trial/Weekly/On-demand copy rather than the seven defaults'
     ),
-    'android_owner': (
+    'android_owner': (    'android_owner': (
         'Rust fabushi-constants auto_spillover_ui preserves the seven source literals as a declaration-only '
         'parity asset; it is not a shipping usage state owner and is intentionally not wired through JNI or '
         'Compose. Existing shipping ownership remains CursorDashboardMcpAuthBackend.resolve_sand_usage_summary '
@@ -501,16 +509,19 @@ AUTO_SPILLOVER_UI_SOURCE_SPEC = {
         'mobile/android/app/src/test/java/com/ombhrum/fabushi/AccountUsageReconciliationTest.kt::AccountUsageReconciliationTest.upgradeCtaPolicyAllowsOnlySettledAccountExactDashboardAction',
     ],
     'platform_delta': (
-        'Desktop retains recovered copy constants without a current shipping caller; Android keeps the literal '
-        'declaration mirror for source parity but uses the existing native usage/settings projection as the '
-        'replacement. Adding a JNI/Compose consumer for these stale labels would create a second UI/state owner'
+        'Desktop retains a generic Statsig experiment-registry fallback for the seven labels, but current authority '
+        'has no feature-specific auto_spillover_ui_config consumer beyond that registry and the shipping Usage & '
+        'Billing surface uses its independent usage-summary projection. Android preserves the literal declaration '
+        'mirror without adding a second experiment/UI owner; the existing native usage/settings projection is the '
+        'Android-adapted replacement until Desktop gains a named feature consumer'
     ),
-    'evidence_semantics': (
-        'Same-head evidence proves the Desktop no-caller boundary, the Android declaration mirror, and the '
-        'existing native usage replacement. It must not be cited as evidence that the seven labels are currently '
-        'user-visible or that fabushi-constants owns canonical usage/quota state'
+    'evidence_semantics': (    'evidence_semantics': (
+        'Same-head evidence proves the exact generated-registry boundary, the absence of a named '
+        'auto_spillover_ui_config consumer outside that registry, the Android declaration mirror, and the existing '
+        'native usage replacement. It must not be cited as evidence that the seven labels are currently user-visible '
+        'in Desktop Settings or Android, or that fabushi-constants owns canonical usage/quota state'
     ),
-    'disposition': 'android-adapted',
+    'disposition': 'android-adapted',    'disposition': 'android-adapted',
 }
 
 
@@ -2861,14 +2872,16 @@ def _ensure_auto_spillover_ui_semantic_mapping(
     item['android_target'] = raw_targets
     item['android_disposition'] = AUTO_SPILLOVER_UI_SOURCE_SPEC['disposition']
     note = (
-        'Desktop auto-spillover-ui.ts is declaration-only at current authority: exact-tree caller evidence '
-        'must remain empty outside the declaration, while current shipping Usage & Billing state flows from '
-        'cursor-profile through the Settings usage projection. Android mirrors the seven literals in '
-        'fabushi-constants but deliberately leaves them out of JNI/Compose; the existing Dashboard backend, '
-        'typed Coordinator usage projection and native Settings surface are the Android-adapted replacement. '
-        'Same-head production/test evidence is required and does not promote implementation/verification status.'
+        'Desktop auto-spillover-ui.ts is a standalone recovered declaration; the generated experiment registry '
+        'independently mirrors the seven literals as auto_spillover_ui_config fallback values and SandExperimentService '
+        'generically projects that registry, but exact-tree evidence shows no named config consumer outside the generated '
+        'registry. Current shipping Usage & Billing state still flows from cursor-profile through the Settings usage '
+        'projection. Android mirrors the seven literals in fabushi-constants but deliberately leaves them out of JNI/'
+        'Compose; the existing Dashboard backend, typed Coordinator usage projection and native Settings surface are '
+        'the Android-adapted replacement. Same-head production/test evidence is required and does not promote '
+        'implementation/verification status.'
     )
-    notes = item.get('notes')
+    notes = item.get('notes')    notes = item.get('notes')
     if isinstance(notes, str):
         if note not in notes:
             item['notes'] = notes + ' ' + note
