@@ -177,6 +177,58 @@ jobs:
           cargo test -p fabushi-constants structured_log::tests::replay_window_rejects_old_and_far_future_entries -- --exact
           cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::replay_age_matches_desktop_structured_log_contract -- --exact
           cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::spill_rejects_far_future_records_under_desktop_skew_contract -- --exact
+
+      - name: Verify exact-HEAD auto-spillover usage UI production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'pub const AUTO_SPILLOVER_UI_DEFAULTS: AutoSpilloverUiDefaults = AutoSpilloverUiDefaults {' source/packages/constants/src/auto_spillover_ui.rs
+          grep -Fq 'auto_title: "Cursor Models",' source/packages/constants/src/auto_spillover_ui.rs
+          grep -Fq 'api_title: "Other Models",' source/packages/constants/src/auto_spillover_ui.rs
+          grep -Fq 'pub fn resolve_sand_usage_summary(&self) -> Result<Value, String> {' source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs
+          grep -Fq 'DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH' source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs
+          grep -Fq '"feature.account.usageSummary" => self.account_usage_summary(),' source/host/src/android_json_runtime.rs
+          grep -Fq 'fun accountUsageSummary(): AndroidAccountUsageSummary' source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt
+          grep -Fq 'host.request("feature.account.usageSummary")' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt
+          grep -Fq 'accountUsageSummary: AndroidAccountUsageSummary?' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          grep -Fq '"Usage: $percent"' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          grep -Fq '"On-demand: ${onDemand.usedCents} / ${onDemand.limitCents} cents"' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          ! grep -Fq 'Cursor Models' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          ! grep -Fq 'Other Models' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          ! grep -Fq 'auto_spillover_ui' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-auto-spillover-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/auto-spillover-ui.ts)" = "16af77656b1b1a01b0dba7541737c0ef233fe760"
+          if git -C "$DESKTOP_DIR" grep -n -F 'AUTO_SPILLOVER_UI_DEFAULTS' -- . ':(exclude)source/packages/constants/auto-spillover-ui.ts'; then
+            echo "AUTO_SPILLOVER_UI_DEFAULTS gained a direct Desktop caller; semantic closure must be re-reviewed" >&2
+            exit 1
+          fi
+          grep -Fq 'export async function fetchSandUsageSummary' "$DESKTOP_DIR/source/electron-main/account/cursor-profile.ts"
+          grep -Fq 'bridge.cursorAccount.getUsageSummary()' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop.ts"
+          grep -Fq '<UsageSettingsPanel' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop-surface.tsx"
+          grep -Fq 'title: summary.isSandTrial ? "Trial usage" : "Weekly usage",' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop.ts"
+          grep -Fq 'title: "On-demand usage",' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop.ts"
+      - name: Test exact-HEAD auto-spillover usage UI replacement
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants auto_spillover_ui::tests::labels_are_nonempty_and_distinct -- --exact
+          cargo test -p fabushi-mahayana-host mcp_auth::dashboard_mcp_auth_backend::tests::usage_paths_and_decoder_match_desktop_dashboard_contract -- --exact
+          cargo test -p fabushi-mahayana-host mcp_auth::dashboard_mcp_auth_backend::tests::usage_decoder_preserves_enterprise_and_safe_upgrade_cta_contract -- --exact
+          cargo test -p fabushi-mahayana-host mcp_auth::dashboard_mcp_auth_backend::tests::usage_decoder_rejects_unsafe_upgrade_cta_variants -- --exact
+          (
+            cd mobile/android
+            ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.AccountUsageReconciliationTest
+          )
       - name: Verify exact-HEAD official-device registration owner
         run: |
           set -euo pipefail

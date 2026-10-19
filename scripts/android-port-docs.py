@@ -48,8 +48,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9452
-EXPECTED_TRACKED_NON_TREE_COUNT = 8297
+EXPECTED_TREE_ENTRY_COUNT = 9453
+EXPECTED_TRACKED_NON_TREE_COUNT = 8298
 PRIOR_TREE_ENTRY_COUNT = 9443
 PRIOR_TRACKED_NON_TREE_COUNT = 8288
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
@@ -69,8 +69,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = 'baf0fe840c8530e38a827b32de7cc9d26a1c94b4'
-EXPECTED_DESKTOP_TREE = 'c82052ee5a2f9beb9b477ffa6180c79fb57281cb'
+EXPECTED_DESKTOP_COMMIT = '2b394d7551f3dbbe1320bba7f771a4694134e382'
+EXPECTED_DESKTOP_TREE = '96c80d118016cbe962018fbadcd83b41b04c5158'
 PRIOR_DESKTOP_COMMIT = '0ecf132681845231b597ece11bc5f979a9a8f0cc'
 PRIOR_DESKTOP_TREE = 'af3eb1b18ea3b6c80aa8359623e07f473f251c5b'
 PRIOR_BASELINE_PARENT_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
@@ -442,6 +442,74 @@ COMPOSER_CONSTANT_SOURCE_SPEC = {
         'source/packages/constants/src/composer.rs::tests::text_limit_is_inclusive',
         'source/host/src/composer_draft.rs::tests::prompt_size_limit_matches_desktop_composer_contract',
     ],
+    'disposition': 'android-adapted',
+}
+
+
+
+AUTO_SPILLOVER_UI_SOURCE_PATH = 'source/packages/constants/auto-spillover-ui.ts'
+AUTO_SPILLOVER_UI_RESPONSIBILITY_ID = 'ACCOUNT-USAGE-CONTROLS-ANDROID-001'
+AUTO_SPILLOVER_UI_PRODUCTION_STEP = 'Verify exact-HEAD auto-spillover usage UI production owner'
+AUTO_SPILLOVER_UI_TEST_STEP = 'Test exact-HEAD auto-spillover usage UI replacement'
+AUTO_SPILLOVER_UI_SOURCE_SPEC = {
+    'symbols': [
+        'AUTO_SPILLOVER_UI_DEFAULTS',
+        'autoTitle',
+        'autoDescription',
+        'apiTitle',
+        'apiDescription',
+        'autoBeyondLimitDescription',
+        'autoUsageBarLabel',
+        'apiUsageBarLabel',
+    ],
+    'source_owner': (
+        'Desktop source/packages/constants/auto-spillover-ui.ts@16af77656b1b1a01b0dba7541737c0ef233fe760 '
+        'declares seven recovered spillover copy defaults only. An exact-authority full-tree git-grep must '
+        'find no direct AUTO_SPILLOVER_UI_DEFAULTS production import outside that declaration. Current '
+        'shipping usage state and UI are independently owned by source/electron-main/account/cursor-profile.ts@'
+        '69645a4dee5b40a700fef5199c044892f46eaf3a fetchSandUsageSummary/buildSandUsageSummary, then '
+        'frontend/src/recovered/features/settings/overlay/desktop.ts@ff8e61b13ea9475c502da6ed58a0906fd44538d6 '
+        'bridge.cursorAccount.getUsageSummary, desktop-surface.tsx@2ccb6c4f94c094495c24907be32cee6447796d6d '
+        'UsageSettingsPanel wiring and panels.tsx@994d0e009430e6dfb0b1edb39f717b673be40a8f '
+        'usageMetersFromSummary; those shipping views use Trial/Weekly/On-demand copy rather than the seven defaults'
+    ),
+    'android_owner': (
+        'Rust fabushi-constants auto_spillover_ui preserves the seven source literals as a declaration-only '
+        'parity asset; it is not a shipping usage state owner and is intentionally not wired through JNI or '
+        'Compose. Existing shipping ownership remains CursorDashboardMcpAuthBackend.resolve_sand_usage_summary '
+        '-> AndroidJsonHost feature.account.usageSummary -> AndroidCoordinatorRuntime.accountUsageSummary -> '
+        'AndroidAccountUsageSummary -> FabushiSettingsSurface, with account/generation fencing and reconciliation'
+    ),
+    'android_targets': [
+        'source/packages/constants/src/auto_spillover_ui.rs',
+        'source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs',
+        'source/host/src/android_json_runtime.rs',
+        'source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt',
+        'source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt',
+        'frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt',
+        'mobile/android/app/src/test/java/com/ombhrum/fabushi/AccountUsageReconciliationTest.kt',
+    ],
+    'production_target': 'source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs',
+    'test_target': 'source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs',
+    'focused_tests': [
+        'source/packages/constants/src/auto_spillover_ui.rs::tests::labels_are_nonempty_and_distinct',
+        'source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs::tests::usage_paths_and_decoder_match_desktop_dashboard_contract',
+        'source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs::tests::usage_decoder_preserves_enterprise_and_safe_upgrade_cta_contract',
+        'source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs::tests::usage_decoder_rejects_unsafe_upgrade_cta_variants',
+        'mobile/android/app/src/test/java/com/ombhrum/fabushi/AccountUsageReconciliationTest.kt::AccountUsageReconciliationTest.currentAccountGenerationAcceptsUsageProjection',
+        'mobile/android/app/src/test/java/com/ombhrum/fabushi/AccountUsageReconciliationTest.kt::AccountUsageReconciliationTest.staleGenerationOrAccountSwitchRejectsUsageProjection',
+        'mobile/android/app/src/test/java/com/ombhrum/fabushi/AccountUsageReconciliationTest.kt::AccountUsageReconciliationTest.upgradeCtaPolicyAllowsOnlySettledAccountExactDashboardAction',
+    ],
+    'platform_delta': (
+        'Desktop retains recovered copy constants without a current shipping caller; Android keeps the literal '
+        'declaration mirror for source parity but uses the existing native usage/settings projection as the '
+        'replacement. Adding a JNI/Compose consumer for these stale labels would create a second UI/state owner'
+    ),
+    'evidence_semantics': (
+        'Same-head evidence proves the Desktop no-caller boundary, the Android declaration mirror, and the '
+        'existing native usage replacement. It must not be cited as evidence that the seven labels are currently '
+        'user-visible or that fabushi-constants owns canonical usage/quota state'
+    ),
     'disposition': 'android-adapted',
 }
 
@@ -2735,6 +2803,82 @@ def _ensure_constants_composer_semantic_mapping(
         item['notes'] = note
 
 
+
+def _ensure_auto_spillover_ui_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Map declaration-only Desktop copy to the existing Android native usage replacement."""
+    source_object = new_by_path.get(AUTO_SPILLOVER_UI_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop auto-spillover-ui constant has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == AUTO_SPILLOVER_UI_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'auto-spillover-ui semantic mapping requires exactly one '
+        + AUTO_SPILLOVER_UI_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(AUTO_SPILLOVER_UI_SOURCE_PATH, {})
+    source.update({
+        'path': AUTO_SPILLOVER_UI_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(AUTO_SPILLOVER_UI_SOURCE_SPEC['symbols']),
+        'focused_tests': list(AUTO_SPILLOVER_UI_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(AUTO_SPILLOVER_UI_SOURCE_SPEC['android_targets']),
+        'source_owner': AUTO_SPILLOVER_UI_SOURCE_SPEC['source_owner'],
+        'android_owner': AUTO_SPILLOVER_UI_SOURCE_SPEC['android_owner'],
+        'platform_delta': AUTO_SPILLOVER_UI_SOURCE_SPEC['platform_delta'],
+        'evidence_semantics': AUTO_SPILLOVER_UI_SOURCE_SPEC['evidence_semantics'],
+    })
+    existing_sources[AUTO_SPILLOVER_UI_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda value: value.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in AUTO_SPILLOVER_UI_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    item['android_disposition'] = AUTO_SPILLOVER_UI_SOURCE_SPEC['disposition']
+    note = (
+        'Desktop auto-spillover-ui.ts is declaration-only at current authority: exact-tree caller evidence '
+        'must remain empty outside the declaration, while current shipping Usage & Billing state flows from '
+        'cursor-profile through the Settings usage projection. Android mirrors the seven literals in '
+        'fabushi-constants but deliberately leaves them out of JNI/Compose; the existing Dashboard backend, '
+        'typed Coordinator usage projection and native Settings surface are the Android-adapted replacement. '
+        'Same-head production/test evidence is required and does not promote implementation/verification status.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
 def _ensure_constants_structured_log_semantic_mapping(
     responsibilities: list[dict],
     new_by_path: dict[str, dict],
@@ -3500,6 +3644,8 @@ def merge_responsibility_mapping(
     _keep_mcp_constant_incomplete(responsibilities)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_constants_composer_semantic_mapping(responsibilities, new_by_path, current)
+    if AUTO_SPILLOVER_UI_SOURCE_PATH in new_by_path:
+        _ensure_auto_spillover_ui_semantic_mapping(responsibilities, new_by_path, current)
     if STRUCTURED_LOG_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_constants_structured_log_semantic_mapping(responsibilities, new_by_path, current)
     if MCP_TOOL_TIMEOUT_SOURCE_PATH in new_by_path:
@@ -3598,6 +3744,81 @@ def merge_responsibility_mapping(
     has_agent_kv_inventory = any(path in new_by_path for path in AGENT_KV_SOURCE_SPECS)
     rejected_android_targets = []
     source_targets_by_path: dict[str, list[str]] = {}
+
+
+    if AUTO_SPILLOVER_UI_SOURCE_PATH in new_by_path:
+        auto_spillover_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == AUTO_SPILLOVER_UI_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = auto_spillover_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            auto_spillover_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if AUTO_SPILLOVER_UI_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        auto_spillover_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=AUTO_SPILLOVER_UI_PRODUCTION_STEP,
+            test_step_name=AUTO_SPILLOVER_UI_TEST_STEP,
+            evidence_label='auto-spillover usage UI declaration boundary plus native replacement',
+        )
+        if auto_spillover_evidence is not None:
+            production_target = AUTO_SPILLOVER_UI_SOURCE_SPEC['production_target']
+            test_target = AUTO_SPILLOVER_UI_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'auto-spillover-ui evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [AUTO_SPILLOVER_UI_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': auto_spillover_evidence['workflow_name'],
+                'workflow_id': auto_spillover_evidence['workflow_id'],
+                'workflow_path': auto_spillover_evidence['workflow_path'],
+                'workflow_event': auto_spillover_evidence['workflow_event'],
+                'workflow_repository': auto_spillover_evidence['workflow_repository'],
+                'workflow_run_id': auto_spillover_evidence['workflow_run_id'],
+                'workflow_job_name': auto_spillover_evidence['workflow_job_name'],
+                'workflow_job_id': auto_spillover_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': auto_spillover_evidence['workflow_job_run_attempt'],
+                'run_attempt': auto_spillover_evidence['run_attempt'],
+                'run_conclusion': auto_spillover_evidence['run_conclusion'],
+                'result': 'passed',
+                'evidence_semantics': AUTO_SPILLOVER_UI_SOURCE_SPEC['evidence_semantics'],
+            }
+            auto_spillover_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': auto_spillover_evidence['production_step_name'],
+                'workflow_step_number': auto_spillover_evidence['production_step_number'],
+                'evidence_ref': production_target + '#account-usage-owner-with-declaration-only-ui-copy-boundary',
+            })
+            auto_spillover_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': auto_spillover_evidence['test_step_name'],
+                'workflow_step_number': auto_spillover_evidence['test_step_number'],
+                'evidence_ref': test_target + '#auto-spillover-declaration-boundary-and-native-usage-tests',
+                'focused_tests': list(AUTO_SPILLOVER_UI_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head auto-spillover usage UI evidence; '
+                'auto-spillover-ui package coverage remains incomplete',
+                file=sys.stderr,
+            )
 
     if STRUCTURED_LOG_CONSTANT_SOURCE_PATH in new_by_path:
         structured_responsibility = next(

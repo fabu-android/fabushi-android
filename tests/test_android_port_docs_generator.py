@@ -997,6 +997,23 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                     module.load_predecessor_responsibility_mapping(path)
 
 
+
+    def test_auto_spillover_ui_source_spec_distinguishes_declaration_from_shipping_usage_owner(self):
+        module = load_generator()
+        spec = module.AUTO_SPILLOVER_UI_SOURCE_SPEC
+        self.assertEqual(module.AUTO_SPILLOVER_UI_RESPONSIBILITY_ID, "ACCOUNT-USAGE-CONTROLS-ANDROID-001")
+        self.assertIn("declares seven recovered spillover copy defaults only", spec["source_owner"])
+        self.assertIn("full-tree git-grep", spec["source_owner"])
+        self.assertIn("cursor-profile.ts@69645a4dee5b40a700fef5199c044892f46eaf3a", spec["source_owner"])
+        self.assertIn("desktop.ts@ff8e61b13ea9475c502da6ed58a0906fd44538d6", spec["source_owner"])
+        self.assertIn("desktop-surface.tsx@2ccb6c4f94c094495c24907be32cee6447796d6d", spec["source_owner"])
+        self.assertIn("panels.tsx@994d0e009430e6dfb0b1edb39f717b673be40a8f", spec["source_owner"])
+        self.assertIn("declaration-only parity asset", spec["android_owner"])
+        self.assertIn("intentionally not wired through JNI or Compose", spec["android_owner"])
+        self.assertEqual(spec["production_target"], "source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs")
+        self.assertEqual(spec["disposition"], "android-adapted")
+        self.assertIn("must not be cited as evidence that the seven labels are currently user-visible", spec["evidence_semantics"])
+
     def test_structured_log_source_spec_distinguishes_declaration_shipping_and_android_hardening(self):
         module = load_generator()
         spec = module.STRUCTURED_LOG_CONSTANT_SOURCE_SPEC
@@ -1014,7 +1031,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8297, 9452),
+            (8258, 9412, 8298, 9453),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
@@ -2141,6 +2158,39 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(evidence["production_step_name"], module.COMPOSER_CONSTANT_PRODUCTION_STEP)
         self.assertEqual(evidence["test_step_name"], module.COMPOSER_CONSTANT_TEST_STEP)
 
+
+    def test_auto_spillover_ui_mapping_uses_existing_account_usage_owner_without_second_ui_truth(self):
+        module = load_generator()
+        source_path = module.AUTO_SPILLOVER_UI_SOURCE_PATH
+        primary = {
+            "responsibility_id": module.AUTO_SPILLOVER_UI_RESPONSIBILITY_ID,
+            "desktop_sources": [],
+            "source_owner": "Desktop account usage owner",
+            "android_owner": "Host dashboard plus native Settings owner",
+            "android_target": ["source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs"],
+        }
+        responsibilities = padded_responsibilities(primary)
+        source_object = {"sha": "a" * 40, "mode": "100644", "type": "blob"}
+        module._ensure_auto_spillover_ui_semantic_mapping(
+            responsibilities,
+            {source_path: source_object},
+            CURRENT_DESKTOP_COMMIT,
+        )
+        owner = next(
+            item for item in responsibilities
+            if item["responsibility_id"] == module.AUTO_SPILLOVER_UI_RESPONSIBILITY_ID
+        )
+        source = next(item for item in owner["desktop_sources"] if item["path"] == source_path)
+        self.assertEqual(source["blob_sha"], source_object["sha"])
+        self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+        self.assertEqual(source["mapping_quality"], "semantic")
+        self.assertIn("AUTO_SPILLOVER_UI_DEFAULTS", source["symbols"])
+        self.assertIn("source/packages/constants/src/auto_spillover_ui.rs", source["android_targets"])
+        self.assertIn("frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt", source["android_targets"])
+        self.assertIn("mobile/android/app/src/test/java/com/ombhrum/fabushi/AccountUsageReconciliationTest.kt", source["android_targets"])
+        self.assertIn("declaration-only", source["android_owner"])
+        self.assertEqual(owner["android_disposition"], "android-adapted")
+
     def test_constants_structured_log_mapping_uses_desktop_policy_and_real_host_owner(self):
         module = load_generator()
         source_path = module.STRUCTURED_LOG_CONSTANT_SOURCE_PATH
@@ -2201,6 +2251,31 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             "source/packages/constants/src/system_notification.rs::tests::wrapper_is_recognizable_without_matching_partial_tags",
             spec["focused_tests"],
         )
+
+
+    def test_auto_spillover_ui_contract_keeps_constants_declaration_only_and_verifies_native_usage_replacement(self):
+        constants = (ROOT / "source" / "packages" / "constants" / "src" / "auto_spillover_ui.rs").read_text(encoding="utf-8")
+        host = (ROOT / "source" / "host" / "src" / "android_json_runtime.rs").read_text(encoding="utf-8")
+        dashboard = (ROOT / "source" / "host" / "src" / "mcp_auth" / "dashboard_mcp_auth_backend.rs").read_text(encoding="utf-8")
+        runtime = (ROOT / "source" / "android-main" / "src" / "main" / "kotlin" / "com" / "ombhrum" / "fabushi" / "androidmain" / "coordinator" / "AndroidCoordinatorRuntime.kt").read_text(encoding="utf-8")
+        settings = (ROOT / "frontend" / "src" / "main" / "kotlin" / "com" / "ombhrum" / "fabushi" / "frontend" / "production" / "FabushiSettingsSurface.kt").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "grok-android-architecture.yml").read_text(encoding="utf-8")
+        self.assertIn('auto_title: "Cursor Models"', constants)
+        self.assertIn('api_title: "Other Models"', constants)
+        self.assertIn('"feature.account.usageSummary" => self.account_usage_summary()', host)
+        self.assertIn("resolve_sand_usage_summary", dashboard)
+        self.assertIn('host.request("feature.account.usageSummary")', runtime)
+        self.assertIn("accountUsageSummary: AndroidAccountUsageSummary?", settings)
+        self.assertIn('"Usage: $percent"', settings)
+        self.assertIn('"On-demand: ${onDemand.usedCents} / ${onDemand.limitCents} cents"', settings)
+        self.assertNotIn("Cursor Models", settings)
+        self.assertNotIn("Other Models", settings)
+        self.assertNotIn("auto_spillover_ui", settings)
+        self.assertIn("Verify exact-HEAD auto-spillover usage UI production owner", workflow)
+        self.assertIn("Test exact-HEAD auto-spillover usage UI replacement", workflow)
+        self.assertIn("grep -n -F 'AUTO_SPILLOVER_UI_DEFAULTS'", workflow)
+        self.assertIn("usage_paths_and_decoder_match_desktop_dashboard_contract", workflow)
+        self.assertIn("AccountUsageReconciliationTest", workflow)
 
     def test_constants_structured_log_contract_is_enforced_by_host_and_exact_head_workflow(self):
         host = (ROOT / "source" / "host" / "src" / "android_structured_log_spill.rs").read_text(encoding="utf-8")
