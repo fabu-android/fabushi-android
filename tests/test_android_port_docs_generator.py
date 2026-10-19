@@ -1316,7 +1316,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             out.mkdir(parents=True)
             runner_temp.mkdir(parents=True)
             desktop_commit, desktop_tree, android_head = "d" * 40, "e" * 40, "a" * 40
-            intermediate_commit = "7" * 40
+            intermediate_commit = module.PERSISTED_INTERMEDIATE_DESKTOP_COMMIT
             tree_entries = [
                 {"path": "AGENTS.md", "sha": "1" * 40, "type": "blob", "mode": "100644"},
                 {"path": "source", "sha": "2" * 40, "type": "tree", "mode": "040000"},
@@ -1439,7 +1439,6 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                  patch.object(module, "OUT", out), \
                  patch.object(module, "EXPECTED_DESKTOP_COMMIT", desktop_commit), \
                  patch.object(module, "EXPECTED_DESKTOP_TREE", desktop_tree), \
-                 patch.object(module, "PERSISTED_INTERMEDIATE_DESKTOP_COMMIT", intermediate_commit), \
                  patch.object(module, "EXPECTED_TREE_ENTRY_COUNT", 3), \
                  patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \
                  patch.object(module, "EXPECTED_RESPONSIBILITY_COUNT", 2), \
