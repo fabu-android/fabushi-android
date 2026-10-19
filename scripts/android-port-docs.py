@@ -481,7 +481,7 @@ AUTO_SPILLOVER_UI_SOURCE_SPEC = {
         'UsageSettingsPanel wiring and panels.tsx@994d0e009430e6dfb0b1edb39f717b673be40a8f '
         'usageMetersFromSummary; those shipping views use Trial/Weekly/On-demand copy rather than the seven defaults'
     ),
-    'android_owner': (    'android_owner': (
+    'android_owner': (
         'Rust fabushi-constants auto_spillover_ui preserves the seven source literals as a declaration-only '
         'parity asset; it is not a shipping usage state owner and is intentionally not wired through JNI or '
         'Compose. Existing shipping ownership remains CursorDashboardMcpAuthBackend.resolve_sand_usage_summary '
@@ -515,13 +515,13 @@ AUTO_SPILLOVER_UI_SOURCE_SPEC = {
         'mirror without adding a second experiment/UI owner; the existing native usage/settings projection is the '
         'Android-adapted replacement until Desktop gains a named feature consumer'
     ),
-    'evidence_semantics': (    'evidence_semantics': (
+    'evidence_semantics': (
         'Same-head evidence proves the exact generated-registry boundary, the absence of a named '
         'auto_spillover_ui_config consumer outside that registry, the Android declaration mirror, and the existing '
         'native usage replacement. It must not be cited as evidence that the seven labels are currently user-visible '
         'in Desktop Settings or Android, or that fabushi-constants owns canonical usage/quota state'
     ),
-    'disposition': 'android-adapted',    'disposition': 'android-adapted',
+    'disposition': 'android-adapted',
 }
 
 
@@ -2881,7 +2881,7 @@ def _ensure_auto_spillover_ui_semantic_mapping(
         'the Android-adapted replacement. Same-head production/test evidence is required and does not promote '
         'implementation/verification status.'
     )
-    notes = item.get('notes')    notes = item.get('notes')
+    notes = item.get('notes')
     if isinstance(notes, str):
         if note not in notes:
             item['notes'] = notes + ' ' + note
