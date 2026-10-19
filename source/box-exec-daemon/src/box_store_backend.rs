@@ -9,7 +9,7 @@ use crate::box_store_hydration::{
     BOX_STORE_HYDRATION_HANDOFF_FILE_NAME, COPY_IN_STUCK_THRESHOLD_MS,
     INCOMPLETE_LEGACY_HYDRATE_REASON,
 };
-use crate::box_store_workspace_ignore::{load_workspace_ignore, WorkspaceIgnore};
+use crate::box_store_workspace_ignore::{compile_workspace_ignore, load_workspace_ignore, WorkspaceIgnore};
 use crate::box_store_pack_restore::{read_pack_blob, PackRestoreCache};
 use crate::server::{
     RemoteBackendCancelOutcome, RemoteBackendReconcileOutcome, RemoteBackendStartOutcome,
@@ -34,6 +34,12 @@ const MAX_STORE_ID_BYTES: usize = 512;
 const MAX_MANIFEST_ENTRIES: usize = 100_000;
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
+const CHROME_PROFILE_CACHE_IGNORE_PATTERNS: &[&str] = &[
+    "Cache/",
+    "Code Cache/",
+    "GPUCache/",
+    "Service Worker/CacheStorage/",
+];
 
 #[derive(Clone, Debug)]
 pub struct RemoteBoxStoreBackendConfig {
@@ -425,6 +431,7 @@ impl RemoteBoxStoreBackend {
                 ("workspace", self.config.workspace_root.as_path()),
                 ("sand_data", self.config.sand_data_root.as_path()),
                 ("cli_config", self.config.cli_config_root.as_path()),
+                ("chrome_session", self.config.chrome_session_root.as_path()),
             ]
         };
 
@@ -438,14 +445,20 @@ impl RemoteBoxStoreBackend {
                 continue;
             }
             let mut captured = Vec::new();
-            let workspace_ignore = (category == "workspace").then(|| load_workspace_ignore(root));
+            let category_ignore = match category {
+                "workspace" => Some(load_workspace_ignore(root)),
+                "chrome_session" => Some(compile_workspace_ignore(
+                    CHROME_PROFILE_CACHE_IGNORE_PATTERNS,
+                )),
+                _ => None,
+            };
             collect_files(
                 root,
                 root,
                 category,
                 &mut captured,
                 &mut total_bytes,
-                workspace_ignore.as_ref(),
+                category_ignore.as_ref(),
             )?;
             for mut entry in captured {
                 if entry.symlink_target.is_some() {
@@ -1770,6 +1783,67 @@ mod tests {
             .unwrap();
         assert!(matches!(outcome, RemoteBackendStartOutcome::Rejected { .. }));
         assert!(!outside.join("note.txt").exists());
+    }
+
+    #[test]
+    fn snapshot_and_chrome_stage_exclude_desktop_profile_caches() {
+        let config = config("chrome-profile-cache-excludes");
+        fs::create_dir_all(config.chrome_session_root.join("Cache/data")).unwrap();
+        fs::create_dir_all(config.chrome_session_root.join("Code Cache/js")).unwrap();
+        fs::create_dir_all(config.chrome_session_root.join("GPUCache")).unwrap();
+        fs::create_dir_all(
+            config
+                .chrome_session_root
+                .join("Service Worker/CacheStorage/cache-a"),
+        )
+        .unwrap();
+        fs::write(config.chrome_session_root.join("Cache/data/index"), b"cache").unwrap();
+        fs::write(
+            config.chrome_session_root.join("Code Cache/js/index"),
+            b"code-cache",
+        )
+        .unwrap();
+        fs::write(config.chrome_session_root.join("GPUCache/index"), b"gpu").unwrap();
+        fs::write(
+            config
+                .chrome_session_root
+                .join("Service Worker/CacheStorage/cache-a/index"),
+            b"service-worker-cache",
+        )
+        .unwrap();
+        fs::write(config.chrome_session_root.join("Cookies"), b"durable-session").unwrap();
+
+        let backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        for (operation, action) in [("full-snapshot", "snapshot"), ("chrome-stage", "chrome_session_stage")] {
+            completed(
+                backend
+                    .start(
+                        &identity(operation, &format!("{operation}-request")),
+                        &request(operation, action, None),
+                    )
+                    .unwrap(),
+            );
+            let manifest = backend
+                .load_manifest("123e4567-e89b-42d3-a456-426614174000")
+                .unwrap()
+                .0
+                .unwrap();
+            let paths = manifest
+                .entries
+                .iter()
+                .filter(|entry| entry.category == "chrome_session")
+                .map(|entry| entry.rel_path.as_str())
+                .collect::<Vec<_>>();
+            assert!(paths.contains(&"Cookies"));
+            for excluded in [
+                "Cache/data/index",
+                "Code Cache/js/index",
+                "GPUCache/index",
+                "Service Worker/CacheStorage/cache-a/index",
+            ] {
+                assert!(!paths.contains(&excluded), "{excluded} leaked into {action}");
+            }
+        }
     }
 
     #[test]
