@@ -121,12 +121,14 @@ private val CAPABILITY_PREFIXES = setOf(
 )
 
 /** What this host granted to the MiniApp, derived from its declared tool contract. */
+internal fun miniAppCapabilityDomains(tools: Collection<MiniAppToolContract>): List<String> = tools
+    .map { it.name.substringBefore('.').lowercase() }
+    .filter { it in CAPABILITY_PREFIXES }
+    .distinct()
+    .sorted()
+
 internal fun miniAppCapabilityAnswer(tools: Collection<MiniAppToolContract>): JSONObject {
-    val capabilities = tools
-        .map { it.name.substringBefore('.').lowercase() }
-        .filter { it in CAPABILITY_PREFIXES }
-        .distinct()
-        .sorted()
+    val capabilities = miniAppCapabilityDomains(tools)
     return JSONObject()
         .put("contract", "fabushi.miniapp.tools.v1")
         .put("platform", "android")
