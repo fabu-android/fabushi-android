@@ -100,6 +100,15 @@ internal class FabushiRemoteDeviceGateway(
             }
         }
 
+        internal fun officialArguments(message: JSONObject): JSONObject {
+            val encoded = message.optString("argumentsJson")
+            if (encoded.isNotEmpty()) {
+                return runCatching { JSONObject(encoded) }
+                    .getOrElse { error("invalid_device_gateway_call") }
+            }
+            return message.optJSONObject("arguments") ?: JSONObject()
+        }
+
         internal fun officialHeartbeatMessage(nowMs: Long): String =
             JSONObject()
                 .put("type", "heartbeat")
@@ -274,7 +283,11 @@ internal class FabushiRemoteDeviceGateway(
         val requestId = message.optString("requestId").take(128)
         val toolName = message.optString("toolName").take(128)
         if (requestId.isBlank() || toolName.isBlank()) return
-        val arguments = message.optJSONObject("arguments") ?: JSONObject()
+        val arguments = runCatching { officialArguments(message) }
+            .getOrElse {
+                sendRemoteError(webSocket, requestId, "invalid_device_gateway_call")
+                return
+            }
         val session = synchronized(stateLock) { activeSession }
             ?: return sendRemoteError(webSocket, requestId, "device_agent_session_unavailable")
         val currentBefore = runCatching {
