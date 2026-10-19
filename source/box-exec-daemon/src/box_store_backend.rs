@@ -591,8 +591,12 @@ impl RemoteBoxStoreBackend {
                         "{INCOMPLETE_LEGACY_HYDRATE_REASON}: primary V2 store.db coverage is below the legacy source"
                     )));
                 }
-                let etag = primary.as_ref().expect("primary snapshot").etag.clone();
-                (primary_manifest.clone(), primary_dir.clone(), etag)
+                let legacy_snapshot = legacy.as_ref().expect("legacy snapshot");
+                (
+                    legacy_manifest.clone(),
+                    legacy_dir.as_ref().expect("legacy dir").clone(),
+                    legacy_snapshot.etag.clone(),
+                )
             }
             None => {
                 let legacy_manifest = legacy
