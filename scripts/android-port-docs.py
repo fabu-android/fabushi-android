@@ -48,8 +48,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9459
-EXPECTED_TRACKED_NON_TREE_COUNT = 8304
+EXPECTED_TREE_ENTRY_COUNT = 9460
+EXPECTED_TRACKED_NON_TREE_COUNT = 8305
 PRIOR_TREE_ENTRY_COUNT = 9443
 PRIOR_TRACKED_NON_TREE_COUNT = 8288
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
@@ -69,8 +69,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = 'be031eae9f178ab080b076cd4bd48ceeabab7de7'
-EXPECTED_DESKTOP_TREE = '4d7ed2758e8f52d938cb9ae41586e6c9b02836d1'
+EXPECTED_DESKTOP_COMMIT = '5d445687a2ae58a38f7934a9d1dc68c11f908ca3'
+EXPECTED_DESKTOP_TREE = '7446c4fc64a07f5fa943e1e68ae7644290d09523'
 PRIOR_DESKTOP_COMMIT = '0ecf132681845231b597ece11bc5f979a9a8f0cc'
 PRIOR_DESKTOP_TREE = 'af3eb1b18ea3b6c80aa8359623e07f473f251c5b'
 PRIOR_BASELINE_PARENT_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
@@ -222,7 +222,7 @@ CLOUD_AGENT_CONSTANT_SOURCE_SPEC = {
 }
 
 ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH = 'source/packages/constants/environment-setup.ts'
-ENVIRONMENT_SETUP_CONSTANT_RESPONSIBILITY_ID = 'BOX-AUTHORIZED-RUNNER-ANDROID-001'
+ENVIRONMENT_SETUP_CONSTANT_RESPONSIBILITY_ID = 'EXPERIMENTS-HOST-ANDROID-001'
 ENVIRONMENT_SETUP_CONSTANT_PRODUCTION_STEP = 'Verify exact-HEAD environment-setup constants owner boundary'
 ENVIRONMENT_SETUP_CONSTANT_TEST_STEP = 'Test exact-HEAD environment-setup constants contracts'
 ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC = {
@@ -232,43 +232,46 @@ ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC = {
         'MAX_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS',
     ],
     'source_owner': (
-        'Desktop source/packages/constants/environment-setup.ts@2e6f6942f567476ea398f4f12da07e9490ca6dbb '
-        'declares only the default/min/max environment-setup resume-age policy literals (7 days, 1 hour, 30 days). '
-        'Exact-authority full-tree git-grep must prove each symbol occurs only in that declaration file and has no '
-        'current Desktop production import/caller; therefore this source row must not be cited as proof that shipping '
-        'Desktop environment setup currently enforces those ages. The broader user-visible environment-apply capability '
-        'belongs to the existing Box/Runner owner rather than to this declaration file.'
+        'Desktop source/packages/constants/environment-setup.ts@2e6f6942f567476ea398f4f12da07e9490ca6dbb declares '
+        'the default/min/max resume-age policy literals (7 days, 1 hour, 30 days). Exact-authority source-tree git-grep '
+        'shows DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS three times: this declaration plus the mechanically recovered '
+        'source/shared/node/experiments/experiment-config.gen.ts@b4ac08fbb9ec2bf6cccc77c1b1245e08d295ff5e '
+        'duplicate and environment_setup_resume_config.fallbackValues.max_resume_age_ms assignment. MIN/MAX occur only '
+        'in the declaration file. The generated config name itself has no named source consumer outside the registry, but '
+        'source/shared/node/experiments/cursor-experiments.ts@b9f644e1795bccc5c27aacc5b0e90b5953409de9 '
+        'materializes every DYNAMIC_CONFIGS entry through getDynamicConfig into the shipping snapshot, and '
+        'source/electron-main/adapters/experiments.ts@4cefd20a838019c34ac1e954ef5d6d86d223e013 emits that snapshot. '
+        'This proves generic experiment-config availability, not that environment setup execution enforces resume age.'
     ),
     'android_owner': (
-        'fabushi-constants source/packages/constants/src/environment_setup.rs preserves the three exact policy values '
-        'and an isolated clamp helper/test, while the existing Rust Host RemoteRoutedTools + CapabilityBroker + '
-        'AuthenticatedRemoteHostRunner remain the sole shipping BoxEnvironmentApply execution owner. No production '
-        'caller is invented for the resume-age constants, no Kotlin/UI owner is added, and the independent Box route '
-        'must not be treated as evidence that the declaration-only resume-age policy is enforced at runtime.'
+        'Existing Rust HostExperimentsExtension remains the single Android experiment/dynamic-config owner. It consumes '
+        'fabushi-constants DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS to expose the exact 7-day bundled fallback for '
+        'environment_setup_resume_config.max_resume_age_ms through its canonical dynamic_config path; MIN/MAX remain '
+        'declaration-only parity assets. No Box/Runner or Presentation owner is introduced, and this config fallback '
+        'must not be cited as evidence of executor-side resume-age enforcement.'
     ),
     'android_targets': [
         'source/packages/constants/src/environment_setup.rs',
-        'source/host/src/runner/remote_routed_tools.rs',
+        'source/host/src/extensions/experiments/extension.rs',
     ],
-    'production_target': 'source/host/src/runner/remote_routed_tools.rs',
-    'test_target': 'source/packages/constants/src/environment_setup.rs',
+    'production_target': 'source/host/src/extensions/experiments/extension.rs',
+    'test_target': 'source/host/src/extensions/experiments/extension.rs',
     'focused_tests': [
         'source/packages/constants/src/environment_setup.rs::tests::resume_age_policy_is_bounded',
-        'source/host/src/runner/remote_routed_tools.rs::tests::box_control_executors_are_explicit_and_payloads_are_bounded',
+        'source/host/src/extensions/experiments/extension.rs::tests::environment_setup_resume_config_preserves_desktop_fallback_without_claiming_executor_enforcement',
     ],
     'platform_delta': (
-        'Android preserves the declaration-only resume-age values in Rust but executes environment mutation only through '
-        'the authorized Remote Runner boundary. The current Desktop source has no direct consumer of these constants, '
-        'so Android does not fabricate one merely to create apparent wiring.'
+        'Desktop exposes the recovered fallback through the generic experiments snapshot. Android exposes the same default '
+        'through the existing HostExperimentsExtension rather than Electron snapshot plumbing; account fencing and network '
+        'override semantics stay owned by that existing Host experiments state machine.'
     ),
     'evidence_semantics': (
-        'Same-head evidence proves the Desktop three-symbol declaration-only boundary, exact Android constants/export, '
-        'and the independently existing bounded BoxEnvironmentApply owner plus focused tests. It must not promote the '
-        'broader Box responsibility or claim runtime resume-age enforcement without a real source consumer.'
+        'Same-head evidence proves exact Desktop occurrence/caller closure, exact Android constants, existing-owner '
+        'HostExperiments production wiring and focused tests. It must not promote broader experiments verification or '
+        'claim that MIN/MAX or executor-side resume-age enforcement are shipping without a real source consumer.'
     ),
-    'disposition': 'android-adapted',
+    'disposition': 'direct-port',
 }
-
 
 AGENT_CORE_INTERACTION_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
 AGENT_CORE_INTERACTION_PRODUCTION_STEP = 'Verify exact-HEAD agent-core interaction production owner'
@@ -2720,10 +2723,10 @@ def _ensure_environment_setup_constant_semantic_mapping(
     item['android_target'] = raw_targets
     item['android_disposition'] = ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['disposition']
     note = (
-        'Desktop environment-setup.ts resume-age constants are source-audited as declaration-only at current authority. '
-        'Android preserves the exact values but does not fabricate a production consumer; the existing authorized '
-        'BoxEnvironmentApply route remains independently owned. Same-head exact-tree and focused-test evidence is '
-        'required before package semantic coverage can close this source row, without promoting broader verification.'
+        'Desktop environment-setup.ts is source-audited through the recovered experiment registry: DEFAULT feeds the '
+        'generic environment_setup_resume_config fallback while MIN/MAX remain declaration-only. Android reuses the '
+        'existing HostExperiments owner for the same default and does not invent executor enforcement. Same-head '
+        'exact-tree and focused-test evidence is required before package semantic coverage can close this source row.'
     )
     notes = item.get('notes')
     if isinstance(notes, str):

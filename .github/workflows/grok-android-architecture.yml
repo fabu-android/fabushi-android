@@ -172,12 +172,10 @@ jobs:
           set -euo pipefail
           test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
           grep -Fq 'pub mod environment_setup;' source/packages/constants/src/lib.rs
-          grep -Fq 'pub const DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;' source/packages/constants/src/environment_setup.rs
-          grep -Fq 'pub const MIN_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS: u64 = 60 * 60 * 1_000;' source/packages/constants/src/environment_setup.rs
-          grep -Fq 'pub const MAX_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1_000;' source/packages/constants/src/environment_setup.rs
-          grep -Fq 'const BOX_ENVIRONMENT_TOOL_NAME: &str = "BoxEnvironmentApply";' source/host/src/runner/remote_routed_tools.rs
-          grep -Fq 'BOX_ENVIRONMENT_TOOL_NAME => REMOTE_BOX_ENVIRONMENT_CAPABILITY' source/host/src/runner/remote_routed_tools.rs
-          grep -Fq 'BOX_ENVIRONMENT_TOOL_NAME => REMOTE_BOX_ENVIRONMENT_EXECUTOR' source/host/src/runner/remote_routed_tools.rs
+          grep -Fq 'use fabushi_constants::environment_setup::DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS;' source/host/src/extensions/experiments/extension.rs
+          grep -Fq 'pub const ENVIRONMENT_SETUP_RESUME_CONFIG_NAME: &str = "environment_setup_resume_config";' source/host/src/extensions/experiments/extension.rs
+          grep -Fq 'ENVIRONMENT_SETUP_RESUME_CONFIG_NAME => BTreeMap::from([' source/host/src/extensions/experiments/extension.rs
+          grep -Fq '("max_resume_age_ms".into(), serde_json::json!(DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS))' source/host/src/extensions/experiments/extension.rs
 
           DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
           import runpy
@@ -192,22 +190,28 @@ jobs:
           git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
           test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
           test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/environment-setup.ts)" = "2e6f6942f567476ea398f4f12da07e9490ca6dbb"
-          assert_declaration_only() {
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/shared/node/experiments/experiment-config.gen.ts)" = "b4ac08fbb9ec2bf6cccc77c1b1245e08d295ff5e"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/shared/node/experiments/cursor-experiments.ts)" = "b9f644e1795bccc5c27aacc5b0e90b5953409de9"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/electron-main/adapters/experiments.ts)" = "4cefd20a838019c34ac1e954ef5d6d86d223e013"
+          assert_source_symbol_count() {
             local symbol="$1"
-            mapfile -t matches < <(git -C "$DESKTOP_DIR" grep -n -F "$symbol" -- .)
+            local expected="$2"
+            mapfile -t matches < <(git -C "$DESKTOP_DIR" grep -n -F "$symbol" -- source)
             printf '%s\n' "${matches[@]}"
-            test "${#matches[@]}" -eq 1
-            test "$(printf '%s\n' "${matches[@]}" | grep -c '^source/packages/constants/environment-setup.ts:')" -eq 1
+            test "${#matches[@]}" -eq "$expected"
           }
-          assert_declaration_only DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS
-          assert_declaration_only MIN_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS
-          assert_declaration_only MAX_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS
+          assert_source_symbol_count DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS 3
+          assert_source_symbol_count MIN_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS 1
+          assert_source_symbol_count MAX_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS 1
+          assert_source_symbol_count environment_setup_resume_config 1
+          grep -Fq 'max_resume_age_ms: DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS' "$DESKTOP_DIR/source/shared/node/experiments/experiment-config.gen.ts"
+          grep -Fq 'for (const name of Object.keys(DYNAMIC_CONFIGS) as DynamicConfigName[]) dynamicConfigs[name] = this.getDynamicConfig(name);' "$DESKTOP_DIR/source/shared/node/experiments/cursor-experiments.ts"
+          grep -Fq 'emitSnapshotChanged: (snapshot) => context.requireMainEdge().emit("experiments-changed", snapshot)' "$DESKTOP_DIR/source/electron-main/adapters/experiments.ts"
       - name: Test exact-HEAD environment-setup constants contracts
         run: |
           set -euo pipefail
           cargo test -p fabushi-constants environment_setup::tests::resume_age_policy_is_bounded -- --exact
-          cargo test -p fabushi-mahayana-host runner::remote_routed_tools::tests::box_control_executors_are_explicit_and_payloads_are_bounded -- --exact
-
+          cargo test -p fabushi-mahayana-host extensions::experiments::extension::tests::environment_setup_resume_config_preserves_desktop_fallback_without_claiming_executor_enforcement -- --exact
 
       - name: Verify exact-HEAD Box Store chrome-profile archive owner
         run: |

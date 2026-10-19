@@ -1,4 +1,5 @@
 use serde_json::Value;
+use fabushi_constants::environment_setup::DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS;
 use std::collections::BTreeMap;
 use super::model_selection::{configured_model_from_config, read_sand_model_experiment_process_override, SandAgentModelSelection, SandModelExperimentArm, SandModelExperimentState};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub const SAND_MODEL_EXPERIMENT_NAME: &str = "sand_model_selection";
+pub const ENVIRONMENT_SETUP_RESUME_CONFIG_NAME: &str = "environment_setup_resume_config";
 pub const SAND_DEFAULT_MODEL_CONFIG_NAME: &str = "sand_default_model";
 pub const SAND_AUTOMATIONS_MODEL_CONFIG_NAME: &str = "sand_automations_model";
 pub const SAND_COMPUTER_USE_CONFIG_NAME: &str = "sand_computer_use_playwright_config";
@@ -503,6 +505,9 @@ fn bundled_feature_gate_default(name: &str) -> bool {
 
 fn bundled_dynamic_config_default(name: &str) -> BTreeMap<String, Value> {
     match name {
+        ENVIRONMENT_SETUP_RESUME_CONFIG_NAME => BTreeMap::from([
+            ("max_resume_age_ms".into(), serde_json::json!(DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS)),
+        ]),
         "grok_bot_conversation_size_limits" => BTreeMap::from([
             ("soft_limit_mb".into(), serde_json::json!(256)),
             ("hard_limit_mb".into(), serde_json::json!(1024)),
@@ -534,6 +539,17 @@ fn bundled_dynamic_config_default(name: &str) -> BTreeMap<String, Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environment_setup_resume_config_preserves_desktop_fallback_without_claiming_executor_enforcement() {
+        let experiments = HostExperimentsExtension::new();
+        let config = experiments.dynamic_config(ENVIRONMENT_SETUP_RESUME_CONFIG_NAME);
+        assert_eq!(
+            config.get("max_resume_age_ms"),
+            Some(&serde_json::json!(DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS)),
+        );
+        assert_eq!(config.len(), 1);
+    }
 
     fn bootstrap(user_id: Option<&str>, gate: bool, model: &str) -> String {
         serde_json::json!({
