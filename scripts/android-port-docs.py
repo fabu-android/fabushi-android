@@ -3339,9 +3339,13 @@ def merge_responsibility_mapping(
         predecessor_authority.get('desktop_root_tree'),
     )
     prior_pair = (PRIOR_DESKTOP_COMMIT, PRIOR_DESKTOP_TREE)
+    persisted_intermediate_pair = (
+        PERSISTED_INTERMEDIATE_DESKTOP_COMMIT,
+        PERSISTED_INTERMEDIATE_DESKTOP_TREE,
+    )
     current_pair = (current, tree_sha)
     require(
-        authority_pair in {pinned_pair, prior_pair, current_pair},
+        authority_pair in {pinned_pair, prior_pair, persisted_intermediate_pair, current_pair},
         'responsibility mapping authority is neither the digest-pinned predecessor, '
         'the exact prior accepted authority, nor the current persisted Desktop authority',
     )
