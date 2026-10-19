@@ -399,12 +399,14 @@ jobs:
           assert 'missing-real-android-owner' in agent_store_ids_reasons
           cloud_agent_path = 'source/packages/constants/cloud-agent.ts'
           cloud_agent_row = next(row for row in package_rows if row['source_path'] == cloud_agent_path)
-          assert cloud_agent_row['responsibilities'] == []
-          assert cloud_agent_row['package_semantic_coverage_status'] == 'incomplete'
-          assert cloud_agent_path in coverage_gaps
-          cloud_agent_reasons = set(cloud_agent_row.get('package_semantic_coverage_reasons', []))
-          assert 'missing-semantic-responsibility' in cloud_agent_reasons
-          assert 'missing-real-android-owner' in cloud_agent_reasons
+          assert cloud_agent_row['responsibilities'] == ['AGENT-RUNTIME-PROMPT-ASSEMBLY-ANDROID-001']
+          assert cloud_agent_row['package_semantic_coverage_status'] == 'complete'
+          assert cloud_agent_path not in coverage_gaps
+          assert cloud_agent_row['mapping_status'] == 'semantic'
+          assert cloud_agent_row['android_disposition'] == 'android-adapted'
+          assert 'source/packages/constants/src/cloud_agent.rs' in cloud_agent_row['android_targets']
+          assert 'source/host/src/runner/android_system_prompt.rs' in cloud_agent_row['android_targets']
+          assert 'source/box-exec-daemon/src/cloud_agent_production.rs' in cloud_agent_row['android_targets']
           mcp_constant_path = 'source/packages/constants/mcp.ts'
           mcp_constant_row = next(row for row in package_rows if row['source_path'] == mcp_constant_path)
           assert mcp_constant_row['responsibilities'] == []
@@ -415,14 +417,14 @@ jobs:
           assert 'missing-real-android-owner' in mcp_constant_reasons
           for item in responsibilities:
             assert all(
-              source.get('path') not in (agent_store_ids_path, cloud_agent_path, mcp_constant_path)
+              source.get('path') not in (agent_store_ids_path, mcp_constant_path)
               for source in item.get('desktop_sources', [])
               if isinstance(source, dict)
             )
             for evidence_key in ('production_evidence', 'test_evidence'):
               assert all(
                 source_path not in evidence.get('source_paths', [])
-                for source_path in (agent_store_ids_path, cloud_agent_path, mcp_constant_path)
+                for source_path in (agent_store_ids_path, mcp_constant_path)
                 for evidence in item.get(evidence_key, [])
                 if isinstance(evidence, dict)
               )
