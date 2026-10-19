@@ -389,7 +389,9 @@ BACKGROUND_COMPLETION_SOURCE_SPECS = {
             'source/packages/agent/actions/background-task-completion-action-handler.ts@'
             'b7e8a047584480e79ec86644648e355bdf22a9b3 calls formatBackgroundCompletions, emits the synthetic '
             'BACKGROUND_TASK_COMPLETION user-message update, creates the follow-up Agent turn, and appends the '
-            'same prompt into the root prompt executor'
+            'same prompt into the root prompt executor. source/packages/agent/index.ts@'
+            'f069375000904ce19414bafb070b896c64ee3b3c registers that handler as backgroundTaskCompletionAction '
+            'on AnysphereAgent and runStream dispatches the incoming action case through the registered handler'
         ),
         'android_owner': (
             'Rust fabushi-constants system_notification contract consumed by shipping '
