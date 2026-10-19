@@ -1316,6 +1316,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             out.mkdir(parents=True)
             runner_temp.mkdir(parents=True)
             desktop_commit, desktop_tree, android_head = "d" * 40, "e" * 40, "a" * 40
+            intermediate_commit = "7" * 40
             tree_entries = [
                 {"path": "AGENTS.md", "sha": "1" * 40, "type": "blob", "mode": "100644"},
                 {"path": "source", "sha": "2" * 40, "type": "tree", "mode": "040000"},
@@ -1369,7 +1370,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             manifest = {
                 "authority_current": True, "desktop_commit": desktop_commit,
                 "source_commit": desktop_commit, "desktop_root_tree": desktop_tree,
-                "desktop_main_before": desktop_commit, "desktop_main_after": desktop_commit,
+                "desktop_main_before": intermediate_commit, "desktop_main_after": desktop_commit,
                 "tree_entries": 3, "tracked_non_tree_entries": 2, "authority_ledger_rows": 2,
                 "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
                 "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
@@ -1438,6 +1439,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                  patch.object(module, "OUT", out), \
                  patch.object(module, "EXPECTED_DESKTOP_COMMIT", desktop_commit), \
                  patch.object(module, "EXPECTED_DESKTOP_TREE", desktop_tree), \
+                 patch.object(module, "PERSISTED_INTERMEDIATE_DESKTOP_COMMIT", intermediate_commit), \
                  patch.object(module, "EXPECTED_TREE_ENTRY_COUNT", 3), \
                  patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \
                  patch.object(module, "EXPECTED_RESPONSIBILITY_COUNT", 2), \

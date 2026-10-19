@@ -4884,7 +4884,8 @@ def audit_receipt() -> None:
     require(live_main_after == EXPECTED_DESKTOP_COMMIT,
             'receipt Desktop main moved during complete-tree verification')
     require(manifest.get('desktop_main_before') in {
-                PRIOR_DESKTOP_COMMIT, PREDECESSOR_DESKTOP_COMMIT, EXPECTED_DESKTOP_COMMIT
+                PRIOR_DESKTOP_COMMIT, PERSISTED_INTERMEDIATE_DESKTOP_COMMIT,
+                PREDECESSOR_DESKTOP_COMMIT, EXPECTED_DESKTOP_COMMIT
             }
             and manifest.get('desktop_main_after') == EXPECTED_DESKTOP_COMMIT
             and manifest.get('authority_current') is True,
