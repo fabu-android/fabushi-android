@@ -105,6 +105,17 @@ jobs:
           cargo test -p fabushi-mahayana-host remote_box_store_sync::tests::store_id_uses_canonical_agent_store_source_contract -- --exact
           cargo test -p fabushi-android-box-exec-daemon box_store_sync_backend::tests::rejects_noncanonical_agent_store_source_id_before_executor -- --exact
           cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::store_id_must_match_canonical_agent_store_source_contract -- --exact
+      - name: Test exact-HEAD Box Store Desktop restore and handoff parity
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::vacuum_preserves_desktop_retired_pack_metadata -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::retired_v1_metadata_does_not_expand_the_active_restore_index -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_member_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_object_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_member_size_sum_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_hydration::tests::hydration_marker_is_atomic_and_removable -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_hydration::tests::hydration_handoff_path_fences_temporary_marker_variants -- --exact
+
       - name: Verify exact-HEAD constants composer production owner
         run: |
           set -euo pipefail
