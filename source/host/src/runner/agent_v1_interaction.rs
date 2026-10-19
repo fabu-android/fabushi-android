@@ -1247,11 +1247,13 @@ mod tests {
                 ProductionTurnPrivacyMode::NoTraining,
             )
             .is_ok());
+        let mut same_original_retry = args(true);
+        same_original_retry.async_original_tool_call_id = "same-original".into();
         assert!(owner
             .begin_ask_question(
                 fence(),
                 "same-original-retry",
-                args(true),
+                same_original_retry,
                 ProductionTurnPrivacyMode::NoTraining,
             )
             .unwrap_err()
