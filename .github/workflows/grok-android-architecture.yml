@@ -126,9 +126,19 @@ jobs:
           cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_prompt_is_deduped_and_does_not_grant_capability -- --exact
 
 
+      - name: Verify exact-HEAD Box Store chrome-profile archive owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'pub chrome_profile_root: PathBuf' source/box-exec-daemon/src/box_store_backend.rs
+          grep -Fq '("chrome_profile", self.config.chrome_profile_root.as_path())' source/box-exec-daemon/src/box_store_backend.rs
+          grep -Fq '"*/Service Worker/CacheStorage/"' source/box-exec-daemon/src/box_store_backend.rs
+          grep -Fq 'const CHROME_PROFILE: &str = "home/box/chrome-profile/";' source/box-exec-daemon/src/box_store_backend.rs
       - name: Test exact-HEAD Box Store Desktop restore and handoff parity
         run: |
           set -euo pipefail
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::snapshot_and_hydrate_keep_profile_state_without_cache_and_do_not_filter_chrome_session -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::frozen_destination_routes_desktop_chrome_profile_to_dedicated_root -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::snapshot_applies_desktop_workspace_ignore_and_negation_semantics -- --exact
           cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::vacuum_preserves_desktop_retired_pack_metadata -- --exact
           cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::retired_v1_metadata_does_not_expand_the_active_restore_index -- --exact
           cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_member_above_desktop_restore_threshold -- --exact
