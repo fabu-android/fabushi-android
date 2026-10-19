@@ -118,6 +118,25 @@ class PrepareCiAndroidAccountSessionTest(unittest.TestCase):
         self.assertNotIn("secret-user", message)
         self.assertNotIn("secret-password", message)
 
+    def test_oidc_accepts_github_actions_pipeline_endpoint(self):
+        from unittest import mock
+
+        response = mock.Mock()
+        response.__enter__ = mock.Mock(return_value=response)
+        response.__exit__ = mock.Mock(return_value=False)
+        response.read.return_value = b'{"value":"' + (b"t" * 40) + b'"}'
+        with mock.patch.object(MODULE.urllib.request, "urlopen", return_value=response) as opened:
+            token = MODULE.oidc_token(
+                audience="https://factory.example",
+                env={
+                    "ACTIONS_ID_TOKEN_REQUEST_URL":
+                    "https://pipelines.actions.githubusercontent.com/run/oidc?x=1",
+                    "ACTIONS_ID_TOKEN_REQUEST_TOKEN": "request-token",
+                },
+            )
+        self.assertEqual("t" * 40, token)
+        self.assertIn("audience=https%3A%2F%2Ffactory.example", opened.call_args.args[0].full_url)
+
     def test_ci_auth_origin_is_separate_and_https_only(self):
         self.assertEqual(
             "https://issuer.example",

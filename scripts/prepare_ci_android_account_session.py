@@ -18,6 +18,10 @@ MAX_SESSION_BYTES = 64 * 1024
 MAX_LIFETIME_SECONDS = 5 * 60 * 60
 DEVICE_RE = re.compile(r"^gha-([0-9]+)-([0-9]+)-interactive$")
 DIGITS_RE = re.compile(r"^[0-9]+$")
+OIDC_HOSTS = {
+    "pipelines.actions.githubusercontent.com",
+    "token.actions.githubusercontent.com",
+}
 
 
 def _credential(value: object) -> str:
@@ -53,7 +57,7 @@ def oidc_token(*, audience: str, env: dict[str, str] | os._Environ[str] | None =
     if not request_url or not request_token:
         raise RuntimeError("GitHub Actions OIDC is required for the isolated account factory")
     parsed = urllib.parse.urlsplit(request_url)
-    if parsed.scheme != "https" or parsed.hostname != "token.actions.githubusercontent.com":
+    if parsed.scheme != "https" or parsed.hostname not in OIDC_HOSTS:
         raise RuntimeError("GitHub Actions OIDC endpoint is invalid")
     query = urllib.parse.parse_qs(parsed.query)
     query["audience"] = [audience]
