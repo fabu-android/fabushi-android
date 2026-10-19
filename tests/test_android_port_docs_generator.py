@@ -1077,11 +1077,14 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         module = load_generator()
         current_commit, current_tree = "d" * 40, "e" * 40
         prior_commit, prior_tree = "c" * 40, "b" * 40
+        prior_parent_commit, prior_parent_tree = "8" * 40, "7" * 40
         predecessor_commit, predecessor_tree = "a" * 40, "9" * 40
         with patch.object(module, "EXPECTED_DESKTOP_COMMIT", current_commit), \
              patch.object(module, "EXPECTED_DESKTOP_TREE", current_tree), \
              patch.object(module, "PRIOR_DESKTOP_COMMIT", prior_commit), \
              patch.object(module, "PRIOR_DESKTOP_TREE", prior_tree), \
+             patch.object(module, "PRIOR_BASELINE_PARENT_DESKTOP_COMMIT", prior_parent_commit), \
+             patch.object(module, "PRIOR_BASELINE_PARENT_DESKTOP_TREE", prior_parent_tree), \
              patch.object(module, "PREDECESSOR_DESKTOP_COMMIT", predecessor_commit), \
              patch.object(module, "PREDECESSOR_DESKTOP_TREE", predecessor_tree), \
              patch.object(module, "EXPECTED_TRACKED_NON_TREE_COUNT", 2), \
@@ -1092,7 +1095,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                 "desktop_repository": "bhrumom/fabushi-desktop",
                 "desktop_commit": prior_commit,
                 "desktop_root_tree": prior_tree,
-                "desktop_main_before": predecessor_commit,
+                "desktop_main_before": prior_parent_commit,
                 "desktop_main_after": prior_commit,
             }
             prior_rows = [
