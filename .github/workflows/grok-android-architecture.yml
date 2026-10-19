@@ -167,6 +167,47 @@ jobs:
           cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_directory_uses_canonical_cloud_agent_fallback_and_normalizes_override -- --exact
           cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_prompt_is_deduped_and_does_not_grant_capability -- --exact
 
+      - name: Verify exact-HEAD environment-setup constants owner boundary
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'pub mod environment_setup;' source/packages/constants/src/lib.rs
+          grep -Fq 'pub const DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS: u64 = 7 * 24 * 60 * 60 * 1_000;' source/packages/constants/src/environment_setup.rs
+          grep -Fq 'pub const MIN_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS: u64 = 60 * 60 * 1_000;' source/packages/constants/src/environment_setup.rs
+          grep -Fq 'pub const MAX_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS: u64 = 30 * 24 * 60 * 60 * 1_000;' source/packages/constants/src/environment_setup.rs
+          grep -Fq 'const BOX_ENVIRONMENT_TOOL_NAME: &str = "BoxEnvironmentApply";' source/host/src/runner/remote_routed_tools.rs
+          grep -Fq 'BOX_ENVIRONMENT_TOOL_NAME => REMOTE_BOX_ENVIRONMENT_CAPABILITY' source/host/src/runner/remote_routed_tools.rs
+          grep -Fq 'BOX_ENVIRONMENT_TOOL_NAME => REMOTE_BOX_ENVIRONMENT_EXECUTOR' source/host/src/runner/remote_routed_tools.rs
+
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-environment-setup-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/environment-setup.ts)" = "2e6f6942f567476ea398f4f12da07e9490ca6dbb"
+          assert_declaration_only() {
+            local symbol="$1"
+            mapfile -t matches < <(git -C "$DESKTOP_DIR" grep -n -F "$symbol" -- .)
+            printf '%s\n' "${matches[@]}"
+            test "${#matches[@]}" -eq 1
+            test "$(printf '%s\n' "${matches[@]}" | grep -c '^source/packages/constants/environment-setup.ts:')" -eq 1
+          }
+          assert_declaration_only DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS
+          assert_declaration_only MIN_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS
+          assert_declaration_only MAX_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS
+      - name: Test exact-HEAD environment-setup constants contracts
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants environment_setup::tests::resume_age_policy_is_bounded -- --exact
+          cargo test -p fabushi-mahayana-host runner::remote_routed_tools::tests::box_control_executors_are_explicit_and_payloads_are_bounded -- --exact
+
 
       - name: Verify exact-HEAD Box Store chrome-profile archive owner
         run: |

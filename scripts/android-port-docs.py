@@ -221,6 +221,54 @@ CLOUD_AGENT_CONSTANT_SOURCE_SPEC = {
     'disposition': 'android-adapted',
 }
 
+ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH = 'source/packages/constants/environment-setup.ts'
+ENVIRONMENT_SETUP_CONSTANT_RESPONSIBILITY_ID = 'BOX-AUTHORIZED-RUNNER-ANDROID-001'
+ENVIRONMENT_SETUP_CONSTANT_PRODUCTION_STEP = 'Verify exact-HEAD environment-setup constants owner boundary'
+ENVIRONMENT_SETUP_CONSTANT_TEST_STEP = 'Test exact-HEAD environment-setup constants contracts'
+ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC = {
+    'symbols': [
+        'DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS',
+        'MIN_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS',
+        'MAX_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS',
+    ],
+    'source_owner': (
+        'Desktop source/packages/constants/environment-setup.ts@2e6f6942f567476ea398f4f12da07e9490ca6dbb '
+        'declares only the default/min/max environment-setup resume-age policy literals (7 days, 1 hour, 30 days). '
+        'Exact-authority full-tree git-grep must prove each symbol occurs only in that declaration file and has no '
+        'current Desktop production import/caller; therefore this source row must not be cited as proof that shipping '
+        'Desktop environment setup currently enforces those ages. The broader user-visible environment-apply capability '
+        'belongs to the existing Box/Runner owner rather than to this declaration file.'
+    ),
+    'android_owner': (
+        'fabushi-constants source/packages/constants/src/environment_setup.rs preserves the three exact policy values '
+        'and an isolated clamp helper/test, while the existing Rust Host RemoteRoutedTools + CapabilityBroker + '
+        'AuthenticatedRemoteHostRunner remain the sole shipping BoxEnvironmentApply execution owner. No production '
+        'caller is invented for the resume-age constants, no Kotlin/UI owner is added, and the independent Box route '
+        'must not be treated as evidence that the declaration-only resume-age policy is enforced at runtime.'
+    ),
+    'android_targets': [
+        'source/packages/constants/src/environment_setup.rs',
+        'source/host/src/runner/remote_routed_tools.rs',
+    ],
+    'production_target': 'source/host/src/runner/remote_routed_tools.rs',
+    'test_target': 'source/packages/constants/src/environment_setup.rs',
+    'focused_tests': [
+        'source/packages/constants/src/environment_setup.rs::tests::resume_age_policy_is_bounded',
+        'source/host/src/runner/remote_routed_tools.rs::tests::box_control_executors_are_explicit_and_payloads_are_bounded',
+    ],
+    'platform_delta': (
+        'Android preserves the declaration-only resume-age values in Rust but executes environment mutation only through '
+        'the authorized Remote Runner boundary. The current Desktop source has no direct consumer of these constants, '
+        'so Android does not fabricate one merely to create apparent wiring.'
+    ),
+    'evidence_semantics': (
+        'Same-head evidence proves the Desktop three-symbol declaration-only boundary, exact Android constants/export, '
+        'and the independently existing bounded BoxEnvironmentApply owner plus focused tests. It must not promote the '
+        'broader Box responsibility or claim runtime resume-age enforcement without a real source consumer.'
+    ),
+    'disposition': 'android-adapted',
+}
+
 
 AGENT_CORE_INTERACTION_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
 AGENT_CORE_INTERACTION_PRODUCTION_STEP = 'Verify exact-HEAD agent-core interaction production owner'
@@ -2615,6 +2663,78 @@ def _ensure_cloud_agent_constant_semantic_mapping(
         item['notes'] = note
 
 
+def _ensure_environment_setup_constant_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Attach declaration-only resume-age constants to the existing Box environment owner without inventing a caller."""
+    source_object = new_by_path.get(ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop environment-setup constant has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == ENVIRONMENT_SETUP_CONSTANT_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'environment-setup semantic mapping requires exactly one '
+        + ENVIRONMENT_SETUP_CONSTANT_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH, {})
+    source.update({
+        'path': ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['symbols']),
+        'focused_tests': list(ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['android_targets']),
+        'source_owner': ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['source_owner'],
+        'android_owner': ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['android_owner'],
+        'platform_delta': ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['platform_delta'],
+        'evidence_semantics': ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['evidence_semantics'],
+    })
+    existing_sources[ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(
+        existing_sources.values(), key=lambda value: value.get('path', '')
+    )
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    item['android_disposition'] = ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['disposition']
+    note = (
+        'Desktop environment-setup.ts resume-age constants are source-audited as declaration-only at current authority. '
+        'Android preserves the exact values but does not fabricate a production consumer; the existing authorized '
+        'BoxEnvironmentApply route remains independently owned. Same-head exact-tree and focused-test evidence is '
+        'required before package semantic coverage can close this source row, without promoting broader verification.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
 
 
 SAND_BOX_ARCHIVE_SOURCE_PATH = 'source/packages/constants/sand-box-archive.ts'
@@ -3656,6 +3776,8 @@ def merge_responsibility_mapping(
         _ensure_sand_box_archive_semantic_mapping(responsibilities, new_by_path, current)
     if CLOUD_AGENT_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_cloud_agent_constant_semantic_mapping(responsibilities, new_by_path, current)
+    if ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH in new_by_path:
+        _ensure_environment_setup_constant_semantic_mapping(responsibilities, new_by_path, current)
     _keep_agent_store_ids_incomplete(responsibilities)
     _keep_mcp_constant_incomplete(responsibilities)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
@@ -4181,6 +4303,84 @@ def merge_responsibility_mapping(
                 file=sys.stderr,
             )
 
+    if ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH in new_by_path and any(
+        isinstance(source, dict) and source.get('path') == ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH
+        for item in responsibilities
+        for source in (item.get('desktop_sources') or [])
+    ):
+        environment_setup_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == ENVIRONMENT_SETUP_CONSTANT_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = environment_setup_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            environment_setup_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        environment_setup_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=ENVIRONMENT_SETUP_CONSTANT_PRODUCTION_STEP,
+            test_step_name=ENVIRONMENT_SETUP_CONSTANT_TEST_STEP,
+            evidence_label='environment-setup three-constant declaration boundary',
+        )
+        if environment_setup_evidence is not None:
+            production_target = ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['production_target']
+            test_target = ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'environment-setup constant closure evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': environment_setup_evidence['workflow_name'],
+                'workflow_id': environment_setup_evidence['workflow_id'],
+                'workflow_path': environment_setup_evidence['workflow_path'],
+                'workflow_event': environment_setup_evidence['workflow_event'],
+                'workflow_repository': environment_setup_evidence['workflow_repository'],
+                'workflow_run_id': environment_setup_evidence['workflow_run_id'],
+                'workflow_job_name': environment_setup_evidence['workflow_job_name'],
+                'workflow_job_id': environment_setup_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': environment_setup_evidence['workflow_job_run_attempt'],
+                'run_attempt': environment_setup_evidence['run_attempt'],
+                'run_conclusion': environment_setup_evidence['run_conclusion'],
+                'result': 'passed',
+                'evidence_semantics': ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['evidence_semantics'],
+            }
+            environment_setup_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': environment_setup_evidence['production_step_name'],
+                'workflow_step_number': environment_setup_evidence['production_step_number'],
+                'evidence_ref': production_target + '#environment-setup-owner-boundary',
+            })
+            environment_setup_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': environment_setup_evidence['test_step_name'],
+                'workflow_step_number': environment_setup_evidence['test_step_number'],
+                'evidence_ref': test_target + '#environment-setup-focused-tests',
+                'focused_tests': list(ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head environment-setup three-constant closure evidence; '
+                'environment-setup package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
 
 
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
@@ -4505,6 +4705,8 @@ def merge_responsibility_mapping(
             row['disposition'] = SAND_BOX_ARCHIVE_SOURCE_SPEC['disposition']
         elif path == CLOUD_AGENT_CONSTANT_SOURCE_PATH:
             row['disposition'] = CLOUD_AGENT_CONSTANT_SOURCE_SPEC['disposition']
+        elif path == ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH:
+            row['disposition'] = ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
             row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
         elif path == STRUCTURED_LOG_CONSTANT_SOURCE_PATH:

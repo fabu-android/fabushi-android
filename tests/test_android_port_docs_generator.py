@@ -998,6 +998,19 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
 
 
 
+    def test_environment_setup_source_spec_preserves_declaration_only_boundary(self):
+        module = load_generator()
+        spec = module.ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC
+        self.assertEqual(module.ENVIRONMENT_SETUP_CONSTANT_RESPONSIBILITY_ID, "BOX-AUTHORIZED-RUNNER-ANDROID-001")
+        self.assertIn("declares only the default/min/max environment-setup resume-age policy literals", spec["source_owner"])
+        self.assertIn("full-tree git-grep", spec["source_owner"])
+        self.assertIn("has no current Desktop production import/caller", spec["source_owner"])
+        self.assertIn("does not fabricate a production consumer", spec["android_owner"])
+        self.assertEqual(spec["production_target"], "source/host/src/runner/remote_routed_tools.rs")
+        self.assertEqual(spec["test_target"], "source/packages/constants/src/environment_setup.rs")
+        self.assertEqual(spec["disposition"], "android-adapted")
+        self.assertIn("must not promote the broader Box responsibility", spec["evidence_semantics"])
+
     def test_auto_spillover_ui_source_spec_distinguishes_declaration_from_shipping_usage_owner(self):
         module = load_generator()
         spec = module.AUTO_SPILLOVER_UI_SOURCE_SPEC
