@@ -115,10 +115,13 @@ private class MiniAppNativeWebMcpBridge(
 }
 
 private const val CAPABILITY_PROBE_TOOL = "offline.capabilities"
-private val CAPABILITY_PREFIXES = setOf("offline", "selection", "transfer", "scan", "hotspot", "update")
+private val CAPABILITY_PREFIXES = setOf(
+    "offline", "selection", "transfer", "scan", "state", "config", "platform",
+    "hotspot", "update", "diagnostics", "compat",
+)
 
 /** What this host granted to the MiniApp, derived from its declared tool contract. */
-private fun miniAppCapabilityAnswer(tools: Collection<MiniAppToolContract>): JSONObject {
+internal fun miniAppCapabilityAnswer(tools: Collection<MiniAppToolContract>): JSONObject {
     val capabilities = tools
         .map { it.name.substringBefore('.').lowercase() }
         .filter { it in CAPABILITY_PREFIXES }
@@ -138,16 +141,21 @@ private fun toolContractJson(plugin: MarketplacePlugin): String {
     rows.put(
         JSONObject()
             .put("name", CAPABILITY_PROBE_TOOL)
+                .put("title", CAPABILITY_PROBE_TOOL)
             .put("description", "Report which capabilities this host granted to the MiniApp.")
-            .put("readOnlyHint", true),
+                .put("readOnlyHint", true)
+                .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject())),
     )
     for (tool in plugin.tools) {
-        rows.put(
-            JSONObject()
+        val row = JSONObject()
                 .put("name", tool.name)
+                .put("title", tool.title ?: tool.name)
                 .put("description", tool.description)
-                .put("readOnlyHint", tool.approval == "none"),
-        )
+                .put("readOnlyHint", tool.approval == "none")
+        tool.inputSchemaJson?.let { schema ->
+            runCatching { row.put("inputSchema", JSONObject(schema)) }
+        }
+        rows.put(row)
     }
     return rows.toString()
 }
@@ -198,7 +206,7 @@ private fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: 
             return payload.result;
           }
           function register(item){
-            const tool={name:item.name,description:item.description||item.name,inputSchema:{type:'object',properties:{}},annotations:{readOnlyHint:item.readOnlyHint===true},execute:(input)=>nativeCall(item.name,input)};
+            const tool={name:item.name,title:item.title||item.name,description:item.description||item.name,inputSchema:item.inputSchema||{type:'object',properties:{}},annotations:{readOnlyHint:item.readOnlyHint===true},execute:(input)=>nativeCall(item.name,input)};
             localTools.set(tool.name,tool);
             if(document.modelContext&&typeof document.modelContext.registerTool==='function'){
               const controller=new AbortController();controllers.push(controller);

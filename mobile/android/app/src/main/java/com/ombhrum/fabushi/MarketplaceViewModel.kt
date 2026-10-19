@@ -20,6 +20,8 @@ data class MiniAppToolContract(
     val name: String,
     val description: String,
     val approval: String,
+    val title: String? = null,
+    val inputSchemaJson: String? = null,
 )
 
 data class MarketplacePlugin(
@@ -634,6 +636,8 @@ private fun JSONArray?.toToolContracts(): List<MiniAppToolContract> = buildList 
                 name = name,
                 description = command.optString("description", name).ifBlank { name },
                 approval = command.optString("approval", "none"),
+                title = command.optString("title", name).ifBlank { name },
+                inputSchemaJson = command.optJSONObject("inputSchema")?.toString(),
             ),
         )
     }
