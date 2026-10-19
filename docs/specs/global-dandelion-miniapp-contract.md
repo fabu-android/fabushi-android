@@ -23,15 +23,17 @@ capabilities remain unconfigured and the Mini App hides their panels.
   platform, hotspot, update, diagnostics and compat.
 - AND-GD-04: every call remains Host-routed and approval-gated; unsupported or
   unconfigured native execution fails closed.
-- AND-GD-05: the WebView bridge is torn down on page disposal and late events
-  cannot reach a destroyed page.
+- AND-GD-05: the WebView bridge is torn down on page disposal, loses its native
+  execution grant while the Activity is paused/stopped, and late events cannot
+  reach a destroyed page.
 
 ## Acceptance
 
 - AND-GD-AC-01: unit test proves complete capability-domain projection and
   excludes undeclared domains.
 - AND-GD-AC-02: unit/Actions compilation proves schema and title propagation.
-- AND-GD-AC-03: a later native adapter must add real Rust-core, picker,
+- AND-GD-AC-03: lifecycle review proves background revocation and disposal
+  cleanup; a later native adapter must add real Rust-core, picker,
   permission, cancellation, restart and device evidence before any row is
   promoted from `not-configured` to `passed`.
 
