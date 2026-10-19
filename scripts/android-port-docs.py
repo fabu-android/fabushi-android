@@ -823,7 +823,7 @@ def _latest_exact_head_android_ci_evidence(
                         run.get('name') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME
                         and run.get('workflow_id') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID
                         and run.get('path') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH
-                        and run.get('event') == 'pull_request'
+                        and run.get('event') in ('pull_request', 'push')
                         and run.get('head_sha') == android_head
                         and (run.get('repository') or {}).get('full_name') == ANDROID_REPOSITORY
                     ):
@@ -944,7 +944,7 @@ def _package_action_job_passed(
         or entry.get('workflow_name') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME
         or entry.get('workflow_id') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID
         or entry.get('workflow_path') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH
-        or entry.get('workflow_event') != 'pull_request'
+        or entry.get('workflow_event') not in ('pull_request', 'push')
         or entry.get('workflow_repository') != ANDROID_REPOSITORY
         or entry.get('run_conclusion') != 'success'
         or not isinstance(evidence_ref, str) or evidence_ref.count('#') != 1
@@ -969,7 +969,7 @@ def _package_action_job_passed(
                 run.get('name') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME
                 or run.get('workflow_id') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID
                 or run.get('path') != ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH
-                or run.get('event') != 'pull_request'
+                or run.get('event') not in ('pull_request', 'push')
                 or (run.get('repository') or {}).get('full_name') != ANDROID_REPOSITORY
                 or run.get('head_sha') != android_head
                 or run.get('status') != 'completed'
