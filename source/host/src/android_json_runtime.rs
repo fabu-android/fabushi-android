@@ -194,6 +194,7 @@ use crate::extensions::transcript::send_turn_dispatch::{
 use crate::extensions::webauthn_proxy::{
     WebAuthnBridgeError, WebAuthnProxyExtension, WebAuthnProxyExtensionConfig,
 };
+use crate::runner::agent_v1_interaction::AskQuestionTranscriptWindowProvider;
 use crate::runner::{
     append_android_agent_profile_system_instructions,
     append_android_dynamic_runtime_system_instructions,
@@ -205,7 +206,7 @@ use crate::runner::{
     AndroidMcpPromptServer, AndroidRemotePromptState, AndroidSkillPromptItem,
     AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
-    decode_response_base64, with_ask_question_tool, AskQuestionTranscriptWindowProvider, InteractionFence,
+    decode_response_base64, with_ask_question_tool, InteractionFence,
     SharedAgentInteractionOwner, AgentV1TurnEndedUpdate,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
