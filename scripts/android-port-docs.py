@@ -48,8 +48,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9441
-EXPECTED_TRACKED_NON_TREE_COUNT = 8286
+EXPECTED_TREE_ENTRY_COUNT = 9442
+EXPECTED_TRACKED_NON_TREE_COUNT = 8287
 PRIOR_TREE_ENTRY_COUNT = 9441
 PRIOR_TRACKED_NON_TREE_COUNT = 8286
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
@@ -69,10 +69,10 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = 'adce9f7618e80870bd89a2dee6db7f77d6e066a9'
-EXPECTED_DESKTOP_TREE = '927d8becb9aa019a63e3f075598995481a0430b4'
-PRIOR_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
-PRIOR_DESKTOP_TREE = 'd19997afb9e1c4f3473777ac9ef2b96d6ef6a6da'
+EXPECTED_DESKTOP_COMMIT = '160703057b24f6339ef2d88732c38dced8bc13aa'
+EXPECTED_DESKTOP_TREE = 'cdf49de55a4030749c1fc19679fedcd44daeb9d1'
+PRIOR_DESKTOP_COMMIT = 'adce9f7618e80870bd89a2dee6db7f77d6e066a9'
+PRIOR_DESKTOP_TREE = '927d8becb9aa019a63e3f075598995481a0430b4'
 PERSISTED_INTERMEDIATE_DESKTOP_COMMIT = '12887d2a44ba450b13ca8390066a39418c52e0c9'
 PERSISTED_INTERMEDIATE_DESKTOP_TREE = '4bc59314edd76a51bd8f0e2d0654935d9e8ffb41'
 PREDECESSOR_DESKTOP_COMMIT = '12a4e29819592e3a7e32f7435cb0cf2e3cc53848'
@@ -209,25 +209,34 @@ AGENT_CORE_INTERACTION_SOURCE_SPECS = {
         ],
         'source_owner': (
             'Desktop source/packages/constants/ask-question.ts owns canonical AskQuestion auto-answer '
-            'identity/reason detection; its shipping direct caller source/packages/agent/tools/core/ask-question/index.ts '
-            'uses isAskQuestionAutoAnswerReason in shouldReceiptAskQuestionResult so timeout/auto-answer rejection '
-            'does not create a completion receipt while success, error, and user rejection do'
+            'identity/reason detection; source/packages/agent/tools/core/ask-question/index.ts consumes it in '
+            'shouldReceiptAskQuestionResult, source/packages/agent/actions/ask-question-completion.ts applies that '
+            'decision before markAskQuestionCompleted, replay-horizon.ts owns live async-original identity recovery, '
+            'and async-ask-question-completion-action-handler.ts resumes the Agent turn with the settled result'
         ),
         'android_owner': (
-            'Rust fabushi-constants ask_question identity contract is consumed directly by the shipping Host '
-            'SharedAgentInteractionOwner::settle_response/should_receipt_ask_question_result owner; completed '
-            'receipt deduplication stays account/process fenced and auto-answer rejection releases the original '
-            'tool-call identity without introducing a second receipt owner'
+            'Rust fabushi-constants ask_question identity contract is consumed by the shipping Host '
+            'SharedAgentInteractionOwner::settle_response/should_receipt_ask_question_result owner; that same owner '
+            'holds pending/completed receipt deduplication and account/process fencing, while TranscriptStore supplies '
+            'the bounded live replay horizon used by turn_ended pruning without introducing a second receipt owner'
         ),
         'android_targets': [
             'source/packages/constants/src/ask_question.rs',
             'source/host/src/runner/agent_v1_interaction.rs',
+            'source/host/src/extensions/transcript/transcript_store.rs',
         ],
         'production_target': 'source/host/src/runner/agent_v1_interaction.rs',
         'test_target': 'source/host/src/runner/agent_v1_interaction.rs',
         'focused_tests': [
             'source/packages/constants/src/ask_question.rs::tests::structured_identity_round_trips_and_legacy_prefix_remains_recognized',
-            'source/host/src/runner/agent_v1_interaction.rs::tests::auto_answer_rejection_does_not_consume_the_completion_receipt_identity',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::structured_and_legacy_auto_answer_rejections_do_not_consume_the_completion_receipt_identity',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::ordinary_async_success_error_and_user_rejection_consume_completion_receipts',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::duplicate_sync_settlement_is_rejected_without_replacing_the_first_result',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::completed_receipts_follow_the_live_window_while_pending_receipts_are_preserved',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::completed_receipt_deduplication_is_account_and_process_fenced',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::stale_account_and_process_epoch_responses_fail_closed',
+            'source/host/src/extensions/transcript/transcript_store.rs::tests::async_ask_question_replay_window_is_account_agent_scoped_and_bounded',
+            'source/host/src/extensions/transcript/transcript_store.rs::tests::live_async_ask_question_ids_follow_the_current_transcript_window_and_fallback',
         ],
         'disposition': 'android-adapted',
     },

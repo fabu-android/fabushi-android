@@ -1002,7 +1002,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8286, 9441),
+            (8258, 9412, 8287, 9442),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
@@ -1987,6 +1987,66 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             self.assertIn(source_spec["production_target"], source["android_targets"])
             self.assertIn(source_spec["test_target"], source["android_targets"])
             self.assertTrue(all(target.startswith("source/") for target in source["android_targets"]))
+
+    def test_agent_core_interaction_mapping_covers_ask_question_receipts_replay_and_fencing(self):
+        module = load_generator()
+        primary = {
+            "responsibility_id": module.AGENT_CORE_INTERACTION_RESPONSIBILITY_ID,
+            "desktop_sources": [],
+            "source_owner": "Agent interaction owner",
+            "android_owner": "SharedAgentInteractionOwner",
+            "android_target": [],
+        }
+        responsibilities = padded_responsibilities(primary)
+        new_by_path = {
+            path: {"sha": f"{index + 100:040x}", "mode": "100644", "type": "blob"}
+            for index, path in enumerate(module.AGENT_CORE_INTERACTION_SOURCE_SPECS)
+        }
+        module._ensure_agent_core_interaction_semantic_mapping(
+            responsibilities, new_by_path, CURRENT_DESKTOP_COMMIT
+        )
+        owner = next(
+            item for item in responsibilities
+            if item["responsibility_id"] == module.AGENT_CORE_INTERACTION_RESPONSIBILITY_ID
+        )
+        ask_path = "source/packages/constants/ask-question.ts"
+        source = next(item for item in owner["desktop_sources"] if item["path"] == ask_path)
+        spec = module.AGENT_CORE_INTERACTION_SOURCE_SPECS[ask_path]
+        self.assertEqual(source["blob_sha"], new_by_path[ask_path]["sha"])
+        self.assertEqual(source["source_commit"], CURRENT_DESKTOP_COMMIT)
+        self.assertEqual(source["mapping_quality"], "semantic")
+        self.assertEqual(source["symbols"], spec["symbols"])
+        self.assertEqual(source["focused_tests"], spec["focused_tests"])
+        self.assertIn("source/packages/constants/src/ask_question.rs", source["android_targets"])
+        self.assertIn("source/host/src/runner/agent_v1_interaction.rs", source["android_targets"])
+        self.assertIn("source/host/src/extensions/transcript/transcript_store.rs", source["android_targets"])
+        self.assertIn("ask-question-completion.ts", source["source_owner"])
+        self.assertIn("replay-horizon.ts", source["source_owner"])
+        self.assertIn("SharedAgentInteractionOwner", source["android_owner"])
+        self.assertIn("TranscriptStore", source["android_owner"])
+        self.assertEqual(spec["disposition"], "android-adapted")
+
+    def test_ask_question_shipping_contract_is_pinned_by_exact_head_workflows(self):
+        host = (ROOT / "source" / "host" / "src" / "runner" / "agent_v1_interaction.rs").read_text(encoding="utf-8")
+        transcript = (ROOT / "source" / "host" / "src" / "extensions" / "transcript" / "transcript_store.rs").read_text(encoding="utf-8")
+        grok = (ROOT / ".github" / "workflows" / "grok-android-architecture.yml").read_text(encoding="utf-8")
+        focused = (ROOT / ".github" / "workflows" / "android-interaction-focused.yml").read_text(encoding="utf-8")
+        self.assertIn("fabushi_constants::ask_question::is_ask_question_auto_answer_reason", host)
+        self.assertIn("fn should_receipt_ask_question_result", host)
+        self.assertIn("prune_completed_async_receipts_from_transcript_window", host)
+        self.assertIn("live_async_ask_question_original_tool_call_ids", transcript)
+        for test_name in (
+            "structured_and_legacy_auto_answer_rejections_do_not_consume_the_completion_receipt_identity",
+            "ordinary_async_success_error_and_user_rejection_consume_completion_receipts",
+            "duplicate_sync_settlement_is_rejected_without_replacing_the_first_result",
+            "completed_receipts_follow_the_live_window_while_pending_receipts_are_preserved",
+            "completed_receipt_deduplication_is_account_and_process_fenced",
+            "stale_account_and_process_epoch_responses_fail_closed",
+            "async_ask_question_replay_window_is_account_agent_scoped_and_bounded",
+            "live_async_ask_question_ids_follow_the_current_transcript_window_and_fallback",
+        ):
+            self.assertIn(test_name, grok)
+            self.assertIn(test_name, focused)
 
     def test_constants_composer_mapping_uses_desktop_limit_and_real_host_owner(self):
         module = load_generator()

@@ -976,43 +976,123 @@ mod tests {
     }
 
     #[test]
-    fn auto_answer_rejection_does_not_consume_the_completion_receipt_identity() {
+    fn structured_and_legacy_auto_answer_rejections_do_not_consume_the_completion_receipt_identity() {
+        for (label, reason) in [
+            ("structured", fabushi_constants::ask_question::default_ask_question_auto_answer_reason()),
+            ("legacy", format!("{}.", fabushi_constants::ask_question::ASK_QUESTION_AUTO_ANSWER_REASON_PREFIX)),
+        ] {
+            let owner = SharedAgentInteractionOwner::default();
+            let original_id = format!("auto-answer-{label}");
+            let runtime_id = format!("runtime-auto-answer-{label}");
+            let retry_id = format!("runtime-auto-answer-{label}-retry");
+            let mut question_args = args(true);
+            question_args.async_original_tool_call_id = original_id.clone();
+            let (id, _) = owner.begin_ask_question(
+                fence(), &runtime_id, question_args.clone(), ProductionTurnPrivacyMode::NoTraining,
+            ).unwrap();
+            let response = InteractionResponse {
+                id,
+                result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                    AskQuestionInteractionResponse {
+                        result: Some(AskQuestionResult {
+                            result: Some(ask_question_result::Result::Rejected(AskQuestionRejected { reason })),
+                        }),
+                    },
+                )),
+            };
+            assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
+            owner.turn_ended(
+                &fence(),
+                TurnEndedUpdate::default(),
+                &assistant_window(&[("AskQuestion", runtime_id.as_str(), Some(original_id.as_str()))]),
+            ).unwrap();
+            assert_eq!(owner.drain_post_turn(&fence()).unwrap().len(), 1);
+            assert!(owner.begin_ask_question(
+                fence(), &retry_id, question_args, ProductionTurnPrivacyMode::NoTraining,
+            ).is_ok(), "{label} auto-answer rejection must release the completion receipt identity");
+        }
+    }
+
+    #[test]
+    fn ordinary_async_success_error_and_user_rejection_consume_completion_receipts() {
+        let cases = vec![
+            ("success", "success", AskQuestionResult {
+                result: Some(ask_question_result::Result::Success(AskQuestionSuccess { answers: vec![] })),
+            }),
+            ("error", "error", AskQuestionResult {
+                result: Some(ask_question_result::Result::Error(AskQuestionError { error_message: "provider failed".into() })),
+            }),
+            ("user-rejected", "rejected", AskQuestionResult {
+                result: Some(ask_question_result::Result::Rejected(AskQuestionRejected { reason: "user skipped".into() })),
+            }),
+        ];
+        for (label, expected_kind, result) in cases {
+            let owner = SharedAgentInteractionOwner::default();
+            let original_id = format!("ordinary-{label}");
+            let runtime_id = format!("runtime-{label}");
+            let retry_id = format!("runtime-{label}-retry");
+            let mut question_args = args(true);
+            question_args.async_original_tool_call_id = original_id.clone();
+            let (id, _) = owner.begin_ask_question(
+                fence(), &runtime_id, question_args.clone(), ProductionTurnPrivacyMode::NoTraining,
+            ).unwrap();
+            let response = InteractionResponse {
+                id,
+                result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                    AskQuestionInteractionResponse { result: Some(result) },
+                )),
+            };
+            assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
+            owner.turn_ended(
+                &fence(),
+                TurnEndedUpdate::default(),
+                &assistant_window(&[("AskQuestion", runtime_id.as_str(), Some(original_id.as_str()))]),
+            ).unwrap();
+            let completion = owner.drain_post_turn(&fence()).unwrap();
+            assert_eq!(completion.len(), 1);
+            assert_eq!(completion[0].result_kind, expected_kind);
+            assert!(owner.begin_ask_question(
+                fence(), &retry_id, question_args, ProductionTurnPrivacyMode::NoTraining,
+            ).unwrap_err().contains("duplicate async AskQuestion"),
+            "{label} completion must consume the receipt identity while it remains live");
+        }
+    }
+
+    #[test]
+    fn duplicate_sync_settlement_is_rejected_without_replacing_the_first_result() {
         let owner = SharedAgentInteractionOwner::default();
-        let mut question_args = args(true);
-        question_args.async_original_tool_call_id = "auto-answer-call".into();
+        let expected = fence();
         let (id, _) = owner.begin_ask_question(
-            fence(),
-            "runtime-auto-answer",
-            question_args.clone(),
-            ProductionTurnPrivacyMode::NoTraining,
+            expected.clone(), "sync-duplicate", args(false), ProductionTurnPrivacyMode::NoTraining,
         ).unwrap();
-        let response = InteractionResponse {
+        let first = InteractionResponse {
             id,
             result: Some(interaction_response::Result::AskQuestionInteractionResponse(
                 AskQuestionInteractionResponse {
                     result: Some(AskQuestionResult {
-                        result: Some(ask_question_result::Result::Rejected(AskQuestionRejected {
-                            reason: fabushi_constants::ask_question::default_ask_question_auto_answer_reason(),
-                        })),
+                        result: Some(ask_question_result::Result::Rejected(AskQuestionRejected { reason: "first result".into() })),
                     }),
                 },
             )),
         };
-        assert!(owner.settle_response(&fence(), &response.encode_to_vec()).unwrap());
-        owner
-            .turn_ended(
-                &fence(),
-                TurnEndedUpdate::default(),
-                &assistant_window(&[("AskQuestion", "runtime-auto-answer", Some("auto-answer-call"))]),
-            )
-            .unwrap();
-        assert_eq!(owner.drain_post_turn(&fence()).unwrap().len(), 1);
-        assert!(owner.begin_ask_question(
-            fence(),
-            "runtime-auto-answer-retry",
-            question_args,
-            ProductionTurnPrivacyMode::NoTraining,
-        ).is_ok());
+        assert!(!owner.settle_response(&expected, &first.encode_to_vec()).unwrap());
+        let duplicate = InteractionResponse {
+            id,
+            result: Some(interaction_response::Result::AskQuestionInteractionResponse(
+                AskQuestionInteractionResponse {
+                    result: Some(AskQuestionResult {
+                        result: Some(ask_question_result::Result::Error(AskQuestionError { error_message: "second result".into() })),
+                    }),
+                },
+            )),
+        };
+        assert!(owner.settle_response(&expected, &duplicate.encode_to_vec()).unwrap_err().contains("already settled"));
+        let cancelled = AtomicBool::new(false);
+        let settled = owner.wait_sync(id, &expected, &cancelled, Duration::from_millis(10)).unwrap();
+        let Some(ask_question_result::Result::Rejected(rejected)) = settled.result else {
+            panic!("expected the first rejected settlement to remain canonical");
+        };
+        assert_eq!(rejected.reason, "first result");
     }
 
     #[test]

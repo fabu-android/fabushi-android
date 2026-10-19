@@ -115,8 +115,8 @@ jobs:
           from urllib.request import Request, urlopen
 
           desktop_repo = 'bhrumom/fabushi-desktop'
-          desktop_commit = 'adce9f7618e80870bd89a2dee6db7f77d6e066a9'
-          desktop_tree = '927d8becb9aa019a63e3f075598995481a0430b4'
+          desktop_commit = '160703057b24f6339ef2d88732c38dced8bc13aa'
+          desktop_tree = 'cdf49de55a4030749c1fc19679fedcd44daeb9d1'
           prior_desktop_commits = {
             '12a4e29819592e3a7e32f7435cb0cf2e3cc53848',
             'ca618ae19add78872fcac7cb86bf8754a4ad7a55',
@@ -124,10 +124,12 @@ jobs:
             '4d805081f800c63c8d17ce927ea70136ec6306e9',
             '11b3459a85f90288f5d9bf2b0e5adc14ed2e3f57',
             '72ca525b7c2f5d1d605bf4a3261485609bd2c05f',
+            'adce9f7618e80870bd89a2dee6db7f77d6e066a9',
+            'f6b916bbac6e578add9e33acb140d9864946880d',
             desktop_commit,
           }
-          expected_tree_entries = 9441
-          expected_non_tree_entries = 8286
+          expected_tree_entries = 9442
+          expected_non_tree_entries = 8287
 
           def github_json(path):
             headers = {
@@ -348,6 +350,36 @@ jobs:
                 and (evidence.get('evidence_ref') or '').split('#', 1)[0] in row['android_targets']
                 for evidence in candidates
               ), (path, evidence_key, step_name)
+          ask_question_path = 'source/packages/constants/ask-question.ts'
+          ask_question_row = next(row for row in package_rows if row['source_path'] == ask_question_path)
+          assert ask_question_row['mapping_status'] == 'semantic'
+          assert ask_question_row['responsibilities'] == ['AGENT-RUN-LIFECYCLE-001']
+          assert ask_question_row['disposition'] == 'android-adapted'
+          assert ask_question_row['package_semantic_coverage_status'] == 'complete', ask_question_row.get('package_semantic_coverage_reasons')
+          assert ask_question_path not in coverage_gaps, coverage_gaps.get(ask_question_path)
+          for target in (
+            'source/packages/constants/src/ask_question.rs',
+            'source/host/src/runner/agent_v1_interaction.rs',
+            'source/host/src/extensions/transcript/transcript_store.rs',
+          ):
+            assert target in ask_question_row['android_targets'], (ask_question_path, target)
+          ask_question_owner = next(item for item in responsibilities
+                                    if item['responsibility_id'] == 'AGENT-RUN-LIFECYCLE-001')
+          ask_question_anchor = next(
+            source for source in ask_question_owner['desktop_sources']
+            if source['path'] == ask_question_path
+          )
+          assert ask_question_anchor['mapping_quality'] == 'semantic'
+          focused_names = set(ask_question_anchor.get('focused_tests', []))
+          for expected_test in (
+            'source/packages/constants/src/ask_question.rs::tests::structured_identity_round_trips_and_legacy_prefix_remains_recognized',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::structured_and_legacy_auto_answer_rejections_do_not_consume_the_completion_receipt_identity',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::ordinary_async_success_error_and_user_rejection_consume_completion_receipts',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::duplicate_sync_settlement_is_rejected_without_replacing_the_first_result',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::completed_receipt_deduplication_is_account_and_process_fenced',
+            'source/host/src/extensions/transcript/transcript_store.rs::tests::async_ask_question_replay_window_is_account_agent_scoped_and_bounded',
+          ):
+            assert expected_test in focused_names, expected_test
           agent_store_ids_path = 'source/packages/constants/agent-store-ids.ts'
           agent_store_ids_row = next(row for row in package_rows if row['source_path'] == agent_store_ids_path)
           assert agent_store_ids_row['responsibilities'] == []
