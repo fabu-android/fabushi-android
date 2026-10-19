@@ -30,6 +30,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ombhrum.fabushi.core.MahayanaHost
 import org.json.JSONArray
 import org.json.JSONObject
@@ -115,15 +118,20 @@ private class MiniAppNativeWebMcpBridge(
 }
 
 private const val CAPABILITY_PROBE_TOOL = "offline.capabilities"
-private val CAPABILITY_PREFIXES = setOf("offline", "selection", "transfer", "scan", "hotspot", "update")
+private val CAPABILITY_PREFIXES = setOf(
+    "offline", "selection", "transfer", "scan", "state", "config", "platform",
+    "hotspot", "update", "diagnostics", "compat",
+)
 
 /** What this host granted to the MiniApp, derived from its declared tool contract. */
-private fun miniAppCapabilityAnswer(tools: Collection<MiniAppToolContract>): JSONObject {
-    val capabilities = tools
-        .map { it.name.substringBefore('.').lowercase() }
-        .filter { it in CAPABILITY_PREFIXES }
-        .distinct()
-        .sorted()
+internal fun miniAppCapabilityDomains(tools: Collection<MiniAppToolContract>): List<String> = tools
+    .map { it.name.substringBefore('.').lowercase() }
+    .filter { it in CAPABILITY_PREFIXES }
+    .distinct()
+    .sorted()
+
+internal fun miniAppCapabilityAnswer(tools: Collection<MiniAppToolContract>): JSONObject {
+    val capabilities = miniAppCapabilityDomains(tools)
     return JSONObject()
         .put("contract", "fabushi.miniapp.tools.v1")
         .put("platform", "android")
@@ -138,16 +146,21 @@ private fun toolContractJson(plugin: MarketplacePlugin): String {
     rows.put(
         JSONObject()
             .put("name", CAPABILITY_PROBE_TOOL)
+                .put("title", CAPABILITY_PROBE_TOOL)
             .put("description", "Report which capabilities this host granted to the MiniApp.")
-            .put("readOnlyHint", true),
+                .put("readOnlyHint", true)
+                .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject())),
     )
     for (tool in plugin.tools) {
-        rows.put(
-            JSONObject()
+        val row = JSONObject()
                 .put("name", tool.name)
+                .put("title", tool.title ?: tool.name)
                 .put("description", tool.description)
-                .put("readOnlyHint", tool.approval == "none"),
-        )
+                .put("readOnlyHint", tool.approval == "none")
+        tool.inputSchemaJson?.let { schema ->
+            runCatching { row.put("inputSchema", JSONObject(schema)) }
+        }
+        rows.put(row)
     }
     return rows.toString()
 }
@@ -198,7 +211,7 @@ private fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: 
             return payload.result;
           }
           function register(item){
-            const tool={name:item.name,description:item.description||item.name,inputSchema:{type:'object',properties:{}},annotations:{readOnlyHint:item.readOnlyHint===true},execute:(input)=>nativeCall(item.name,input)};
+            const tool={name:item.name,title:item.title||item.name,description:item.description||item.name,inputSchema:item.inputSchema||{type:'object',properties:{}},annotations:{readOnlyHint:item.readOnlyHint===true},execute:(input)=>nativeCall(item.name,input)};
             localTools.set(tool.name,tool);
             if(document.modelContext&&typeof document.modelContext.registerTool==='function'){
               const controller=new AbortController();controllers.push(controller);
@@ -241,12 +254,15 @@ fun MiniAppWebMcpSurface(
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val host = remember(plugin.pluginId) { MahayanaHost(context.applicationContext) }
     var status by remember(plugin.pluginId) { mutableStateOf("正在解析本地 WebMCP…") }
     var localHtml by remember(plugin.pluginId) { mutableStateOf<String?>(null) }
     var accountProjection by remember(plugin.pluginId) { mutableStateOf(JSONObject().put("loggedIn", false).put("user", JSONObject())) }
     var sourceResolved by remember(plugin.pluginId) { mutableStateOf(false) }
     val localDocumentActive = remember(plugin.pluginId) { AtomicBoolean(false) }
+    val localPageLoaded = remember(plugin.pluginId) { AtomicBoolean(false) }
+    val lifecycleActive = remember(plugin.pluginId) { AtomicBoolean(true) }
     val encodedId = URLEncoder.encode(plugin.pluginId, StandardCharsets.UTF_8.toString())
     val hostedUrl = "https://fabushi.ombhrum.com/miniapps/$encodedId/"
 
@@ -299,7 +315,8 @@ fun MiniAppWebMcpSurface(
                     }
 
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                        localDocumentActive.set(url?.startsWith("https://$LOCAL_WEB_MCP_ORIGIN/") == true)
+                        localPageLoaded.set(url?.startsWith("https://$LOCAL_WEB_MCP_ORIGIN/") == true)
+                        localDocumentActive.set(localPageLoaded.get() && lifecycleActive.get())
                         status = "正在加载 WebMCP…"
                     }
 
@@ -347,7 +364,8 @@ fun MiniAppWebMcpSurface(
                 if (view.tag == desiredTag) return@AndroidView
                 view.tag = desiredTag
                 if (local != null) {
-                    localDocumentActive.set(true)
+                    localPageLoaded.set(true)
+                    localDocumentActive.set(lifecycleActive.get())
                     val baseUrl = "https://$LOCAL_WEB_MCP_ORIGIN/miniapps/$encodedId/"
                     view.loadDataWithBaseURL(
                         baseUrl,
@@ -357,6 +375,7 @@ fun MiniAppWebMcpSurface(
                         null,
                     )
                 } else {
+                    localPageLoaded.set(false)
                     localDocumentActive.set(false)
                     view.loadUrl(hostedUrl)
                 }
@@ -364,9 +383,28 @@ fun MiniAppWebMcpSurface(
             modifier = Modifier.fillMaxSize().testTag("miniapp-webmcp-webview"),
         )
 
-        DisposableEffect(webView, eventListener, host) {
+        DisposableEffect(webView, eventListener, host, lifecycleOwner) {
+            val lifecycleObserver = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> {
+                        lifecycleActive.set(true)
+                        localDocumentActive.set(localPageLoaded.get())
+                    }
+                    Lifecycle.Event.ON_STOP, Lifecycle.Event.ON_PAUSE -> {
+                        // A page that is no longer foregrounded loses its native
+                        // execution grant. Long work must be resumed through the
+                        // Host task owner after the page returns.
+                        lifecycleActive.set(false)
+                        localDocumentActive.set(false)
+                    }
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
             onDispose {
+                lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
                 eventListener.close()
+                localPageLoaded.set(false)
                 localDocumentActive.set(false)
                 webView.stopLoading()
                 webView.removeJavascriptInterface("FabushiWebMcpNative")
