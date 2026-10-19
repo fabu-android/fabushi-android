@@ -35,10 +35,10 @@ const MAX_MANIFEST_ENTRIES: usize = 100_000;
 const MAX_FILE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 const CHROME_PROFILE_CACHE_IGNORE_PATTERNS: &[&str] = &[
-    "Cache/",
-    "Code Cache/",
-    "GPUCache/",
-    "Service Worker/CacheStorage/",
+    "*/Cache/",
+    "*/Code Cache/",
+    "*/GPUCache/",
+    "*/Service Worker/CacheStorage/",
 ];
 
 #[derive(Clone, Debug)]
@@ -47,6 +47,7 @@ pub struct RemoteBoxStoreBackendConfig {
     pub workspace_root: PathBuf,
     pub sand_data_root: PathBuf,
     pub cli_config_root: PathBuf,
+    pub chrome_profile_root: PathBuf,
     pub chrome_session_root: PathBuf,
     /// Optional Desktop/legacy BoxStore root used only to reconcile a never-seeded or
     /// incomplete frozen V2 primary during Android migration.
@@ -60,6 +61,7 @@ impl RemoteBoxStoreBackendConfig {
             ("workspace root", &self.workspace_root),
             ("sand-data root", &self.sand_data_root),
             ("cli-config root", &self.cli_config_root),
+            ("chrome-profile root", &self.chrome_profile_root),
             ("chrome-session root", &self.chrome_session_root),
         ] {
             if path.as_os_str().is_empty() || !path.is_absolute() {
@@ -431,6 +433,7 @@ impl RemoteBoxStoreBackend {
                 ("workspace", self.config.workspace_root.as_path()),
                 ("sand_data", self.config.sand_data_root.as_path()),
                 ("cli_config", self.config.cli_config_root.as_path()),
+                ("chrome_profile", self.config.chrome_profile_root.as_path()),
                 ("chrome_session", self.config.chrome_session_root.as_path()),
             ]
         };
@@ -447,7 +450,7 @@ impl RemoteBoxStoreBackend {
             let mut captured = Vec::new();
             let category_ignore = match category {
                 "workspace" => Some(load_workspace_ignore(root)),
-                "chrome_session" => Some(compile_workspace_ignore(
+                "chrome_profile" => Some(compile_workspace_ignore(
                     CHROME_PROFILE_CACHE_IGNORE_PATTERNS,
                 )),
                 _ => None,
@@ -524,6 +527,7 @@ impl RemoteBoxStoreBackend {
     fn frozen_destination<'a>(&'a self, rel_path: &str) -> Result<(&'a Path, PathBuf), ActionError> {
         const SAND_DATA: &str = "home/box/sand-data/";
         const CLI_CONFIG: &str = "home/box/cli-config/";
+        const CHROME_PROFILE: &str = "home/box/chrome-profile/";
         const CHROME_SESSION: &str = "home/box/chrome-session/";
         if let Some(relative) = rel_path.strip_prefix("workspace/") {
             return Ok((&self.config.workspace_root, rel_path_to_path(relative)?));
@@ -533,6 +537,9 @@ impl RemoteBoxStoreBackend {
         }
         if let Some(relative) = rel_path.strip_prefix(CLI_CONFIG) {
             return Ok((&self.config.cli_config_root, rel_path_to_path(relative)?));
+        }
+        if let Some(relative) = rel_path.strip_prefix(CHROME_PROFILE) {
+            return Ok((&self.config.chrome_profile_root, rel_path_to_path(relative)?));
         }
         if let Some(relative) = rel_path.strip_prefix(CHROME_SESSION) {
             return Ok((&self.config.chrome_session_root, rel_path_to_path(relative)?));
@@ -1038,6 +1045,7 @@ impl RemoteBoxStoreBackend {
             "workspace" => Ok(&self.config.workspace_root),
             "sand_data" => Ok(&self.config.sand_data_root),
             "cli_config" => Ok(&self.config.cli_config_root),
+            "chrome_profile" => Ok(&self.config.chrome_profile_root),
             "chrome_session" => Ok(&self.config.chrome_session_root),
             _ => Err(ActionError::SafeReject(format!(
                 "unsupported box-store manifest category {category}"
@@ -1278,7 +1286,7 @@ fn validate_manifest_entries(entries: &[ManifestEntry]) -> Result<(), ActionErro
     for entry in entries {
         if !matches!(
             entry.category.as_str(),
-            "workspace" | "sand_data" | "cli_config" | "chrome_session"
+            "workspace" | "sand_data" | "cli_config" | "chrome_profile" | "chrome_session"
         ) {
             return Err(ActionError::SafeReject(
                 "box-store manifest contains unknown category".into(),
@@ -1573,6 +1581,7 @@ mod tests {
             workspace_root: root.join("box/workspace"),
             sand_data_root: root.join("box/home/box/sand-data"),
             cli_config_root: root.join("box/home/box/cli-config"),
+            chrome_profile_root: root.join("box/home/box/chrome-profile"),
             chrome_session_root: root.join("box/home/box/chrome-session"),
             legacy_store_root: None,
         }
@@ -1786,64 +1795,80 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_and_chrome_stage_exclude_desktop_profile_caches() {
+    fn snapshot_and_hydrate_keep_profile_state_without_cache_and_do_not_filter_chrome_session() {
         let config = config("chrome-profile-cache-excludes");
-        fs::create_dir_all(config.chrome_session_root.join("Cache/data")).unwrap();
-        fs::create_dir_all(config.chrome_session_root.join("Code Cache/js")).unwrap();
-        fs::create_dir_all(config.chrome_session_root.join("GPUCache")).unwrap();
-        fs::create_dir_all(
-            config
-                .chrome_session_root
-                .join("Service Worker/CacheStorage/cache-a"),
-        )
-        .unwrap();
-        fs::write(config.chrome_session_root.join("Cache/data/index"), b"cache").unwrap();
-        fs::write(
-            config.chrome_session_root.join("Code Cache/js/index"),
-            b"code-cache",
-        )
-        .unwrap();
-        fs::write(config.chrome_session_root.join("GPUCache/index"), b"gpu").unwrap();
-        fs::write(
-            config
-                .chrome_session_root
-                .join("Service Worker/CacheStorage/cache-a/index"),
-            b"service-worker-cache",
-        )
-        .unwrap();
+        for path in [
+            "Default/Cache/data",
+            "Default/Code Cache/js",
+            "Default/GPUCache",
+            "Default/Service Worker/CacheStorage/cache-a",
+        ] {
+            fs::create_dir_all(config.chrome_profile_root.join(path)).unwrap();
+        }
+        fs::write(config.chrome_profile_root.join("Default/Cache/data/index"), b"cache").unwrap();
+        fs::write(config.chrome_profile_root.join("Default/Code Cache/js/index"), b"code-cache").unwrap();
+        fs::write(config.chrome_profile_root.join("Default/GPUCache/index"), b"gpu").unwrap();
+        fs::write(config.chrome_profile_root.join("Default/Service Worker/CacheStorage/cache-a/index"), b"service-worker-cache").unwrap();
+        fs::write(config.chrome_profile_root.join("Default/Preferences"), b"durable-profile").unwrap();
+        fs::create_dir_all(config.chrome_session_root.join("Cache")).unwrap();
+        fs::write(config.chrome_session_root.join("Cache/session-state"), b"session-cache-name").unwrap();
         fs::write(config.chrome_session_root.join("Cookies"), b"durable-session").unwrap();
 
-        let backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
-        for (operation, action) in [("full-snapshot", "snapshot"), ("chrome-stage", "chrome_session_stage")] {
-            completed(
-                backend
-                    .start(
-                        &identity(operation, &format!("{operation}-request")),
-                        &request(operation, action, None),
-                    )
-                    .unwrap(),
-            );
-            let manifest = backend
-                .load_manifest("123e4567-e89b-42d3-a456-426614174000")
-                .unwrap()
-                .0
-                .unwrap();
-            let paths = manifest
-                .entries
-                .iter()
-                .filter(|entry| entry.category == "chrome_session")
-                .map(|entry| entry.rel_path.as_str())
-                .collect::<Vec<_>>();
-            assert!(paths.contains(&"Cookies"));
-            for excluded in [
-                "Cache/data/index",
-                "Code Cache/js/index",
-                "GPUCache/index",
-                "Service Worker/CacheStorage/cache-a/index",
-            ] {
-                assert!(!paths.contains(&excluded), "{excluded} leaked into {action}");
-            }
+        let mut backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        let snapshot = completed(
+            backend.start(
+                &identity("chrome-profile-snapshot", "chrome-profile-snapshot-request"),
+                &request("chrome-profile-snapshot", "snapshot", None),
+            ).unwrap(),
+        );
+        let etag = serde_json::from_str::<serde_json::Value>(&snapshot).unwrap()["manifestEtag"]
+            .as_str().unwrap().to_string();
+        let manifest = backend.load_manifest("123e4567-e89b-42d3-a456-426614174000").unwrap().0.unwrap();
+        let profile_paths = manifest.entries.iter()
+            .filter(|entry| entry.category == "chrome_profile")
+            .map(|entry| entry.rel_path.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(profile_paths.contains("Default/Preferences"));
+        for excluded in [
+            "Default/Cache/data/index",
+            "Default/Code Cache/js/index",
+            "Default/GPUCache/index",
+            "Default/Service Worker/CacheStorage/cache-a/index",
+        ] {
+            assert!(!profile_paths.contains(excluded), "{excluded} leaked into chrome_profile");
         }
+        let session_paths = manifest.entries.iter()
+            .filter(|entry| entry.category == "chrome_session")
+            .map(|entry| entry.rel_path.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(session_paths.contains("Cookies"));
+        assert!(session_paths.contains("Cache/session-state"));
+
+        fs::remove_dir_all(&config.chrome_profile_root).unwrap();
+        fs::remove_dir_all(&config.chrome_session_root).unwrap();
+        completed(
+            backend.start(
+                &identity("chrome-profile-hydrate", "chrome-profile-hydrate-request"),
+                &request("chrome-profile-hydrate", "hydrate", Some(&etag)),
+            ).unwrap(),
+        );
+        assert_eq!(fs::read(config.chrome_profile_root.join("Default/Preferences")).unwrap(), b"durable-profile");
+        assert!(!config.chrome_profile_root.join("Default/Cache/data/index").exists());
+        assert!(!config.chrome_profile_root.join("Default/Code Cache/js/index").exists());
+        assert!(!config.chrome_profile_root.join("Default/GPUCache/index").exists());
+        assert!(!config.chrome_profile_root.join("Default/Service Worker/CacheStorage/cache-a/index").exists());
+        assert_eq!(fs::read(config.chrome_session_root.join("Cache/session-state")).unwrap(), b"session-cache-name");
+    }
+
+    #[test]
+    fn frozen_destination_routes_desktop_chrome_profile_to_dedicated_root() {
+        let config = config("frozen-chrome-profile-route");
+        let backend = RemoteBoxStoreBackend::open(config.clone()).unwrap();
+        let (root, relative) = backend
+            .frozen_destination("home/box/chrome-profile/Default/Preferences")
+            .unwrap();
+        assert_eq!(root, config.chrome_profile_root.as_path());
+        assert_eq!(relative, PathBuf::from("Default/Preferences"));
     }
 
     #[test]
