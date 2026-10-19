@@ -17,6 +17,7 @@ on:
       - 'docs/android-port/authority/**'
       - '.github/workflows/android-port-docs.yml'
       - '.github/workflows/grok-android-architecture.yml'
+      - '.github/workflows/android-interaction-focused.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'build.gradle'
@@ -40,6 +41,7 @@ on:
       - 'docs/android-port/authority/**'
       - '.github/workflows/android-port-docs.yml'
       - '.github/workflows/grok-android-architecture.yml'
+      - '.github/workflows/android-interaction-focused.yml'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - 'build.gradle'
@@ -53,7 +55,7 @@ permissions:
   pull-requests: read
 concurrency:
   # Source authority is exact-head evidence: never let a stale SHA hold the queue while the latest PR HEAD waits.
-  group: android-port-docs-${{ github.event.pull_request.head.ref || github.ref_name }}-${{ github.event.pull_request.head.sha || github.sha }}
+  group: android-port-docs-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 jobs:
   source-inventory:
