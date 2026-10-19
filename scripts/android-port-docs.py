@@ -2434,6 +2434,38 @@ def _ensure_cloud_agent_constant_semantic_mapping(
 
 
 
+
+AGENT_STORE_IDS_INCOMPLETE_SOURCE_PATH = 'source/packages/constants/agent-store-ids.ts'
+
+
+def _keep_agent_store_ids_incomplete(
+    responsibilities: list[dict],
+) -> None:
+    """Fail closed until the full mounted-store/token-routing contract has one Android owner."""
+    for item in responsibilities:
+        desktop_sources = item.get('desktop_sources')
+        if isinstance(desktop_sources, list):
+            item['desktop_sources'] = [
+                source for source in desktop_sources
+                if not (
+                    isinstance(source, dict)
+                    and source.get('path') == AGENT_STORE_IDS_INCOMPLETE_SOURCE_PATH
+                )
+            ]
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            evidence_rows = item.get(evidence_key)
+            if not isinstance(evidence_rows, list):
+                continue
+            item[evidence_key] = [
+                evidence for evidence in evidence_rows
+                if AGENT_STORE_IDS_INCOMPLETE_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence, dict) and isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path') if isinstance(evidence, dict) else None]
+                )
+            ]
+
+
 def _ensure_constants_composer_semantic_mapping(
     responsibilities: list[dict],
     new_by_path: dict[str, dict],
@@ -3251,6 +3283,7 @@ def merge_responsibility_mapping(
         _ensure_agent_core_interaction_semantic_mapping(responsibilities, new_by_path, current)
     if CLOUD_AGENT_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_cloud_agent_constant_semantic_mapping(responsibilities, new_by_path, current)
+    _keep_agent_store_ids_incomplete(responsibilities)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_constants_composer_semantic_mapping(responsibilities, new_by_path, current)
     if STRUCTURED_LOG_CONSTANT_SOURCE_PATH in new_by_path:

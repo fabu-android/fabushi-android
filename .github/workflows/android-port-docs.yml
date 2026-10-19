@@ -350,53 +350,24 @@ jobs:
               ), (path, evidence_key, step_name)
           agent_store_ids_path = 'source/packages/constants/agent-store-ids.ts'
           agent_store_ids_row = next(row for row in package_rows if row['source_path'] == agent_store_ids_path)
-          assert agent_store_ids_row['mapping_status'] == 'semantic'
-          assert agent_store_ids_row['responsibilities'] == ['REMOTE-BOX-STORE-SYNC-ANDROID-001']
-          assert agent_store_ids_row['disposition'] == 'android-adapted'
-          assert agent_store_ids_row['package_semantic_coverage_status'] == 'complete', agent_store_ids_row.get('package_semantic_coverage_reasons')
-          assert agent_store_ids_path not in coverage_gaps, coverage_gaps.get(agent_store_ids_path)
-          agent_store_ids_owner = next(item for item in responsibilities
-                                       if item['responsibility_id'] == 'REMOTE-BOX-STORE-SYNC-ANDROID-001')
-          agent_store_ids_anchor = next(source for source in agent_store_ids_owner['desktop_sources']
-                                        if source['path'] == agent_store_ids_path)
-          assert agent_store_ids_anchor['source_commit'] == m['desktop_commit']
-          assert agent_store_ids_anchor['blob_sha'] == agent_store_ids_row['source_blob_sha']
-          assert agent_store_ids_anchor['focused_tests'] and agent_store_ids_anchor['android_targets']
-          for expected_target in (
-            'source/packages/constants/src/agent_store_ids.rs',
-            'source/host/src/remote_box_store_sync.rs',
-            'source/box-exec-daemon/src/box_store_sync_backend.rs',
-            'source/box-exec-daemon/src/box_store_backend.rs',
-          ):
-            assert expected_target in agent_store_ids_row['android_targets'], expected_target
-          for evidence_key, step_name in (
-            ('production_evidence', 'Verify exact-HEAD agent-store id production owner'),
-            ('test_evidence', 'Test exact-HEAD agent-store id production owner'),
-          ):
-            candidates = [
-              evidence for evidence in agent_store_ids_owner.get(evidence_key, [])
-              if agent_store_ids_path in evidence.get('source_paths', [])
-            ]
-            assert any(
-              evidence.get('result') == 'passed'
-              and evidence.get('workflow_name') == 'Grok Android Architecture'
-              and evidence.get('workflow_id') == 364026685
-              and evidence.get('workflow_path') == '.github/workflows/grok-android-architecture.yml'
-              and evidence.get('workflow_event') in ('pull_request', 'push')
-              and evidence.get('workflow_repository') == 'fabu-android/fabushi-android'
-              and evidence.get('workflow_job_name') == 'agent-kv-exact-head-evidence'
-              and evidence.get('workflow_step_name') == step_name
-              and evidence.get('workflow_run_id')
-              and evidence.get('workflow_job_id')
-              and evidence.get('run_conclusion') == 'success'
-              and evidence.get('android_pr_head_sha') == expected
-              and evidence.get('android_tested_checkout_sha') == expected
-              and evidence.get('workflow_sha') == expected
-              and evidence.get('desktop_commit') == m['desktop_commit']
-              and evidence.get('source_commit') == m['desktop_commit']
-              and (evidence.get('evidence_ref') or '').split('#', 1)[0] in agent_store_ids_row['android_targets']
-              for evidence in candidates
-            ), (agent_store_ids_path, evidence_key, step_name)
+          assert agent_store_ids_row['responsibilities'] == []
+          assert agent_store_ids_row['package_semantic_coverage_status'] == 'incomplete'
+          assert agent_store_ids_path in coverage_gaps
+          agent_store_ids_reasons = set(agent_store_ids_row.get('package_semantic_coverage_reasons', []))
+          assert 'missing-semantic-responsibility' in agent_store_ids_reasons
+          assert 'missing-real-android-owner' in agent_store_ids_reasons
+          for item in responsibilities:
+            assert all(
+              source.get('path') != agent_store_ids_path
+              for source in item.get('desktop_sources', [])
+              if isinstance(source, dict)
+            )
+            for evidence_key in ('production_evidence', 'test_evidence'):
+              assert all(
+                agent_store_ids_path not in evidence.get('source_paths', [])
+                for evidence in item.get(evidence_key, [])
+                if isinstance(evidence, dict)
+              )
           print(json.dumps({
             'android_head':expected,
             'desktop_commit':m['desktop_commit'],
