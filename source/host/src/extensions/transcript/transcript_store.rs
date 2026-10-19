@@ -228,7 +228,49 @@ impl TranscriptStore {
         ids
     }
 
-    fn first_non_empty_field<'a>(entry: &'a Value, fields: &[&str]) -> Option<&'a str> {
+    /// Returns a bounded canonical replay window for one account/agent pair.
+  /// Flat tool-call entries are retained because their IDs fence replayed async
+  /// AskQuestion side effects even when the UI message projection omits them.
+  pub fn async_ask_question_replay_window_for_agent(
+      &self,
+      agent_id: &str,
+      account_slot: Option<&str>,
+      account_fence: &str,
+      limit: usize,
+  ) -> io::Result<Vec<Value>> {
+      let agent_id = agent_id.trim();
+      let account_fence = account_fence.trim();
+      if agent_id.is_empty() || account_fence.is_empty() {
+          return Err(io::Error::new(
+              io::ErrorKind::InvalidInput,
+              "AskQuestion transcript window requires an agent and account fence",
+          ));
+      }
+      let limit = if limit == 0 { 500 } else { limit.min(5_000) };
+      let mut entries = self.entries.iter()
+          .filter(|entry| {
+              let slot_ok = entry
+                  .get("accountSlot")
+                  .and_then(Value::as_str)
+                  .map(|slot| Some(slot) == account_slot)
+                  .unwrap_or(true);
+              let fence_ok = entry
+                  .get("accountFence")
+                  .and_then(Value::as_str)
+                  .map(|fence| account_fence == fence)
+                  .unwrap_or(true);
+              slot_ok
+                  && fence_ok
+                  && entry.get("agentId").and_then(Value::as_str) == Some(agent_id)
+                  && entry.get("branched").and_then(Value::as_bool) != Some(true)
+          })
+          .cloned()
+          .collect::<Vec<_>>();
+      let start = entries.len().saturating_sub(limit);
+      Ok(entries.split_off(start))
+  }
+
+  fn first_non_empty_field<'a>(entry: &'a Value, fields: &[&str]) -> Option<&'a str> {
         fields.iter().find_map(|field| {
             entry
                 .get(*field)
@@ -1425,6 +1467,93 @@ mod tests {
 
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
+    #[test]
+    fn async_ask_question_replay_window_is_account_agent_scoped_and_bounded() {
+        let path = temp_path();
+        let mut store = TranscriptStore::open(&path).unwrap();
+        for entry in [
+            serde_json::json!({
+                "id":"wrong-agent","kind":"message","role":"assistant",
+                "agentId":"agent-b","accountSlot":"slot-a","accountFence":"account-a",
+                "content":[{"type":"tool-call","toolName":"AskQuestion","toolCallId":"wrong-agent-call"}]
+            }),
+            serde_json::json!({
+                "id":"wrong-account","kind":"message","role":"assistant",
+                "agentId":"agent-a","accountSlot":"slot-b","accountFence":"account-b",
+                "content":[{"type":"tool-call","toolName":"AskQuestion","toolCallId":"wrong-account-call"}]
+            }),
+            serde_json::json!({
+                "id":"branched","kind":"message","role":"assistant","branched":true,
+                "agentId":"agent-a","accountSlot":"slot-a","accountFence":"account-a",
+                "content":[{"type":"tool-call","toolName":"AskQuestion","toolCallId":"branched-call"}]
+            }),
+            serde_json::json!({
+                "id":"older-live","kind":"message","role":"assistant",
+                "agentId":"agent-a","accountSlot":"slot-a","accountFence":"account-a",
+                "content":[{"type":"tool-call","toolName":"AskQuestion","toolCallId":"older-live-call"}]
+            }),
+            serde_json::json!({
+                "id":"flat-live","kind":"tool-call","name":"MultipleChoice","toolCallId":"flat-live-call",
+                "agentId":"agent-a","accountSlot":"slot-a","accountFence":"account-a"
+            }),
+            serde_json::json!({
+                "id":"newer-live","kind":"message","role":"assistant",
+                "agentId":"agent-a","accountSlot":"slot-a","accountFence":"account-a",
+                "content":[{"type":"tool-call","toolName":"AskQuestion","toolCallId":"newer-live-call"}]
+            }),
+        ] {
+            store.append_entry(entry).unwrap();
+        }
+
+        let window = store
+            .async_ask_question_replay_window_for_agent("agent-a", Some("slot-a"), "account-a", 2)
+            .unwrap();
+        assert_eq!(
+            window.iter().map(|entry| entry["id"].as_str().unwrap()).collect::<Vec<_>>(),
+            vec!["flat-live", "newer-live"],
+        );
+        let ids = TranscriptStore::live_async_ask_question_original_tool_call_ids(&window);
+        assert!(ids.contains("flat-live-call"));
+        assert!(ids.contains("newer-live-call"));
+        assert!(!ids.contains("older-live-call"));
+        assert!(!ids.contains("wrong-account-call"));
+        assert!(!ids.contains("wrong-agent-call"));
+        assert!(!ids.contains("branched-call"));
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn failed_transcript_update_preserves_the_canonical_ask_question_replay_window() {
+        let path = temp_path();
+        let mut store = TranscriptStore::open(&path).unwrap();
+        store
+            .append_entry(serde_json::json!({
+                "id":"durable-assistant","kind":"message","role":"assistant",
+                "agentId":"agent-a","accountSlot":"slot-a","accountFence":"account-a",
+                "content":[{"type":"tool-call","toolName":"AskQuestion","toolCallId":"durable-call"}]
+            }))
+            .unwrap();
+        let before = store
+            .async_ask_question_replay_window_for_agent("agent-a", Some("slot-a"), "account-a", 500)
+            .unwrap();
+
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        let update = store.set_transcript(&[serde_json::json!({
+            "id":"replacement","kind":"message","role":"assistant",
+            "agentId":"agent-a","accountSlot":"slot-a","accountFence":"account-a","content":"replacement"
+        })]);
+        assert!(update.is_err(), "the deliberately blocked persistence must fail");
+        assert_eq!(store.get_transcript(), before);
+        let after = store
+            .async_ask_question_replay_window_for_agent("agent-a", Some("slot-a"), "account-a", 500)
+            .unwrap();
+        assert_eq!(after, before);
+        assert!(TranscriptStore::live_async_ask_question_original_tool_call_ids(&after).contains("durable-call"));
+        drop(store);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
     #[test]
     fn live_async_ask_question_ids_follow_the_current_transcript_window_and_fallback() {
         let window = vec![

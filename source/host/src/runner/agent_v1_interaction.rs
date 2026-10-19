@@ -1319,5 +1319,61 @@ mod tests {
         assert_eq!(published.load(Ordering::SeqCst), 0);
     }
 
+    #[test]
+    fn transcript_window_failure_preserves_completed_receipt_and_never_publishes_retry() {
+        let owner = SharedAgentInteractionOwner::default();
+        let mut completed_args = args(true);
+        completed_args.async_original_tool_call_id = "failed-transcript-window".into();
+        let (query_id, _) = owner
+            .begin_ask_question(
+                fence(),
+                "failed-transcript-window",
+                completed_args.clone(),
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap();
+        settle_success(&owner, &fence(), query_id);
+
+        let published = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let published_clone = Arc::clone(&published);
+        let bridge = with_ask_question_tool(
+            Arc::new(EmptyDelegate),
+            owner.clone(),
+            fence(),
+            ProductionTurnPrivacyMode::NoTraining,
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(move |_query_id, _wire, _fence| {
+                published_clone.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+            Arc::new(|| Err("transcript update failed".into())),
+        );
+        let error = bridge
+            .call_tool(
+                ASK_QUESTION_TOOL_NAME,
+                serde_json::json!({
+                    "questions":[{
+                        "id":"q1","prompt":"Choose",
+                        "options":[{"id":"a","label":"A"},{"id":"b","label":"B"}]
+                    }],
+                    "run_async":true,
+                    "async_original_tool_call_id":"failed-transcript-window"
+                }),
+                "runtime-retry",
+            )
+            .unwrap_err();
+        assert!(error.contains("transcript update failed"));
+        assert_eq!(published.load(Ordering::SeqCst), 0);
+        assert!(owner
+            .begin_ask_question(
+                fence(),
+                "retry-after-failed-transcript-window",
+                completed_args,
+                ProductionTurnPrivacyMode::NoTraining,
+            )
+            .unwrap_err()
+            .contains("duplicate async AskQuestion"));
+    }
+
 
 }

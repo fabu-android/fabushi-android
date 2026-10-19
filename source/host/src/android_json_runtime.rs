@@ -205,7 +205,7 @@ use crate::runner::{
     AndroidMcpPromptServer, AndroidRemotePromptState, AndroidSkillPromptItem,
     AndroidSubagentReviewDecision,
     DurableAgentV1ObservationOwner, DurableTurnJournal, DurableTurnState,
-    decode_response_base64, with_ask_question_tool, InteractionFence,
+    decode_response_base64, with_ask_question_tool, AskQuestionTranscriptWindowProvider, InteractionFence,
     SharedAgentInteractionOwner, AgentV1TurnEndedUpdate,
     ProductionTurnAgentBuildBindings, ProductionTurnAgentLifecycleBindings,
     ProductionTurnAgentOwner, ProductionTurnAgentStaticConfig, ProductionTurnEvent,
@@ -15082,6 +15082,7 @@ impl AndroidJsonHost {
         });
         let turn_upgrade_quiescing = Arc::clone(&self.turn_upgrade_quiescing);
         let account_fence_owned = account_fence.clone();
+        let account_slot_owned = self.account.account_storage_scope();
         let operation_id_owned = operation_id.to_string();
         let request_id_owned = request_id.to_string();
         let assistant_entry_id_owned = assistant_entry_id.clone();
@@ -15963,6 +15964,26 @@ impl AndroidJsonHost {
                 let ask_question_events = Arc::clone(&turn_events);
                 let ask_operation_id = operation_id_owned.clone();
                 let ask_request_id = request_id_owned.clone();
+                let ask_question_transcript = Arc::clone(&transcript);
+                let ask_question_agent_id = conversation_id_owned.clone();
+                let ask_question_account_slot = account_slot_owned.clone();
+                let ask_question_account_fence = account_fence_owned.clone();
+                let ask_question_transcript_window: AskQuestionTranscriptWindowProvider =
+                    Arc::new(move || {
+                        let store = ask_question_transcript
+                            .lock()
+                            .map_err(|_| "transcript lock poisoned".to_string())?;
+                        store
+                            .async_ask_question_replay_window_for_agent(
+                                &ask_question_agent_id,
+                                ask_question_account_slot.as_deref(),
+                                &ask_question_account_fence,
+                                500,
+                            )
+                            .map_err(|error| {
+                                format!("failed to read canonical AskQuestion transcript window: {error}")
+                            })
+                    });
                 let ask_agent_id = conversation_id_owned.clone();
                 let ask_fence = InteractionFence {
                     account_fence: account_fence_owned.clone(),
@@ -15990,6 +16011,7 @@ impl AndroidJsonHost {
                         );
                         Ok(())
                     }),
+                    Arc::clone(&ask_question_transcript_window),
                 );
 
                 let agent_v1_observation_owner = Arc::new(
@@ -16588,10 +16610,12 @@ impl AndroidJsonHost {
                         account_fence: account_fence_owned.clone(),
                         process_epoch: turn_lifecycle_process_epoch,
                     };
-                    if let Ok(update_bytes) = interaction_owner.turn_ended(
-                        &interaction_fence,
-                        AgentV1TurnEndedUpdate::default(),
-                    ) {
+                    if let Ok(transcript_window) = ask_question_transcript_window() {
+                        if let Ok(update_bytes) = interaction_owner.turn_ended(
+                            &interaction_fence,
+                            AgentV1TurnEndedUpdate::default(),
+                            &transcript_window,
+                        ) {
                         push_turn_event(
                             &turn_events,
                             json!({
@@ -16603,6 +16627,7 @@ impl AndroidJsonHost {
                                 "protobufBase64":BASE64_STANDARD.encode(update_bytes),
                             }),
                         );
+                        }
                     }
                     if let Ok(completions) = interaction_owner.drain_post_turn(&interaction_fence) {
                         for completion in completions {
