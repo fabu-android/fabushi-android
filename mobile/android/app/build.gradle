@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace 'com.ombhrum.fabushi'
-    compileSdk 37
+    compileSdk 36
 
     defaultConfig {
         applicationId 'com.ombhrum.fabushi'
         minSdk 26
-        targetSdk 37
+    targetSdk 36
         versionCode = (project.findProperty('versionCode') ?: '1').toString().toInteger()
         versionName = (project.findProperty('versionName') ?: '0.1.0').toString()
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
