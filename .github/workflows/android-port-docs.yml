@@ -78,7 +78,7 @@ jobs:
           ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           ANDROID_PR_NUMBER: '3'
-          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '3600'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '0'
           ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           ANDROID_PR_BASE_REF: 'main'
           ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
@@ -91,7 +91,7 @@ jobs:
           ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           ANDROID_PR_NUMBER: '3'
-          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '3600'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '0'
           ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py inventory
@@ -109,15 +109,17 @@ jobs:
           from urllib.request import Request, urlopen
 
           desktop_repo = 'bhrumom/fabushi-desktop'
-          desktop_commit = '12887d2a44ba450b13ca8390066a39418c52e0c9'
-          desktop_tree = '4bc59314edd76a51bd8f0e2d0654935d9e8ffb41'
+          desktop_commit = 'eabb6acfb8734a9b57db8cfc47718c22aae6bed5'
+          desktop_tree = 'c4a7b95042a7015d3a55fb7da24c3286d879498f'
           prior_desktop_commits = {
             '12a4e29819592e3a7e32f7435cb0cf2e3cc53848',
             'ca618ae19add78872fcac7cb86bf8754a4ad7a55',
+            '12887d2a44ba450b13ca8390066a39418c52e0c9',
+            '4d805081f800c63c8d17ce927ea70136ec6306e9',
             desktop_commit,
           }
-          expected_tree_entries = 9431
-          expected_non_tree_entries = 8276
+          expected_tree_entries = 9433
+          expected_non_tree_entries = 8278
 
           def github_json(path):
             headers = {
