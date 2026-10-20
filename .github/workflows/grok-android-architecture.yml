@@ -50,6 +50,11 @@ jobs:
           exit 1
       - name: Install cargo-ndk for agent-kv production evidence
         run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
+      - name: Install native Remote Computer Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
       - name: Build exact-HEAD agent-kv production owners
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
@@ -468,11 +473,6 @@ jobs:
           set -euo pipefail
           ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.FabushiAppAgentSurfaceTest --tests com.ombhrum.fabushi.RemoteCommandJournalTest
 
-      - name: Install native Remote Computer Linux dependencies
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
       - name: Verify exact-HEAD Remote Computer Desktop action authority
         run: |
           set -euo pipefail
