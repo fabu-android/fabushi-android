@@ -13,8 +13,8 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
-CURRENT_DESKTOP_COMMIT = "f0789fac0ed15b033cb000c7a8c97a7662c75294"
-CURRENT_DESKTOP_TREE = "e4f3a3555e183623d45cf8c3a806e155d5861ad8"
+CURRENT_DESKTOP_COMMIT = "3d6c2cb24044e4fda1352b259183ff39b56eec11"
+CURRENT_DESKTOP_TREE = "a0e0b305a47e4d6566becec7ae4137b0dd9ac358"
 
 
 def load_generator():
@@ -1425,7 +1425,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8320, 9475),
+            (8258, 9412, 8327, 9482),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
@@ -3250,6 +3250,37 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         ):
             self.assertIn(expression, workflow)
         self.assertNotIn("prior_desktop_commits", workflow)
+
+
+class CurrentDesktopAuthorityRegressionTests(unittest.TestCase):
+    def test_current_authority_is_pinned_to_live_desktop_main_and_rejects_stale_fallback(self):
+        module = load_generator()
+        current = (
+            "3d6c2cb24044e4fda1352b259183ff39b56eec11",
+            "a0e0b305a47e4d6566becec7ae4137b0dd9ac358",
+        )
+        self.assertEqual((CURRENT_DESKTOP_COMMIT, CURRENT_DESKTOP_TREE), current)
+        self.assertEqual((module.EXPECTED_DESKTOP_COMMIT, module.EXPECTED_DESKTOP_TREE), current)
+        self.assertEqual((module.EXPECTED_TREE_ENTRY_COUNT, module.EXPECTED_TRACKED_NON_TREE_COUNT), (9482, 8327))
+        stale_pairs = (
+            ("f0789fac0ed15b033cb000c7a8c97a7662c75294", "e4f3a3555e183623d45cf8c3a806e155d5861ad8"),
+            ("0ecf132681845231b597ece11bc5f979a9a8f0cc", "af3eb1b18ea3b6c80aa8359623e07f473f251c5b"),
+            ("12887d2a44ba450b13ca8390066a39418c52e0c9", "4bc59314edd76a51bd8f0e2d0654935d9e8ffb41"),
+        )
+        for stale_commit, stale_tree in stale_pairs:
+            with self.subTest(stale_commit=stale_commit):
+                self.assertNotEqual((stale_commit, stale_tree), current)
+                with self.assertRaisesRegex(ValueError, "Desktop main commit differs from the pinned current authority"):
+                    module._validate_rebaseline_boundary(
+                        {"desktop_repository": "bhrumom/fabushi-desktop"}, {}, "",
+                        stale_commit, stale_tree, 9482, 8327,
+                    )
+        with self.assertRaisesRegex(ValueError, "Desktop main tree differs from the pinned current authority"):
+            module._validate_rebaseline_boundary(
+                {"desktop_repository": "bhrumom/fabushi-desktop"}, {}, "",
+                current[0], "e4f3a3555e183623d45cf8c3a806e155d5861ad8", 9482, 8327,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
