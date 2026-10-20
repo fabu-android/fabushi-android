@@ -502,6 +502,8 @@ jobs:
           cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::reconciliation_and_cancel_never_blindly_replay_actions -- --exact
           grep -Fq 'pub const REMOTE_COMPUTER_SCREENSHOT_SETTLE_DELAY_MS: u64 = 2_000;' source/box-exec-daemon/src/remote_computer_backend.rs
           grep -Fq 'pub mod remote_computer_backend;' source/box-exec-daemon/src/lib.rs
+          grep -Fq 'pub fn open_remote_computer_execution_service<A, E>(' source/box-exec-daemon/src/deployment_contract.rs
+          grep -Fq 'pub fn open_enrolled_remote_computer_execution_service<E>(' source/box-exec-daemon/src/deployment_contract.rs
 
       - name: Verify exact-HEAD automation schedule production owner
         run: |

@@ -16,6 +16,7 @@ use crate::cloud_agent_production::{ProductionCloudAgentConfig, ProductionCloudA
 use crate::file_transfer_backend::{RemoteFileTransferBackend, RemoteFileTransferConfig};
 use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService};
 use crate::remote_enrollment::DurableRemoteRunnerEnrollmentAuthorizer;
+use crate::remote_computer_backend::{RemoteComputerBackend, RemoteComputerExecutor};
 use fabushi_android_shared::ExecutionError;
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -96,6 +97,46 @@ pub fn open_enrolled_remote_box_control_execution_service(
 ) -> Result<RemoteExecutionService<DurableRemoteRunnerEnrollmentAuthorizer, ProductionBoxControlBackend>, ExecutionError> {
     let authorizer = DurableRemoteRunnerEnrollmentAuthorizer::open(enrollment_path, now_ms)?;
     crate::open_production_box_control_service(journal_path, authorizer, config, now_ms)
+}
+
+/// Compose the typed Desktop-compatible Computer executor inside the Authorized External Runner.
+/// The executor is supplied by the external Runner deployment; Android/JNI never becomes a second
+/// canonical Computer tool owner. RemoteExecutionService retains durable request identity and
+/// account/device/epoch authorization around this backend.
+pub fn open_remote_computer_execution_service<A, E>(
+    journal_path: impl Into<PathBuf>,
+    authorizer: A,
+    executor: E,
+    now_ms: u64,
+) -> Result<RemoteExecutionService<A, RemoteComputerBackend<E>>, ExecutionError>
+where
+    A: RemoteExecutionAuthorizer,
+    E: RemoteComputerExecutor,
+{
+    RemoteExecutionService::open(
+        journal_path,
+        authorizer,
+        RemoteComputerBackend::new(executor),
+        now_ms,
+    )
+}
+
+/// Shipping external-Runner composition: durable enrollment/grant authorization is installed
+/// before any Computer action can reach the concrete OS executor.
+pub fn open_enrolled_remote_computer_execution_service<E>(
+    journal_path: impl Into<PathBuf>,
+    enrollment_path: impl Into<PathBuf>,
+    executor: E,
+    now_ms: u64,
+) -> Result<
+    RemoteExecutionService<DurableRemoteRunnerEnrollmentAuthorizer, RemoteComputerBackend<E>>,
+    ExecutionError,
+>
+where
+    E: RemoteComputerExecutor,
+{
+    let authorizer = DurableRemoteRunnerEnrollmentAuthorizer::open(enrollment_path, now_ms)?;
+    open_remote_computer_execution_service(journal_path, authorizer, executor, now_ms)
 }
 
 pub fn open_remote_file_transfer_execution_service<A: RemoteExecutionAuthorizer>(
