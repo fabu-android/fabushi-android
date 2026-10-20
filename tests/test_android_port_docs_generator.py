@@ -1050,7 +1050,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8309, 9464),
+            (8258, 9412, 8310, 9465),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
@@ -2271,6 +2271,39 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             spec["focused_tests"],
         )
 
+
+    def test_git_repo_utils_maps_orphan_desktop_helper_to_existing_repo_label_owner(self):
+        module = load_generator()
+        spec = module.GIT_REPO_UTILS_SOURCE_SPEC
+        self.assertEqual(
+            module.GIT_REPO_UTILS_SOURCE_PATH,
+            "source/packages/agent-analytics/commit-scoring/git-repo-utils.ts",
+        )
+        self.assertEqual(module.GIT_REPO_UTILS_RESPONSIBILITY_ID, "PRODUCT-ANALYTICS-ANDROID-001")
+        self.assertEqual(spec["symbols"], ["parseGitUrl", "extractRepoNameFromGitUrl"])
+        self.assertEqual(spec["disposition"], "direct-port")
+        self.assertEqual(spec["production_target"], "source/packages/constants/src/repo_label.rs")
+        self.assertIn("source/packages/constants/src/lib.rs", spec["android_targets"])
+        self.assertIn("no source import/caller", spec["evidence_semantics"])
+        self.assertIn("no mutable repository state", spec["source_owner"])
+        self.assertIn("retry", spec["source_owner"])
+        self.assertIn("cancellation", spec["source_owner"])
+        self.assertIn("user-info-cloud-sections.ts", spec["source_owner"])
+        self.assertIn("repoLabelForPrompt", spec["source_owner"])
+        self.assertIn("single Android Git/repository-label parser owner", spec["android_owner"])
+
+        constants = (ROOT / "source" / "packages" / "constants" / "src" / "repo_label.rs").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github" / "workflows" / "grok-android-architecture.yml").read_text(encoding="utf-8")
+        merge_source = (ROOT / "scripts" / "android-port-docs.py").read_text(encoding="utf-8")
+        self.assertIn("pub fn extract_repo_name_from_git_url", constants)
+        self.assertIn("desktop_git_repo_utils_matrix_matches_frozen_helper", constants)
+        self.assertIn("Verify exact-HEAD git-repo-utils declaration owner", workflow)
+        self.assertIn("Test exact-HEAD git-repo-utils URL matrix", workflow)
+        self.assertIn("DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES", workflow)
+        self.assertIn("source/packages/agent/prompts/user-info-cloud-sections.ts", workflow)
+        self.assertIn("repoLabelForPrompt", workflow)
+        self.assertIn("elif path == GIT_REPO_UTILS_SOURCE_PATH:", merge_source)
+        self.assertIn("row['disposition'] = GIT_REPO_UTILS_SOURCE_SPEC['disposition']", merge_source)
 
     def test_auto_spillover_ui_contract_keeps_constants_declaration_only_and_verifies_native_usage_replacement(self):
         constants = (ROOT / "source" / "packages" / "constants" / "src" / "auto_spillover_ui.rs").read_text(encoding="utf-8")

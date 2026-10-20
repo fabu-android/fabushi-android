@@ -253,6 +253,46 @@ jobs:
           set -euo pipefail
           cargo test -p fabushi-constants git_diff::tests::constants_match_desktop_git_diff_contract -- --exact
 
+      - name: Verify exact-HEAD git-repo-utils declaration owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'pub mod repo_label;' source/packages/constants/src/lib.rs
+          grep -Fq 'pub fn extract_repo_name_from_git_url' source/packages/constants/src/repo_label.rs
+          mapfile -t ANDROID_GIT_REPO_UTILS_OWNER_FILES < <(git grep -l -F 'extract_repo_name_from_git_url' -- source frontend mobile)
+          printf '%s\n' "${ANDROID_GIT_REPO_UTILS_OWNER_FILES[@]}"
+          test "${#ANDROID_GIT_REPO_UTILS_OWNER_FILES[@]}" -eq 1
+          test "${ANDROID_GIT_REPO_UTILS_OWNER_FILES[0]}" = "source/packages/constants/src/repo_label.rs"
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY2'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY2
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-git-repo-utils-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent-analytics/commit-scoring/git-repo-utils.ts)" = "6fb67136c110e5c36d7d1c25bd92220c950f717e"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent/prompts/user-info-cloud-sections.ts)" = "579ffbf56f9d2359b355e5655135a94a71454474"
+          mapfile -t DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES < <(git -C "$DESKTOP_DIR" grep -l -F 'extractRepoNameFromGitUrl' -- source)
+          printf '%s\n' "${DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES[@]}"
+          test "${#DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES[@]}" -eq 2
+          printf '%s\n' "${DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES[@]}" | grep -Fxq 'source/packages/agent-analytics/commit-scoring/git-repo-utils.ts'
+          printf '%s\n' "${DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES[@]}" | grep -Fxq 'source/packages/agent/prompts/user-info-cloud-sections.ts'
+          if git -C "$DESKTOP_DIR" grep -n -F 'git-repo-utils' -- source; then
+            echo "git-repo-utils unexpectedly has a source import/caller" >&2
+            exit 1
+          fi
+          grep -Fq 'function repoLabelForPrompt(repo: CloudTaskGitRepo)' "$DESKTOP_DIR/source/packages/agent/prompts/user-info-cloud-sections.ts"
+          grep -Fq 'return extractRepoNameFromGitUrl(repo.remoteUrl)' "$DESKTOP_DIR/source/packages/agent/prompts/user-info-cloud-sections.ts"
+
+      - name: Test exact-HEAD git-repo-utils URL matrix
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants repo_label::tests::desktop_git_repo_utils_matrix_matches_frozen_helper -- --exact
+
       - name: Verify exact-HEAD Box Store chrome-profile archive owner
         run: |
           set -euo pipefail

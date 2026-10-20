@@ -48,10 +48,10 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9464
-EXPECTED_TRACKED_NON_TREE_COUNT = 8309
-PRIOR_TREE_ENTRY_COUNT = 9443
-PRIOR_TRACKED_NON_TREE_COUNT = 8288
+EXPECTED_TREE_ENTRY_COUNT = 9465
+EXPECTED_TRACKED_NON_TREE_COUNT = 8310
+PRIOR_TREE_ENTRY_COUNT = 9464
+PRIOR_TRACKED_NON_TREE_COUNT = 8309
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
 PERSISTED_INTERMEDIATE_TRACKED_NON_TREE_COUNT = 8276
 PREDECESSOR_TREE_ENTRY_COUNT = 9412
@@ -69,10 +69,10 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '0204e6730cd79baac9149dd3560efdd0dd974d38'
-EXPECTED_DESKTOP_TREE = 'b786f5760164526d2cf727ca19912602ba69022e'
-PRIOR_DESKTOP_COMMIT = '0ecf132681845231b597ece11bc5f979a9a8f0cc'
-PRIOR_DESKTOP_TREE = 'af3eb1b18ea3b6c80aa8359623e07f473f251c5b'
+EXPECTED_DESKTOP_COMMIT = '96de945ef88fe7e11e1579cc333e6eb723d078ee'
+EXPECTED_DESKTOP_TREE = '9feef36594e14f178c72f1e023446f3998009f6c'
+PRIOR_DESKTOP_COMMIT = '0204e6730cd79baac9149dd3560efdd0dd974d38'
+PRIOR_DESKTOP_TREE = 'b786f5760164526d2cf727ca19912602ba69022e'
 PRIOR_BASELINE_PARENT_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
 PRIOR_BASELINE_PARENT_DESKTOP_TREE = 'd19997afb9e1c4f3473777ac9ef2b96d6ef6a6da'
 PERSISTED_INTERMEDIATE_DESKTOP_COMMIT = '12887d2a44ba450b13ca8390066a39418c52e0c9'
@@ -317,6 +317,47 @@ GIT_DIFF_CONSTANT_SOURCE_SPEC = {
         'git-diff-processing.ts and its downstream context-assembly caller, the exact Rust declaration values, module '
         'export, absence of a duplicate Android truncation implementation, and focused constants tests. It does not '
         'promote source/packages/agent/git-diff-processing.ts or selected Git-diff UI/runtime parity to implemented.'
+    ),
+    'disposition': 'direct-port',
+}
+
+GIT_REPO_UTILS_SOURCE_PATH = 'source/packages/agent-analytics/commit-scoring/git-repo-utils.ts'
+GIT_REPO_UTILS_RESPONSIBILITY_ID = 'PRODUCT-ANALYTICS-ANDROID-001'
+GIT_REPO_UTILS_PRODUCTION_STEP = 'Verify exact-HEAD git-repo-utils declaration owner'
+GIT_REPO_UTILS_TEST_STEP = 'Test exact-HEAD git-repo-utils URL matrix'
+GIT_REPO_UTILS_SOURCE_SPEC = {
+    'symbols': ['parseGitUrl', 'extractRepoNameFromGitUrl'],
+    'source_owner': (
+        'Desktop source/packages/agent-analytics/commit-scoring/git-repo-utils.ts@'
+        '6fb67136c110e5c36d7d1c25bd92220c950f717e owns only pure Git-remote URL normalization and '
+        'repository-name extraction. Exact-authority source-tree evidence must prove that no source file imports '
+        'git-repo-utils at the current authority. The same-named private helper in '
+        'source/packages/agent/prompts/user-info-cloud-sections.ts is independently owned by repoLabelForPrompt and '
+        'must not be claimed as this row\'s caller or shipping effect. This helper owns no mutable repository state, '
+        'Git I/O, persistence, retry, cancellation, idempotency journal, or error state machine.'
+    ),
+    'android_owner': (
+        'Existing fabushi_constants::repo_label remains the single Android Git/repository-label parser owner. '
+        'extract_repo_name_from_git_url is a direct Rust compatibility port inside that existing module; the older '
+        'generic derive_repo_label_value_from_url contract remains intact. No second Git/repository owner or Android '
+        'production caller is introduced by this declaration-only closure.'
+    ),
+    'android_targets': ['source/packages/constants/src/repo_label.rs', 'source/packages/constants/src/lib.rs'],
+    'production_target': 'source/packages/constants/src/repo_label.rs',
+    'test_target': 'source/packages/constants/src/repo_label.rs',
+    'focused_tests': [
+        'source/packages/constants/src/repo_label.rs::tests::desktop_git_repo_utils_matrix_matches_frozen_helper'
+    ],
+    'platform_delta': (
+        'Language-only direct port from TypeScript URL parsing to Rust url::Url inside the pre-existing constants '
+        'owner. The source helper has no shipping caller at the current Desktop authority, so this mapping does not '
+        'invent a user-visible analytics, prompt, repository-state, Remote Runner, retry, or cancellation effect.'
+    ),
+    'evidence_semantics': (
+        'Same-head evidence pins the exact Desktop blob, proves the exported helper has no source import/caller, '
+        'separately identifies the prompt-local duplicate and repoLabelForPrompt, proves Android keeps one repo_label '
+        'module owner, and executes the focused malformed/SCP/GitLab-remote/Azure/GitHub-GHE/GitLab/Bitbucket-Stash/'
+        'Gerrit/generic-host matrix. It does not verify product-analytics transport or the private prompt repo-label path.'
     ),
     'disposition': 'direct-port',
 }
@@ -2861,6 +2902,80 @@ def _ensure_git_diff_constant_semantic_mapping(
 
 
 
+def _ensure_git_repo_utils_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Map the orphan Git URL helper into the existing repo-label owner without inventing a caller."""
+    source_object = new_by_path.get(GIT_REPO_UTILS_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop git-repo-utils helper has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == GIT_REPO_UTILS_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'git-repo-utils semantic mapping requires exactly one ' + GIT_REPO_UTILS_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    require(
+        item.get('android_disposition') in ALLOWED_SOURCE_DISPOSITIONS,
+        'git-repo-utils may not overwrite the broader product-analytics responsibility disposition',
+    )
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(GIT_REPO_UTILS_SOURCE_PATH, {})
+    source.update({
+        'path': GIT_REPO_UTILS_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(GIT_REPO_UTILS_SOURCE_SPEC['symbols']),
+        'focused_tests': list(GIT_REPO_UTILS_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(GIT_REPO_UTILS_SOURCE_SPEC['android_targets']),
+        'source_owner': GIT_REPO_UTILS_SOURCE_SPEC['source_owner'],
+        'android_owner': GIT_REPO_UTILS_SOURCE_SPEC['android_owner'],
+        'platform_delta': GIT_REPO_UTILS_SOURCE_SPEC['platform_delta'],
+        'evidence_semantics': GIT_REPO_UTILS_SOURCE_SPEC['evidence_semantics'],
+    })
+    existing_sources[GIT_REPO_UTILS_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(existing_sources.values(), key=lambda value: value.get('path', ''))
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in GIT_REPO_UTILS_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Desktop agent-analytics/commit-scoring/git-repo-utils.ts is source-audited as a declaration-only pure URL '
+        'helper with no current source import/caller. PRODUCT-ANALYTICS-ANDROID-001 is the narrowest existing ledger '
+        'domain match, but this source anchor is not evidence that analytics transport ships through the helper. Android '
+        'direct-ports the URL matrix inside the existing fabushi_constants::repo_label owner and does not claim the '
+        'separate user-info-cloud-sections.ts repoLabelForPrompt effect.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
 SAND_BOX_ARCHIVE_SOURCE_PATH = 'source/packages/constants/sand-box-archive.ts'
 SAND_BOX_ARCHIVE_RESPONSIBILITY_ID = 'REMOTE-BOX-STORE-SYNC-ANDROID-001'
 SAND_BOX_ARCHIVE_SOURCE_SPEC = {
@@ -3904,6 +4019,8 @@ def merge_responsibility_mapping(
         _ensure_environment_setup_constant_semantic_mapping(responsibilities, new_by_path, current)
     if GIT_DIFF_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_git_diff_constant_semantic_mapping(responsibilities, new_by_path, current)
+    if GIT_REPO_UTILS_SOURCE_PATH in new_by_path:
+        _ensure_git_repo_utils_semantic_mapping(responsibilities, new_by_path, current)
     _keep_agent_store_ids_incomplete(responsibilities)
     _keep_mcp_constant_incomplete(responsibilities)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
@@ -4589,6 +4706,85 @@ def merge_responsibility_mapping(
 
 
 
+    if GIT_REPO_UTILS_SOURCE_PATH in new_by_path and any(
+        isinstance(source, dict) and source.get('path') == GIT_REPO_UTILS_SOURCE_PATH
+        for item in responsibilities
+        for source in (item.get('desktop_sources') or [])
+    ):
+        git_repo_utils_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == GIT_REPO_UTILS_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = git_repo_utils_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            git_repo_utils_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if GIT_REPO_UTILS_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        git_repo_utils_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=GIT_REPO_UTILS_PRODUCTION_STEP,
+            test_step_name=GIT_REPO_UTILS_TEST_STEP,
+            evidence_label='git-repo-utils pure URL parser boundary',
+        )
+        if git_repo_utils_evidence is not None:
+            production_target = GIT_REPO_UTILS_SOURCE_SPEC['production_target']
+            test_target = GIT_REPO_UTILS_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'git-repo-utils closure evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [GIT_REPO_UTILS_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': git_repo_utils_evidence['workflow_name'],
+                'workflow_id': git_repo_utils_evidence['workflow_id'],
+                'workflow_path': git_repo_utils_evidence['workflow_path'],
+                'workflow_event': git_repo_utils_evidence['workflow_event'],
+                'workflow_repository': git_repo_utils_evidence['workflow_repository'],
+                'workflow_run_id': git_repo_utils_evidence['workflow_run_id'],
+                'workflow_job_name': git_repo_utils_evidence['workflow_job_name'],
+                'workflow_job_id': git_repo_utils_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': git_repo_utils_evidence['workflow_job_run_attempt'],
+                'run_attempt': git_repo_utils_evidence['run_attempt'],
+                'run_conclusion': git_repo_utils_evidence['run_conclusion'],
+                'result': 'passed',
+                'evidence_semantics': GIT_REPO_UTILS_SOURCE_SPEC['evidence_semantics'],
+            }
+            git_repo_utils_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': git_repo_utils_evidence['production_step_name'],
+                'workflow_step_number': git_repo_utils_evidence['production_step_number'],
+                'evidence_ref': production_target + '#git-repo-utils-declaration-owner',
+            })
+            git_repo_utils_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': git_repo_utils_evidence['test_step_name'],
+                'workflow_step_number': git_repo_utils_evidence['test_step_number'],
+                'evidence_ref': test_target + '#git-repo-utils-url-matrix',
+                'focused_tests': list(GIT_REPO_UTILS_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head git-repo-utils closure evidence; '
+                'git-repo-utils package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
+
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         composer_responsibility = next(
             item for item in responsibilities
@@ -4915,6 +5111,8 @@ def merge_responsibility_mapping(
             row['disposition'] = ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['disposition']
         elif path == GIT_DIFF_CONSTANT_SOURCE_PATH:
             row['disposition'] = GIT_DIFF_CONSTANT_SOURCE_SPEC['disposition']
+        elif path == GIT_REPO_UTILS_SOURCE_PATH:
+            row['disposition'] = GIT_REPO_UTILS_SOURCE_SPEC['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
             row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
         elif path == STRUCTURED_LOG_CONSTANT_SOURCE_PATH:
