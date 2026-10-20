@@ -314,6 +314,122 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(item["implementation_status"], "unreviewed")
         self.assertEqual(item["verification_status"], "not-verified")
 
+    def test_sand_box_archive_attaches_fresh_exact_head_evidence_without_promoting_status(self):
+        module = load_generator()
+        path = module.SAND_BOX_ARCHIVE_SOURCE_PATH
+        responsibility = {
+            "responsibility_id": module.SAND_BOX_ARCHIVE_RESPONSIBILITY_ID,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [],
+            "production_evidence": [{
+                "source_paths": [path],
+                "android_pr_head_sha": "0" * 40,
+                "result": "passed",
+            }],
+            "test_evidence": [],
+        }
+        android_head = "a" * 40
+        android = {
+            "android_pr_head_sha": android_head,
+            "android_checkout_sha": android_head,
+            "workflow_sha": android_head,
+        }
+        spec = module.SAND_BOX_ARCHIVE_SOURCE_SPEC
+        tracked = set(spec["android_targets"]) | {spec["production_target"]} | set(spec["test_targets"])
+        source_blob = "5" * 40
+
+        def exact_head_evidence(head, *, production_step_name, test_step_name, evidence_label):
+            self.assertEqual(head, android_head)
+            self.assertEqual(production_step_name, module.SAND_BOX_ARCHIVE_PRODUCTION_STEP)
+            self.assertEqual(test_step_name, module.SAND_BOX_ARCHIVE_TEST_STEP)
+            self.assertEqual(evidence_label, "Box Store chrome-profile archive")
+            return {
+                "workflow_name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+                "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+                "workflow_path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+                "workflow_event": "pull_request",
+                "workflow_repository": module.ANDROID_REPOSITORY,
+                "workflow_run_id": 39389767247,
+                "workflow_job_name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+                "workflow_job_id": 118518349516,
+                "workflow_job_run_attempt": 1,
+                "run_attempt": 1,
+                "run_conclusion": "success",
+                "production_step_name": module.SAND_BOX_ARCHIVE_PRODUCTION_STEP,
+                "production_step_number": 23,
+                "test_step_name": module.SAND_BOX_ARCHIVE_TEST_STEP,
+                "test_step_number": 24,
+            }
+
+        module._latest_exact_head_android_ci_evidence = exact_head_evidence
+        module._attach_sand_box_archive_exact_head_evidence(
+            [responsibility],
+            {path: {"sha": source_blob, "mode": "100644", "type": "blob"}},
+            tracked,
+            CURRENT_DESKTOP_COMMIT,
+            CURRENT_DESKTOP_TREE,
+            android,
+        )
+
+        self.assertEqual(responsibility["implementation_status"], "unreviewed")
+        self.assertEqual(responsibility["verification_status"], "not-verified")
+        self.assertEqual(len(responsibility["production_evidence"]), 1)
+        production = responsibility["production_evidence"][0]
+        self.assertEqual(production["source_paths"], [path])
+        self.assertEqual(production["source_commit"], CURRENT_DESKTOP_COMMIT)
+        self.assertEqual(production["desktop_root_tree"], CURRENT_DESKTOP_TREE)
+        self.assertEqual(production["source_blob_sha"], source_blob)
+        self.assertEqual(production["android_pr_head_sha"], android_head)
+        self.assertEqual(production["android_tested_checkout_sha"], android_head)
+        self.assertEqual(production["workflow_sha"], android_head)
+        self.assertEqual(production["workflow_run_id"], 39389767247)
+        self.assertEqual(production["workflow_step_name"], module.SAND_BOX_ARCHIVE_PRODUCTION_STEP)
+        self.assertEqual(len(responsibility["test_evidence"]), len(spec["test_targets"]))
+        for evidence in responsibility["test_evidence"]:
+            self.assertEqual(evidence["source_paths"], [path])
+            self.assertEqual(evidence["source_commit"], CURRENT_DESKTOP_COMMIT)
+            self.assertEqual(evidence["android_pr_head_sha"], android_head)
+            self.assertEqual(evidence["android_tested_checkout_sha"], android_head)
+            self.assertEqual(evidence["workflow_sha"], android_head)
+            self.assertEqual(evidence["workflow_run_id"], 39389767247)
+            self.assertEqual(evidence["workflow_step_name"], module.SAND_BOX_ARCHIVE_TEST_STEP)
+            self.assertTrue(evidence["focused_tests"])
+
+    def test_sand_box_archive_stays_unverified_without_exact_head_ci_evidence(self):
+        module = load_generator()
+        path = module.SAND_BOX_ARCHIVE_SOURCE_PATH
+        responsibility = {
+            "responsibility_id": module.SAND_BOX_ARCHIVE_RESPONSIBILITY_ID,
+            "implementation_status": "unreviewed",
+            "verification_status": "not-verified",
+            "desktop_sources": [],
+            "production_evidence": [],
+            "test_evidence": [],
+        }
+        android_head = "a" * 40
+        android = {
+            "android_pr_head_sha": android_head,
+            "android_checkout_sha": android_head,
+            "workflow_sha": android_head,
+        }
+        spec = module.SAND_BOX_ARCHIVE_SOURCE_SPEC
+        tracked = set(spec["android_targets"]) | {spec["production_target"]} | set(spec["test_targets"])
+        module._latest_exact_head_android_ci_evidence = lambda *args, **kwargs: None
+        module._attach_sand_box_archive_exact_head_evidence(
+            [responsibility],
+            {path: {"sha": "5" * 40, "mode": "100644", "type": "blob"}},
+            tracked,
+            CURRENT_DESKTOP_COMMIT,
+            CURRENT_DESKTOP_TREE,
+            android,
+        )
+        self.assertEqual(responsibility["production_evidence"], [])
+        self.assertEqual(responsibility["test_evidence"], [])
+        self.assertEqual(responsibility["implementation_status"], "unreviewed")
+        self.assertEqual(responsibility["verification_status"], "not-verified")
+
+
     def test_automation_schedule_attaches_fresh_exact_head_evidence_without_promoting_status(self):
         module = load_generator()
         responsibility = {

@@ -3095,6 +3095,8 @@ def _ensure_git_repo_utils_semantic_mapping(
 
 SAND_BOX_ARCHIVE_SOURCE_PATH = 'source/packages/constants/sand-box-archive.ts'
 SAND_BOX_ARCHIVE_RESPONSIBILITY_ID = 'REMOTE-BOX-STORE-SYNC-ANDROID-001'
+SAND_BOX_ARCHIVE_PRODUCTION_STEP = 'Verify exact-HEAD Box Store chrome-profile archive owner'
+SAND_BOX_ARCHIVE_TEST_STEP = 'Test exact-HEAD Box Store Desktop restore and handoff parity'
 SAND_BOX_ARCHIVE_SOURCE_SPEC = {
     'symbols': ['SAND_BOX_PERSIST_ARCHIVE_EXCLUDES', 'SAND_BOX_WORKSPACE_IGNORE_FILE', 'SAND_BOX_WORKSPACE_DEFAULT_IGNORE_PATTERNS'],
     'source_owner': (
@@ -3116,6 +3118,14 @@ SAND_BOX_ARCHIVE_SOURCE_SPEC = {
         'source/box-exec-daemon/src/box_store_backend.rs::tests::frozen_destination_routes_desktop_chrome_profile_to_dedicated_root',
         'source/box-exec-daemon/src/box_store_backend.rs::tests::snapshot_applies_desktop_workspace_ignore_and_negation_semantics',
     ],
+    'production_target': 'source/box-exec-daemon/src/box_store_backend.rs',
+    'test_targets': {
+        'source/box-exec-daemon/src/box_store_backend.rs': [
+            'snapshot_and_hydrate_keep_profile_state_without_cache_and_do_not_filter_chrome_session',
+            'frozen_destination_routes_desktop_chrome_profile_to_dedicated_root',
+            'snapshot_applies_desktop_workspace_ignore_and_negation_semantics',
+        ],
+    },
     'disposition': 'android-adapted',
 }
 
@@ -3159,6 +3169,98 @@ def _ensure_sand_box_archive_semantic_mapping(
         if target not in raw_targets:
             raw_targets.append(target)
     item['android_target'] = raw_targets
+
+
+def _attach_sand_box_archive_exact_head_evidence(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    tracked_android_paths: set[str],
+    current: str,
+    tree_sha: str,
+    android: dict,
+) -> None:
+    """Attach fresh exact-head evidence for the Android-owned Box Store archive semantics."""
+    path = SAND_BOX_ARCHIVE_SOURCE_PATH
+    if path not in new_by_path:
+        return
+    responsibility = next(
+        item for item in responsibilities
+        if item.get('responsibility_id') == SAND_BOX_ARCHIVE_RESPONSIBILITY_ID
+    )
+    for evidence_key in ('production_evidence', 'test_evidence'):
+        existing_evidence = responsibility.get(evidence_key)
+        if not isinstance(existing_evidence, list):
+            existing_evidence = []
+        responsibility[evidence_key] = [
+            evidence for evidence in existing_evidence
+            if path not in (
+                evidence.get('source_paths')
+                if isinstance(evidence.get('source_paths'), list)
+                else [evidence.get('source_path')]
+            )
+        ]
+
+    ci_evidence = _latest_exact_head_android_ci_evidence(
+        android['android_pr_head_sha'],
+        production_step_name=SAND_BOX_ARCHIVE_PRODUCTION_STEP,
+        test_step_name=SAND_BOX_ARCHIVE_TEST_STEP,
+        evidence_label='Box Store chrome-profile archive',
+    )
+    if ci_evidence is None:
+        print(
+            'WARNING: no successful same-exact-head Box Store archive evidence; '
+            'sand-box-archive source remains provenance-only',
+            file=sys.stderr,
+        )
+        return
+
+    spec = SAND_BOX_ARCHIVE_SOURCE_SPEC
+    production_target = spec['production_target']
+    test_targets = spec['test_targets']
+    required_targets = [*spec['android_targets'], production_target, *test_targets.keys()]
+    missing_targets = sorted({target for target in required_targets if target not in tracked_android_paths})
+    require(
+        not missing_targets,
+        'Box Store archive evidence target is not tracked at exact HEAD: ' + ', '.join(missing_targets),
+    )
+    common = {
+        'source_paths': [path],
+        'source_commit': current,
+        'desktop_commit': current,
+        'desktop_root_tree': tree_sha,
+        'source_blob_sha': new_by_path[path]['sha'],
+        'android_pr_head_sha': android['android_pr_head_sha'],
+        'android_tested_checkout_sha': android['android_checkout_sha'],
+        'workflow_sha': android['workflow_sha'],
+        'workflow_name': ci_evidence['workflow_name'],
+        'workflow_id': ci_evidence['workflow_id'],
+        'workflow_path': ci_evidence['workflow_path'],
+        'workflow_event': ci_evidence['workflow_event'],
+        'workflow_repository': ci_evidence['workflow_repository'],
+        'workflow_run_id': ci_evidence['workflow_run_id'],
+        'workflow_job_name': ci_evidence['workflow_job_name'],
+        'workflow_job_id': ci_evidence['workflow_job_id'],
+        'workflow_job_run_attempt': ci_evidence['workflow_job_run_attempt'],
+        'run_attempt': ci_evidence['run_attempt'],
+        'run_conclusion': ci_evidence['run_conclusion'],
+        'result': 'passed',
+    }
+    responsibility['production_evidence'].append({
+        **common,
+        'kind': 'production-wiring',
+        'workflow_step_name': ci_evidence['production_step_name'],
+        'workflow_step_number': ci_evidence['production_step_number'],
+        'evidence_ref': production_target + '#box-store-chrome-profile-archive-production-owner',
+    })
+    for test_target, focused_tests in test_targets.items():
+        responsibility['test_evidence'].append({
+            **common,
+            'kind': 'focused-unit-test',
+            'workflow_step_name': ci_evidence['test_step_name'],
+            'workflow_step_number': ci_evidence['test_step_number'],
+            'evidence_ref': test_target + '#box-store-desktop-restore-and-handoff-parity',
+            'focused_tests': list(focused_tests),
+        })
 
 
 AGENT_STORE_IDS_INCOMPLETE_SOURCE_PATH = 'source/packages/constants/agent-store-ids.ts'
@@ -4293,6 +4395,14 @@ def merge_responsibility_mapping(
         item['desktop_sources'] = cleaned
 
     _attach_automation_schedule_exact_head_evidence(
+        responsibilities,
+        new_by_path,
+        tracked_android_paths,
+        current,
+        tree_sha,
+        android,
+    )
+    _attach_sand_box_archive_exact_head_evidence(
         responsibilities,
         new_by_path,
         tracked_android_paths,
