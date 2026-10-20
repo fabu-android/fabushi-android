@@ -13,8 +13,8 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
-CURRENT_DESKTOP_COMMIT = "ad35ac8b1834d7bceb853759827de9196429e227"
-CURRENT_DESKTOP_TREE = "6226ffdeab4ee9f61fd4dd53d47ce8c304929498"
+CURRENT_DESKTOP_COMMIT = "92f919f1d84704991650ec03e6e74dbf80de9f37"
+CURRENT_DESKTOP_TREE = "412fe3b3a6dfd6ba7ddea22ebd74e6b46cd76d4b"
 
 
 def load_generator():
