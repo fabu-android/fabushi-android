@@ -4122,6 +4122,7 @@ def merge_responsibility_mapping(
     require(mapping_provenance.get('artifact_id') is not None and mapping_provenance.get('artifact_digest'), 'mapping must originate from a verified predecessor artifact')
 
     responsibilities = json.loads(json.dumps(predecessor.get('responsibilities', [])))
+    tracked_android_paths = _current_android_tracked_files()
     if any(path.startswith('source/packages/agent-kv/') for path in new_by_path):
         _ensure_agent_kv_semantic_mapping(responsibilities, new_by_path, current)
     if any(path in new_by_path for path in BACKGROUND_COMPLETION_SOURCE_SPECS):
@@ -4291,7 +4292,6 @@ def merge_responsibility_mapping(
                 })
         item['desktop_sources'] = cleaned
 
-    tracked_android_paths = _current_android_tracked_files()
     _attach_automation_schedule_exact_head_evidence(
         responsibilities,
         new_by_path,
