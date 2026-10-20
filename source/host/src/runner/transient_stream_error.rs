@@ -6,6 +6,7 @@ pub const TRANSIENT_MESSAGE_TOKENS: &[&str] = &[
     "deadline_exceeded",
     "stream closed",
     "closed stream",
+    "connection reset",
     "operation was aborted",
     "[aborted]",
     "[unavailable]",
