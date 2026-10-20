@@ -2292,6 +2292,8 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertNotIn("auto_spillover_ui", settings)
         self.assertIn("Verify exact-HEAD auto-spillover usage UI production owner", workflow)
         self.assertIn("Test exact-HEAD auto-spillover usage UI replacement", workflow)
+        self.assertIn("Verify exact-HEAD git-diff constants declaration owner", workflow)
+        self.assertIn("Test exact-HEAD git-diff constants contract", workflow)
         self.assertIn("grep -n -F 'AUTO_SPILLOVER_UI_DEFAULTS'", workflow)
         self.assertIn("AUTO_SPILLOVER_MATCHES", workflow)
         self.assertIn("ANDROID_AUTO_SPILLOVER_FILES", workflow)

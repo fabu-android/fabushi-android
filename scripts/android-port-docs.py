@@ -48,10 +48,10 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9460
-EXPECTED_TRACKED_NON_TREE_COUNT = 8305
-PRIOR_TREE_ENTRY_COUNT = 9443
-PRIOR_TRACKED_NON_TREE_COUNT = 8288
+EXPECTED_TREE_ENTRY_COUNT = 9461
+EXPECTED_TRACKED_NON_TREE_COUNT = 8306
+PRIOR_TREE_ENTRY_COUNT = 9460
+PRIOR_TRACKED_NON_TREE_COUNT = 8305
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
 PERSISTED_INTERMEDIATE_TRACKED_NON_TREE_COUNT = 8276
 PREDECESSOR_TREE_ENTRY_COUNT = 9412
@@ -69,10 +69,10 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '5d445687a2ae58a38f7934a9d1dc68c11f908ca3'
-EXPECTED_DESKTOP_TREE = '7446c4fc64a07f5fa943e1e68ae7644290d09523'
-PRIOR_DESKTOP_COMMIT = '0ecf132681845231b597ece11bc5f979a9a8f0cc'
-PRIOR_DESKTOP_TREE = 'af3eb1b18ea3b6c80aa8359623e07f473f251c5b'
+EXPECTED_DESKTOP_COMMIT = 'af61df71b5cd7a32c5fe057f1473df7f826b9165'
+EXPECTED_DESKTOP_TREE = '8cc9f2813f4c9bfce693c8fc1c58723c7afccac2'
+PRIOR_DESKTOP_COMMIT = '5d445687a2ae58a38f7934a9d1dc68c11f908ca3'
+PRIOR_DESKTOP_TREE = '7446c4fc64a07f5fa943e1e68ae7644290d09523'
 PRIOR_BASELINE_PARENT_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
 PRIOR_BASELINE_PARENT_DESKTOP_TREE = 'd19997afb9e1c4f3473777ac9ef2b96d6ef6a6da'
 PERSISTED_INTERMEDIATE_DESKTOP_COMMIT = '12887d2a44ba450b13ca8390066a39418c52e0c9'
@@ -272,6 +272,55 @@ ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC = {
     ),
     'disposition': 'direct-port',
 }
+
+
+GIT_DIFF_CONSTANT_SOURCE_PATH = 'source/packages/constants/git-diff.ts'
+GIT_DIFF_CONSTANT_RESPONSIBILITY_ID = 'AGENT-RUNTIME-PROMPT-ASSEMBLY-ANDROID-001'
+GIT_DIFF_CONSTANT_PRODUCTION_STEP = 'Verify exact-HEAD git-diff constants declaration owner'
+GIT_DIFF_CONSTANT_TEST_STEP = 'Test exact-HEAD git-diff constants contract'
+GIT_DIFF_CONSTANT_SOURCE_SPEC = {
+    'symbols': [
+        'GIT_DIFF_APPROXIMATE_MAX_TOKENS',
+        'GIT_DIFF_CHARS_PER_TOKEN',
+        'MAX_GIT_DIFF_CHAR_LENGTH',
+        'GIT_DIFF_INTRO',
+        'GIT_DIFF_UNCOMMITTED_INTRO',
+        'GIT_DIFF_TRUNCATION_NOTICE',
+    ],
+    'source_owner': (
+        'Desktop source/packages/constants/git-diff.ts@56fc62ac9910f1c56cb968e78d3c50e63ccbcc09 owns six shared '
+        'Git-diff context literals: the 10,000 approximate-token budget, four chars/token conversion, 40,000-char '
+        'maximum, committed/uncommitted prompt intros, and truncation notice. Exact-authority source-tree git-grep '
+        'shows only source/packages/agent/git-diff-processing.ts consumes MAX_GIT_DIFF_CHAR_LENGTH plus the three text '
+        'literals; that caller performs partial-selection detection and file-aware truncation before '
+        'context-processing-non-media-assembly.ts appends selectedContext.gitDiff and gitDiffFromBranchToMain to Agent '
+        'user context. The constants file itself owns no Git command execution, repository state, retries, cancellation, '
+        'or diff parser state.'
+    ),
+    'android_owner': (
+        'Existing fabushi-constants::git_diff remains the single Android owner for these six declaration literals and '
+        'is exported by the existing constants crate. The previously added truncate_git_diff helper is intentionally '
+        'removed because Desktop file-aware truncation belongs to the later git-diff-processing responsibility and the '
+        'helper had no Android production caller. This row does not claim selected Git-diff prompt injection parity; '
+        'that downstream source entry remains independently unreviewed and must close in its own progression row.'
+    ),
+    'android_targets': ['source/packages/constants/src/git_diff.rs', 'source/packages/constants/src/lib.rs'],
+    'production_target': 'source/packages/constants/src/git_diff.rs',
+    'test_target': 'source/packages/constants/src/git_diff.rs',
+    'focused_tests': ['source/packages/constants/src/git_diff.rs::tests::constants_match_desktop_git_diff_contract'],
+    'platform_delta': (
+        'None for the shared literals. Android repository/Remote Runner acquisition and selected-context assembly are '
+        'separate responsibilities; this declaration row deliberately does not create a second diff parser or state owner.'
+    ),
+    'evidence_semantics': (
+        'Same-head evidence proves the exact six Desktop literals, the complete direct symbol-consumer closure into '
+        'git-diff-processing.ts and its downstream context-assembly caller, the exact Rust declaration values, module '
+        'export, absence of a duplicate Android truncation implementation, and focused constants tests. It does not '
+        'promote source/packages/agent/git-diff-processing.ts or selected Git-diff UI/runtime parity to implemented.'
+    ),
+    'disposition': 'direct-port',
+}
+
 
 AGENT_CORE_INTERACTION_RESPONSIBILITY_ID = 'AGENT-RUN-LIFECYCLE-001'
 AGENT_CORE_INTERACTION_PRODUCTION_STEP = 'Verify exact-HEAD agent-core interaction production owner'
@@ -2740,6 +2789,78 @@ def _ensure_environment_setup_constant_semantic_mapping(
 
 
 
+def _ensure_git_diff_constant_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    """Map only the shared git-diff declaration contract; downstream processing stays independently unreviewed."""
+    source_object = new_by_path.get(GIT_DIFF_CONSTANT_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop git-diff constant has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == GIT_DIFF_CONSTANT_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'git-diff semantic mapping requires exactly one ' + GIT_DIFF_CONSTANT_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(GIT_DIFF_CONSTANT_SOURCE_PATH, {})
+    source.update({
+        'path': GIT_DIFF_CONSTANT_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(GIT_DIFF_CONSTANT_SOURCE_SPEC['symbols']),
+        'focused_tests': list(GIT_DIFF_CONSTANT_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(GIT_DIFF_CONSTANT_SOURCE_SPEC['android_targets']),
+        'source_owner': GIT_DIFF_CONSTANT_SOURCE_SPEC['source_owner'],
+        'android_owner': GIT_DIFF_CONSTANT_SOURCE_SPEC['android_owner'],
+        'platform_delta': GIT_DIFF_CONSTANT_SOURCE_SPEC['platform_delta'],
+        'evidence_semantics': GIT_DIFF_CONSTANT_SOURCE_SPEC['evidence_semantics'],
+    })
+    existing_sources[GIT_DIFF_CONSTANT_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(existing_sources.values(), key=lambda value: value.get('path', ''))
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in GIT_DIFF_CONSTANT_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    item['android_disposition'] = GIT_DIFF_CONSTANT_SOURCE_SPEC['disposition']
+    note = (
+        'Desktop git-diff.ts is fully source-audited as a six-literal declaration consumed only by '
+        'agent/git-diff-processing.ts; its downstream selected-context processing remains a separate unreviewed source '
+        'responsibility. Android preserves only this declaration owner and removes the unused naive truncation helper so '
+        'semantic coverage cannot be misread as selected Git-diff runtime parity.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
+
+
 SAND_BOX_ARCHIVE_SOURCE_PATH = 'source/packages/constants/sand-box-archive.ts'
 SAND_BOX_ARCHIVE_RESPONSIBILITY_ID = 'REMOTE-BOX-STORE-SYNC-ANDROID-001'
 SAND_BOX_ARCHIVE_SOURCE_SPEC = {
@@ -3781,6 +3902,8 @@ def merge_responsibility_mapping(
         _ensure_cloud_agent_constant_semantic_mapping(responsibilities, new_by_path, current)
     if ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_environment_setup_constant_semantic_mapping(responsibilities, new_by_path, current)
+    if GIT_DIFF_CONSTANT_SOURCE_PATH in new_by_path:
+        _ensure_git_diff_constant_semantic_mapping(responsibilities, new_by_path, current)
     _keep_agent_store_ids_incomplete(responsibilities)
     _keep_mcp_constant_incomplete(responsibilities)
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
@@ -4386,6 +4509,86 @@ def merge_responsibility_mapping(
 
 
 
+    if GIT_DIFF_CONSTANT_SOURCE_PATH in new_by_path and any(
+        isinstance(source, dict) and source.get('path') == GIT_DIFF_CONSTANT_SOURCE_PATH
+        for item in responsibilities
+        for source in (item.get('desktop_sources') or [])
+    ):
+        git_diff_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == GIT_DIFF_CONSTANT_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = git_diff_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            git_diff_responsibility[evidence_key] = [
+                evidence for evidence in existing_evidence
+                if GIT_DIFF_CONSTANT_SOURCE_PATH not in (
+                    evidence.get('source_paths')
+                    if isinstance(evidence.get('source_paths'), list)
+                    else [evidence.get('source_path')]
+                )
+            ]
+        git_diff_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=GIT_DIFF_CONSTANT_PRODUCTION_STEP,
+            test_step_name=GIT_DIFF_CONSTANT_TEST_STEP,
+            evidence_label='git-diff six-literal declaration boundary',
+        )
+        if git_diff_evidence is not None:
+            production_target = GIT_DIFF_CONSTANT_SOURCE_SPEC['production_target']
+            test_target = GIT_DIFF_CONSTANT_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'git-diff constant closure evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [GIT_DIFF_CONSTANT_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': git_diff_evidence['workflow_name'],
+                'workflow_id': git_diff_evidence['workflow_id'],
+                'workflow_path': git_diff_evidence['workflow_path'],
+                'workflow_event': git_diff_evidence['workflow_event'],
+                'workflow_repository': git_diff_evidence['workflow_repository'],
+                'workflow_run_id': git_diff_evidence['workflow_run_id'],
+                'workflow_job_name': git_diff_evidence['workflow_job_name'],
+                'workflow_job_id': git_diff_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': git_diff_evidence['workflow_job_run_attempt'],
+                'run_attempt': git_diff_evidence['run_attempt'],
+                'run_conclusion': git_diff_evidence['run_conclusion'],
+                'result': 'passed',
+                'evidence_semantics': GIT_DIFF_CONSTANT_SOURCE_SPEC['evidence_semantics'],
+            }
+            git_diff_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': git_diff_evidence['production_step_name'],
+                'workflow_step_number': git_diff_evidence['production_step_number'],
+                'evidence_ref': production_target + '#git-diff-declaration-owner',
+            })
+            git_diff_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-unit-test',
+                'workflow_step_name': git_diff_evidence['test_step_name'],
+                'workflow_step_number': git_diff_evidence['test_step_number'],
+                'evidence_ref': test_target + '#git-diff-focused-test',
+                'focused_tests': list(GIT_DIFF_CONSTANT_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head git-diff six-literal closure evidence; '
+                'git-diff package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
+
+
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         composer_responsibility = next(
             item for item in responsibilities
@@ -4710,6 +4913,8 @@ def merge_responsibility_mapping(
             row['disposition'] = CLOUD_AGENT_CONSTANT_SOURCE_SPEC['disposition']
         elif path == ENVIRONMENT_SETUP_CONSTANT_SOURCE_PATH:
             row['disposition'] = ENVIRONMENT_SETUP_CONSTANT_SOURCE_SPEC['disposition']
+        elif path == GIT_DIFF_CONSTANT_SOURCE_PATH:
+            row['disposition'] = GIT_DIFF_CONSTANT_SOURCE_SPEC['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
             row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
         elif path == STRUCTURED_LOG_CONSTANT_SOURCE_PATH:

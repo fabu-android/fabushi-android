@@ -213,6 +213,46 @@ jobs:
           cargo test -p fabushi-constants environment_setup::tests::resume_age_policy_is_bounded -- --exact
           cargo test -p fabushi-mahayana-host extensions::experiments::extension::tests::environment_setup_resume_config_preserves_desktop_fallback_without_claiming_executor_enforcement -- --exact
 
+      - name: Verify exact-HEAD git-diff constants declaration owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'pub mod git_diff;' source/packages/constants/src/lib.rs
+          grep -Fq 'pub const GIT_DIFF_APPROXIMATE_MAX_TOKENS: usize = 10_000;' source/packages/constants/src/git_diff.rs
+          grep -Fq 'pub const GIT_DIFF_CHARS_PER_TOKEN: usize = 4;' source/packages/constants/src/git_diff.rs
+          grep -Fq 'GIT_DIFF_APPROXIMATE_MAX_TOKENS * GIT_DIFF_CHARS_PER_TOKEN;' source/packages/constants/src/git_diff.rs
+          ! grep -Fq 'fn truncate_git_diff' source/packages/constants/src/git_diff.rs
+          mapfile -t ANDROID_GIT_DIFF_SYMBOL_FILES < <(git grep -l -E 'GIT_DIFF_APPROXIMATE_MAX_TOKENS|GIT_DIFF_CHARS_PER_TOKEN|MAX_GIT_DIFF_CHAR_LENGTH|GIT_DIFF_INTRO|GIT_DIFF_UNCOMMITTED_INTRO|GIT_DIFF_TRUNCATION_NOTICE' -- source frontend mobile)
+          printf '%s\n' "${ANDROID_GIT_DIFF_SYMBOL_FILES[@]}"
+          test "${#ANDROID_GIT_DIFF_SYMBOL_FILES[@]}" -eq 1
+          test "${ANDROID_GIT_DIFF_SYMBOL_FILES[0]}" = "source/packages/constants/src/git_diff.rs"
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY2'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY2
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-git-diff-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/git-diff.ts)" = "56fc62ac9910f1c56cb968e78d3c50e63ccbcc09"
+          mapfile -t DESKTOP_GIT_DIFF_SYMBOL_FILES < <(git -C "$DESKTOP_DIR" grep -l -E 'GIT_DIFF_APPROXIMATE_MAX_TOKENS|GIT_DIFF_CHARS_PER_TOKEN|MAX_GIT_DIFF_CHAR_LENGTH|GIT_DIFF_INTRO|GIT_DIFF_UNCOMMITTED_INTRO|GIT_DIFF_TRUNCATION_NOTICE' -- .)
+          printf '%s\n' "${DESKTOP_GIT_DIFF_SYMBOL_FILES[@]}"
+          test "${#DESKTOP_GIT_DIFF_SYMBOL_FILES[@]}" -eq 2
+          printf '%s\n' "${DESKTOP_GIT_DIFF_SYMBOL_FILES[@]}" | grep -Fxq 'source/packages/constants/git-diff.ts'
+          printf '%s\n' "${DESKTOP_GIT_DIFF_SYMBOL_FILES[@]}" | grep -Fxq 'source/packages/agent/git-diff-processing.ts'
+          grep -Fq 'buildGitDiffUncommittedUserContent' "$DESKTOP_DIR/source/packages/agent/context-processing-non-media-assembly.ts"
+          grep -Fq 'selectedContext.gitDiff' "$DESKTOP_DIR/source/packages/agent/context-processing-non-media-assembly.ts"
+          grep -Fq 'buildGitDiffUserContent' "$DESKTOP_DIR/source/packages/agent/context-processing-non-media-assembly.ts"
+          grep -Fq 'selectedContext.gitDiffFromBranchToMain' "$DESKTOP_DIR/source/packages/agent/context-processing-non-media-assembly.ts"
+
+      - name: Test exact-HEAD git-diff constants contract
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants git_diff::tests::constants_match_desktop_git_diff_contract -- --exact
+
       - name: Verify exact-HEAD Box Store chrome-profile archive owner
         run: |
           set -euo pipefail
