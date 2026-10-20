@@ -97,7 +97,7 @@ jobs:
           ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
           ANDROID_PR_NUMBER: '3'
-          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '1200'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '2100'
           ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
           ANDROID_PR_BASE_REF: 'main'
         run: python3 scripts/android-port-docs.py inventory
