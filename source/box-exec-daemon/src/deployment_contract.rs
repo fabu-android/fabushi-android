@@ -17,6 +17,7 @@ use crate::file_transfer_backend::{RemoteFileTransferBackend, RemoteFileTransfer
 use crate::server::{RemoteExecutionAuthorizer, RemoteExecutionService};
 use crate::remote_enrollment::DurableRemoteRunnerEnrollmentAuthorizer;
 use crate::remote_computer_backend::{RemoteComputerBackend, RemoteComputerExecutor};
+use crate::remote_computer_production::ProductionRemoteComputerExecutor;
 use fabushi_android_shared::ExecutionError;
 use std::{collections::BTreeMap, path::PathBuf};
 
@@ -121,9 +122,9 @@ where
     )
 }
 
-/// Shipping external-Runner composition: durable enrollment/grant authorization is installed
-/// before any Computer action can reach the concrete OS executor.
-pub fn open_enrolled_remote_computer_execution_service<E>(
+/// Test/embedder composition that keeps executor injection explicit. Shipping code must use
+/// open_enrolled_remote_computer_execution_service so RecordingExecutor cannot become production.
+pub fn open_enrolled_remote_computer_execution_service_with_executor<E>(
     journal_path: impl Into<PathBuf>,
     enrollment_path: impl Into<PathBuf>,
     executor: E,
@@ -137,6 +138,28 @@ where
 {
     let authorizer = DurableRemoteRunnerEnrollmentAuthorizer::open(enrollment_path, now_ms)?;
     open_remote_computer_execution_service(journal_path, authorizer, executor, now_ms)
+}
+
+/// Shipping Authorized External Runner composition. The durable account/device/grant authorizer
+/// always wraps the concrete OS executor that performs mouse/keyboard/capture/cursor side effects.
+pub fn open_enrolled_remote_computer_execution_service(
+    journal_path: impl Into<PathBuf>,
+    enrollment_path: impl Into<PathBuf>,
+    now_ms: u64,
+) -> Result<
+    RemoteExecutionService<
+        DurableRemoteRunnerEnrollmentAuthorizer,
+        RemoteComputerBackend<ProductionRemoteComputerExecutor>,
+    >,
+    ExecutionError,
+> {
+    let authorizer = DurableRemoteRunnerEnrollmentAuthorizer::open(enrollment_path, now_ms)?;
+    open_remote_computer_execution_service(
+        journal_path,
+        authorizer,
+        ProductionRemoteComputerExecutor::new(),
+        now_ms,
+    )
 }
 
 pub fn open_remote_file_transfer_execution_service<A: RemoteExecutionAuthorizer>(

@@ -468,6 +468,11 @@ jobs:
           set -euo pipefail
           ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.FabushiAppAgentSurfaceTest --tests com.ombhrum.fabushi.RemoteCommandJournalTest
 
+      - name: Install native Remote Computer Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
       - name: Verify exact-HEAD Remote Computer Desktop action authority
         run: |
           set -euo pipefail
@@ -485,6 +490,13 @@ jobs:
           test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
           test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent-exec/computer-use.ts)" = "3f2c0e015b0d0e58294a541065f5445050f64609"
           test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/proto/generated/agent/v1/computer_use_tool_pb.ts)" = "f74de4f1e7808411112121d0d3887c325f4ee2eb"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/host/src/remote_computer_target.rs)" = "602493decac443fbefdf3e9af3ccda2caad2012d"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/mahayana/mahayana-rs/mahayana-computer/src/lib.rs)" = "f85efcd381bbf3000b43f773c1b63fa56a50e0e5"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/mahayana/mahayana-rs/mahayana-computer/Cargo.toml)" = "6c655664d3cab8620e72f039dcb0b2597b96838a"
+          grep -Fq 'pub struct NativeDesktopRemoteExecutor;' "$DESKTOP_DIR/source/host/src/remote_computer_target.rs"
+          grep -Fq 'mahayana_computer::execute_with_lease_fenced(' "$DESKTOP_DIR/source/host/src/remote_computer_target.rs"
+          grep -Fq 'use enigo::{Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};' "$DESKTOP_DIR/source/mahayana/mahayana-rs/mahayana-computer/src/lib.rs"
+          grep -Fq 'use xcap::Monitor;' "$DESKTOP_DIR/source/mahayana/mahayana-rs/mahayana-computer/src/lib.rs"
           for action in mouseMove click mouseDown mouseUp drag scroll type key wait screenshot cursorPosition; do
             grep -Fq "| \"$action\"" "$DESKTOP_DIR/source/packages/agent-exec/computer-use.ts"
           done
@@ -500,6 +512,9 @@ jobs:
           cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::wire_decodes_and_executes_all_eleven_desktop_actions_in_order -- --exact
           cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::screenshot_settles_only_when_a_following_action_exists -- --exact
           cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::reconciliation_and_cancel_never_blindly_replay_actions -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_production::tests::production_executor_maps_all_eleven_actions_to_native_io_and_returns_observation_fields -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_production::tests::production_executor_routes_screenshot_settle_to_native_wait_without_replaying_actions -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_production::tests::production_executor_cancel_and_reconcile_fail_safe_without_native_replay -- --exact
           cargo test -p fabushi-mahayana-host remote_execution::tests::cancellation_before_dispatch_is_terminal_but_inflight_cancel_requires_reconciliation -- --exact
           cargo test -p fabushi-mahayana-host remote_execution::tests::disconnect_never_blind_replays_and_reconnect_requires_reconciliation -- --exact
           cargo test -p fabushi-mahayana-host remote_execution::tests::timeout_after_dispatch_is_outcome_unknown_and_reconciles -- --exact
@@ -514,8 +529,12 @@ jobs:
           cargo test -p fabushi-android-box-exec-daemon server::tests::cancellation_is_identity_bound_and_terminal_only_after_backend_confirmation -- --exact
           grep -Fq 'pub const REMOTE_COMPUTER_SCREENSHOT_SETTLE_DELAY_MS: u64 = 2_000;' source/box-exec-daemon/src/remote_computer_backend.rs
           grep -Fq 'pub mod remote_computer_backend;' source/box-exec-daemon/src/lib.rs
+          grep -Fq 'pub mod remote_computer_production;' source/box-exec-daemon/src/lib.rs
           grep -Fq 'pub fn open_remote_computer_execution_service<A, E>(' source/box-exec-daemon/src/deployment_contract.rs
-          grep -Fq 'pub fn open_enrolled_remote_computer_execution_service<E>(' source/box-exec-daemon/src/deployment_contract.rs
+          grep -Fq 'pub fn open_enrolled_remote_computer_execution_service(' source/box-exec-daemon/src/deployment_contract.rs
+          grep -Fq 'ProductionRemoteComputerExecutor::new()' source/box-exec-daemon/src/deployment_contract.rs
+          grep -Fq 'enigo = { version = "0.6.1", features = ["wayland"] }' source/box-exec-daemon/Cargo.toml
+          grep -Fq 'xcap = "0.9.8"' source/box-exec-daemon/Cargo.toml
 
       - name: Verify exact-HEAD automation schedule production owner
         run: |
@@ -586,6 +605,11 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install native Remote Computer Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
       - name: Test Android-owned Coordinator Host Runner foundation
         run: cargo test --workspace --all-targets
 

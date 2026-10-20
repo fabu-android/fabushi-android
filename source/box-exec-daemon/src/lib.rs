@@ -29,6 +29,7 @@ pub mod file_transfer_backend;
 pub mod protected_path_guard;
 pub mod remote_enrollment;
 pub mod remote_computer_backend;
+pub mod remote_computer_production;
 pub mod server;
 pub mod transport;
 
@@ -92,6 +93,9 @@ pub use remote_computer_backend::{
     RemoteComputerAction, RemoteComputerActionOutput, RemoteComputerBackend,
     RemoteComputerExecutor, RemoteComputerRequest, REMOTE_COMPUTER_CAPABILITY,
     REMOTE_COMPUTER_SCREENSHOT_SETTLE_DELAY_MS,
+};
+pub use remote_computer_production::{
+    DesktopComputerIo, ProductionRemoteComputerExecutor, SystemDesktopComputerIo,
 };
 pub use transport::{
     AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteCancelOutcome,
