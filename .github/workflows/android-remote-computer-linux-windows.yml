@@ -1,0 +1,76 @@
+name: Android Remote Computer Linux Windows
+
+on:
+  push:
+    branches:
+      - spec/grok-bot-018-android-parity-20260922
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  linux-native-remote-computer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact HEAD
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
+      - name: Compile Linux native Remote Computer owner
+        run: cargo check -p fabushi-android-box-exec-daemon --lib --tests
+      - name: Test Linux Remote Computer production invariants
+        run: |
+          cargo test -p fabushi-android-box-exec-daemon production_executor_maps_all_eleven_actions_to_native_io_and_returns_observation_fields -- --nocapture
+          cargo test -p fabushi-android-box-exec-daemon production_executor_routes_screenshot_settle_to_native_wait_without_replaying_actions -- --nocapture
+          cargo test -p fabushi-android-box-exec-daemon production_executor_cancel_and_reconcile_fail_safe_without_native_replay -- --nocapture
+      - name: Record Linux exact-head evidence
+        run: |
+          mkdir -p evidence
+          printf 'source_sha=%s\nplatform=linux\n' "$SOURCE_SHA" > evidence/source-sha.txt
+          cargo metadata --format-version=1 --no-deps > evidence/cargo-metadata.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-computer-linux-${{ env.SOURCE_SHA }}
+          path: evidence/
+          if-no-files-found: error
+
+  windows-native-remote-computer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - name: Assert exact HEAD
+        shell: pwsh
+        run: |
+          if ((git rev-parse HEAD).Trim() -ne $env:SOURCE_SHA) { throw "checkout is not exact HEAD" }
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Compile Windows native Remote Computer owner
+        run: cargo check -p fabushi-android-box-exec-daemon --lib --tests
+      - name: Test Windows Remote Computer production invariants
+        run: |
+          cargo test -p fabushi-android-box-exec-daemon production_executor_maps_all_eleven_actions_to_native_io_and_returns_observation_fields -- --nocapture
+          cargo test -p fabushi-android-box-exec-daemon production_executor_routes_screenshot_settle_to_native_wait_without_replaying_actions -- --nocapture
+          cargo test -p fabushi-android-box-exec-daemon production_executor_cancel_and_reconcile_fail_safe_without_native_replay -- --nocapture
+      - name: Record Windows exact-head evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          "source_sha=$env:SOURCE_SHA`nplatform=windows" | Set-Content evidence/source-sha.txt
+          cargo metadata --format-version=1 --no-deps | Set-Content evidence/cargo-metadata.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-computer-windows-${{ env.SOURCE_SHA }}
+          path: evidence/
+          if-no-files-found: error
