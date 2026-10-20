@@ -42,11 +42,15 @@
   "symlinks": [],
   "truncation_fallback_used": false,
   "initial_status": "unreviewed",
-  "ledger_sha256": "0252beb0fa0d195373e6b8d1d8364272596422381d0c8251df7e87e9e90a0b92",
-  "closure_review": "current-authority-persisted-8327-targeted-remote-computer-five-source-audit-canonical-sort",
+  "ledger_sha256": "42da68cdb24e9f63df8ed3e648026b23c14d00e41291a87829da0ae06b052aef",
+  "closure_review": "current-authority-persisted-8327-semantic-5895-unmapped-2432-targeted-remote-computer-five-source-audit",
   "product_acceptance": "not-claimed",
   "responsibility_mapping_status": "incomplete",
   "responsibility_count": 306,
   "desktop_main_before": "ba9ecce728ef021fee609796c8704d8af6fe4b5a",
-  "desktop_main_after": "ba9ecce728ef021fee609796c8704d8af6fe4b5a"
+  "desktop_main_after": "ba9ecce728ef021fee609796c8704d8af6fe4b5a",
+  "semantic_source_anchor_entries": 6093,
+  "semantic_source_anchor_unique_paths": 5895,
+  "mapped_source_rows": 5895,
+  "unmapped_source_rows": 2432
 }
