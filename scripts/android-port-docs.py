@@ -4205,7 +4205,7 @@ def merge_responsibility_mapping(
             })
             agent_error_responsibility['test_evidence'].append({
                 **common,
-                'kind': 'focused-contract-test',
+                'kind': 'contract-test',
                 'workflow_step_name': agent_error_evidence['test_step_name'],
                 'workflow_step_number': agent_error_evidence['test_step_number'],
                 'evidence_ref': test_target + '#desktop-agent-client-error-recovery-contract',
