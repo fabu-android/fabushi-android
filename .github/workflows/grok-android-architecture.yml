@@ -500,6 +500,18 @@ jobs:
           cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::wire_decodes_and_executes_all_eleven_desktop_actions_in_order -- --exact
           cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::screenshot_settles_only_when_a_following_action_exists -- --exact
           cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::reconciliation_and_cancel_never_blindly_replay_actions -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::cancellation_before_dispatch_is_terminal_but_inflight_cancel_requires_reconciliation -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::disconnect_never_blind_replays_and_reconnect_requires_reconciliation -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::timeout_after_dispatch_is_outcome_unknown_and_reconciles -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::stale_account_callback_and_revoked_permission_are_rejected -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::account_switch_cancels_unsent_and_fences_sent_work -- --exact
+          cargo test -p fabushi-mahayana-host host_runner_composition::tests::remote_operation_identity_is_fenced_by_device -- --exact
+          cargo test -p fabushi-mahayana-host host_runner_composition::tests::accepted_remote_execution_persists_acked_and_reconciles_without_replay -- --exact
+          cargo test -p fabushi-mahayana-host host_runner_composition::tests::outcome_unknown_never_replays_and_reconciliation_settles_original_operation -- --exact
+          cargo test -p fabushi-android-box-exec-daemon transport::tests::network_interruption_after_dispatch_is_outcome_unknown_without_blind_replay -- --exact
+          cargo test -p fabushi-android-box-exec-daemon transport::tests::reconciliation_retries_only_the_idempotent_query_until_terminal -- --exact
+          cargo test -p fabushi-android-box-exec-daemon server::tests::process_death_turns_inflight_execution_into_outcome_unknown_without_replay -- --exact
+          cargo test -p fabushi-android-box-exec-daemon server::tests::cancellation_is_identity_bound_and_terminal_only_after_backend_confirmation -- --exact
           grep -Fq 'pub const REMOTE_COMPUTER_SCREENSHOT_SETTLE_DELAY_MS: u64 = 2_000;' source/box-exec-daemon/src/remote_computer_backend.rs
           grep -Fq 'pub mod remote_computer_backend;' source/box-exec-daemon/src/lib.rs
           grep -Fq 'pub fn open_remote_computer_execution_service<A, E>(' source/box-exec-daemon/src/deployment_contract.rs
