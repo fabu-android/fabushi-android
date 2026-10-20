@@ -1275,15 +1275,27 @@ def _latest_exact_head_android_ci_evidence(
     test_step_name: str = AGENT_KV_TEST_STEP,
     evidence_label: str = 'Agent KV',
 ) -> dict | None:
-    """Wait for a dedicated exact-head workflow/job and the requested evidence steps to pass."""
+    """Wait boundedly for exact-head CI to become terminal before deciding evidence is absent.
+
+    An inventory job can start before the architecture workflow is queued or while its
+    production/test steps are still running. Do not conclude "missing" while any matching
+    run is active, and never use another commit's successful run as a fallback.
+    """
+    if not SHA.fullmatch(android_head):
+        print('WARNING: invalid Android HEAD; CI evidence remains incomplete', file=sys.stderr)
+        return None
     if not os.environ.get('GH_TOKEN'):
         print('WARNING: GH_TOKEN is unavailable; agent-kv CI evidence remains incomplete', file=sys.stderr)
         return None
     try:
-        wait_seconds = max(0, int(os.environ.get('ANDROID_CI_EVIDENCE_WAIT_SECONDS', '3600')))
+        wait_seconds = int(os.environ.get('ANDROID_CI_EVIDENCE_WAIT_SECONDS', '2100'))
     except ValueError:
-        wait_seconds = 3600
+        wait_seconds = 2100
+    # Keep the wait bounded even if a workflow caller supplies an accidental huge value.
+    wait_seconds = min(2100, max(0, wait_seconds))
     deadline = time.monotonic() + wait_seconds
+    last_transient_error = None
+
     while True:
         try:
             runs_by_id = {}
@@ -1297,97 +1309,119 @@ def _latest_exact_head_android_ci_evidence(
                         run.get('name') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME
                         and run.get('workflow_id') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID
                         and run.get('path') == ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH
-                        and run.get('event') in ('pull_request', 'push')
+                        and run.get('event') in ('pull_request', 'push', 'workflow_dispatch')
                         and run.get('head_sha') == android_head
                         and (run.get('repository') or {}).get('full_name') == ANDROID_REPOSITORY
+                        and isinstance(run.get('id'), int)
+                        and not isinstance(run.get('id'), bool)
+                        and run.get('id') > 0
                     ):
-                        runs_by_id[run.get('id')] = run
+                        runs_by_id[run['id']] = run
                 if len(batch) < 100:
                     break
-            terminal = [
-                run for run in runs_by_id.values()
-                if run.get('status') == 'completed'
-                and run.get('conclusion') == 'success'
-                and isinstance(run.get('run_attempt'), int)
-                and not isinstance(run.get('run_attempt'), bool)
-                and run.get('run_attempt') > 0
-            ]
-            for run in sorted(
-                terminal,
-                key=lambda value: (value.get('run_number') or 0, value.get('run_attempt') or 0),
-                reverse=True,
-            ):
-                jobs_by_id = {}
-                for page in range(1, 21):
-                    jobs_response = get(
-                        f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run["id"]}/jobs?filter=latest&per_page=100&page={page}'
-                    )
-                    batch = jobs_response.get('jobs', [])
-                    for value in batch:
-                        jobs_by_id[value.get('id')] = value
-                    if len(batch) < 100:
-                        break
-                job = next((
-                    value for value in jobs_by_id.values()
-                    if value.get('name') == ANDROID_AGENT_KV_EVIDENCE_JOB_NAME
-                    and value.get('status') == 'completed'
-                    and value.get('conclusion') == 'success'
-                    and value.get('run_attempt') == run.get('run_attempt')
-                ), None)
-                if not job:
-                    continue
-                steps = {
-                    value.get('name'): value
-                    for value in job.get('steps', [])
-                    if isinstance(value, dict) and isinstance(value.get('name'), str)
-                }
-                production_step = steps.get(production_step_name)
-                test_step = steps.get(test_step_name)
-                if not all(
-                    step
-                    and step.get('status') == 'completed'
-                    and step.get('conclusion') == 'success'
-                    and isinstance(step.get('number'), int)
-                    and not isinstance(step.get('number'), bool)
-                    and step.get('number') > 0
-                    for step in (production_step, test_step)
+
+            matching_runs = list(runs_by_id.values())
+            active_runs = [run for run in matching_runs if run.get('status') != 'completed']
+            # An active exact-head run takes precedence over any older success.
+            if not active_runs:
+                successful_runs = [
+                    run for run in matching_runs
+                    if run.get('status') == 'completed'
+                    and run.get('conclusion') == 'success'
+                    and isinstance(run.get('run_attempt'), int)
+                    and not isinstance(run.get('run_attempt'), bool)
+                    and run.get('run_attempt') > 0
+                ]
+                for run in sorted(
+                    successful_runs,
+                    key=lambda value: (value.get('run_number') or 0, value.get('run_attempt') or 0),
+                    reverse=True,
                 ):
-                    continue
-                return {
-                    'workflow_name': run['name'],
-                    'workflow_id': run['workflow_id'],
-                    'workflow_path': run['path'],
-                    'workflow_event': run['event'],
-                    'workflow_repository': (run.get('repository') or {}).get('full_name'),
-                    'workflow_run_id': run['id'],
-                    'run_attempt': run['run_attempt'],
-                    'run_conclusion': run['conclusion'],
-                    'workflow_job_name': job['name'],
-                    'workflow_job_id': job['id'],
-                    'workflow_job_run_attempt': job['run_attempt'],
-                    'production_step_name': production_step['name'],
-                    'production_step_number': production_step['number'],
-                    'test_step_name': test_step['name'],
-                    'test_step_number': test_step['number'],
-                    'android_head': android_head,
-                }
-        except (RuntimeError, KeyError, TypeError, ValueError) as error:
+                    jobs_by_id = {}
+                    for page in range(1, 21):
+                        jobs_response = get(
+                            f'/repos/{ANDROID_REPOSITORY}/actions/runs/{run["id"]}/jobs?filter=latest&per_page=100&page={page}'
+                        )
+                        batch = jobs_response.get('jobs', [])
+                        for value in batch:
+                            if isinstance(value, dict) and isinstance(value.get('id'), int):
+                                jobs_by_id[value['id']] = value
+                        if len(batch) < 100:
+                            break
+                    job = next((
+                        value for value in jobs_by_id.values()
+                        if value.get('name') == ANDROID_AGENT_KV_EVIDENCE_JOB_NAME
+                        and value.get('status') == 'completed'
+                        and value.get('conclusion') == 'success'
+                        and value.get('run_attempt') == run.get('run_attempt')
+                        and value.get('head_sha') in (None, android_head)
+                    ), None)
+                    if not job:
+                        continue
+                    steps = {
+                        value.get('name'): value
+                        for value in job.get('steps', [])
+                        if isinstance(value, dict) and isinstance(value.get('name'), str)
+                    }
+                    production_step = steps.get(production_step_name)
+                    test_step = steps.get(test_step_name)
+                    if not all(
+                        step
+                        and step.get('status') == 'completed'
+                        and step.get('conclusion') == 'success'
+                        and isinstance(step.get('number'), int)
+                        and not isinstance(step.get('number'), bool)
+                        and step.get('number') > 0
+                        for step in (production_step, test_step)
+                    ):
+                        continue
+                    return {
+                        'workflow_name': run['name'],
+                        'workflow_id': run['workflow_id'],
+                        'workflow_path': run['path'],
+                        'workflow_event': run['event'],
+                        'workflow_repository': (run.get('repository') or {}).get('full_name'),
+                        'workflow_run_id': run['id'],
+                        'run_attempt': run['run_attempt'],
+                        'run_conclusion': run['conclusion'],
+                        'workflow_job_name': job['name'],
+                        'workflow_job_id': job['id'],
+                        'workflow_job_run_attempt': job['run_attempt'],
+                        'production_step_name': production_step['name'],
+                        'production_step_number': production_step['number'],
+                        'test_step_name': test_step['name'],
+                        'test_step_number': test_step['number'],
+                        'android_head': android_head,
+                    }
+
+                # API job/step payloads may lag a just-completed run; retry briefly within
+                # the same deadline instead of returning a false "missing evidence" result.
+                if matching_runs and any(
+                    run.get('status') == 'completed' and run.get('conclusion') == 'success'
+                    for run in matching_runs
+                ):
+                    last_transient_error = 'terminal successful run has no passing evidence job/steps'
+                elif matching_runs:
+                    print(
+                        f'WARNING: no terminal successful exact-head {evidence_label} evidence; '
+                        f'{evidence_label} remains incomplete',
+                        file=sys.stderr,
+                    )
+                    return None
+        except (RuntimeError, KeyError, TypeError, ValueError, OSError) as error:
+            # GitHub API visibility can lag workflow/job transitions; retry within the deadline.
+            last_transient_error = type(error).__name__
+
+        now = time.monotonic()
+        if now >= deadline:
+            detail = f' ({last_transient_error})' if last_transient_error else ''
             print(
-                'WARNING: unable to read exact-head Agent KV CI evidence: '
-                + type(error).__name__,
-                file=sys.stderr,
-            )
-            return None
-        except OSError:
-            pass
-        if time.monotonic() >= deadline:
-            print(
-                f'WARNING: timed out waiting for successful exact-head {evidence_label} evidence; '
+                f'WARNING: timed out waiting for terminal exact-head {evidence_label} evidence{detail}; '
                 f'{evidence_label} remains incomplete',
                 file=sys.stderr,
             )
             return None
-        time.sleep(15)
+        time.sleep(min(15, max(0, deadline - now)))
 
 
 def _package_action_job_passed(
