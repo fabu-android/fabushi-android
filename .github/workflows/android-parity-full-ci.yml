@@ -32,6 +32,11 @@ jobs:
         run: python scripts/check_grok_android_parity.py
       - name: Test architecture checker
         run: python -m unittest discover -s tests -p 'test_*.py'
+      - name: Install native Remote Computer Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
       - name: Rust contract/runtime tests
         run: |
           set -eu
