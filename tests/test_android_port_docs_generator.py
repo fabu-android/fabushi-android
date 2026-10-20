@@ -13,8 +13,8 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
-CURRENT_DESKTOP_COMMIT = "92f919f1d84704991650ec03e6e74dbf80de9f37"
-CURRENT_DESKTOP_TREE = "412fe3b3a6dfd6ba7ddea22ebd74e6b46cd76d4b"
+CURRENT_DESKTOP_COMMIT = "f0789fac0ed15b033cb000c7a8c97a7662c75294"
+CURRENT_DESKTOP_TREE = "e4f3a3555e183623d45cf8c3a806e155d5861ad8"
 
 
 def load_generator():
@@ -1421,7 +1421,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             manifest = {
                 "authority_current": True, "desktop_commit": desktop_commit,
                 "source_commit": desktop_commit, "desktop_root_tree": desktop_tree,
-                "desktop_main_before": intermediate_commit, "desktop_main_after": desktop_commit,
+                "desktop_main_before": desktop_commit, "desktop_main_after": desktop_commit,
                 "tree_entries": 3, "tracked_non_tree_entries": 2, "authority_ledger_rows": 2,
                 "ledger_sha256": hashlib.sha256(ledger_text.encode("utf-8")).hexdigest(),
                 "android_pr_head_sha": android_head, "android_tested_checkout_sha": android_head,
@@ -1430,6 +1430,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
             baseline = {
                 "desktop_repository": "bhrumom/fabushi-desktop",
                 "desktop_commit": desktop_commit, "desktop_root_tree": desktop_tree,
+                "desktop_main_before": desktop_commit, "desktop_main_after": desktop_commit,
             }
             responsibility = {
                 "source_commit": desktop_commit, "android_pr_head_sha": android_head,
@@ -2785,6 +2786,92 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
     def test_exact_head_provenance_allows_explicit_coverage_only_anchors_without_reverse_links(self):
         module, manifest, row, responsibility_doc, android_head = self._exact_head_provenance_fixture([], "coverage-only")
         module.validate_exact_head_provenance(manifest, [row], responsibility_doc, android_head)
+
+
+    def test_rebaseline_observes_live_desktop_main_before_and_after_and_rejects_drift(self):
+        module = load_generator()
+        pinned = module.EXPECTED_DESKTOP_COMMIT
+        self.assertEqual(module.observe_current_desktop_main(pinned, "before rebaseline"), pinned)
+        self.assertEqual(module.observe_current_desktop_main(pinned, "after rebaseline"), pinned)
+        with self.assertRaisesRegex(ValueError, "Desktop main drift before rebaseline"):
+            module.observe_current_desktop_main("f" * 40, "before rebaseline")
+        with self.assertRaisesRegex(ValueError, "Desktop main drift after rebaseline"):
+            module.observe_current_desktop_main("e" * 40, "after rebaseline")
+
+        fields = module.desktop_main_observation_fields(pinned, pinned, pinned)
+        self.assertEqual(fields, {
+            "desktop_main_before": pinned,
+            "desktop_main_after": pinned,
+            "authority_current": True,
+        })
+        drifted = module.desktop_main_observation_fields(pinned, pinned, "e" * 40)
+        self.assertEqual(drifted["desktop_main_before"], pinned)
+        self.assertEqual(drifted["desktop_main_after"], "e" * 40)
+        self.assertFalse(drifted["authority_current"])
+
+        source = SCRIPT.read_text(encoding="utf-8")
+        start = source.index("def rebaseline()")
+        end = source.index("\\ndef inventory()", start)
+        body = source[start:end]
+        self.assertLess(
+            body.index("live_main_before = observe_current_desktop_main("),
+            body.index("commit = get("),
+        )
+        self.assertIn(
+            "authority_fields = desktop_main_observation_fields(\\n            live_main_before, current, latest_desktop_main",
+            body,
+        )
+        self.assertIn("manifest.update(authority_fields)", body)
+        self.assertIn("baseline['desktop_main_before'] = live_main_before", body)
+        self.assertIn("baseline['desktop_main_after'] = latest_desktop_main", body)
+        self.assertLess(
+            body.index("latest_desktop_main = observe_current_desktop_main("),
+            body.index("ledger_path.write_text("),
+        )
+
+    def test_receipt_rejects_any_non_pinned_baseline_or_manifest_before_after(self):
+        module = load_generator()
+        pinned = "d" * 40
+        baseline = {
+            "desktop_main_before": pinned,
+            "desktop_main_after": pinned,
+        }
+        manifest = {
+            "desktop_commit": pinned,
+            "desktop_main_before": pinned,
+            "desktop_main_after": pinned,
+            "authority_current": True,
+        }
+        with patch.object(module, "EXPECTED_DESKTOP_COMMIT", pinned):
+            module.validate_receipt_main_observations(baseline, manifest)
+            for target_name in ("baseline", "manifest"):
+                for field in ("desktop_main_before", "desktop_main_after"):
+                    bad_baseline = dict(baseline)
+                    bad_manifest = dict(manifest)
+                    target = bad_baseline if target_name == "baseline" else bad_manifest
+                    target[field] = "e" * 40
+                    with self.subTest(target=target_name, field=field):
+                        with self.assertRaisesRegex(ValueError, "before/after must equal"):
+                            module.validate_receipt_main_observations(bad_baseline, bad_manifest)
+            bad_manifest = dict(manifest)
+            bad_manifest["authority_current"] = False
+            with self.assertRaisesRegex(ValueError, "authority_current must be derived"):
+                module.validate_receipt_main_observations(baseline, bad_manifest)
+
+    def test_android_port_workflow_gate_requires_exact_pinned_before_after_for_baseline_and_manifest(self):
+        workflow = (ROOT / ".github" / "workflows" / "android-port-docs.yml").read_text(encoding="utf-8")
+        self.assertIn(
+            "b=json.loads(Path('docs/android-port/authority/baseline.json').read_text(encoding='utf-8'))",
+            workflow,
+        )
+        for expression in (
+            "assert b['desktop_main_before'] == desktop_commit",
+            "assert b['desktop_main_after'] == desktop_commit",
+            "assert m['desktop_main_before'] == desktop_commit",
+            "assert m['desktop_main_after'] == desktop_commit",
+        ):
+            self.assertIn(expression, workflow)
+        self.assertNotIn("prior_desktop_commits", workflow)
 
 if __name__ == "__main__":
     unittest.main()

@@ -69,8 +69,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '92f919f1d84704991650ec03e6e74dbf80de9f37'
-EXPECTED_DESKTOP_TREE = '412fe3b3a6dfd6ba7ddea22ebd74e6b46cd76d4b'
+EXPECTED_DESKTOP_COMMIT = 'f0789fac0ed15b033cb000c7a8c97a7662c75294'
+EXPECTED_DESKTOP_TREE = 'e4f3a3555e183623d45cf8c3a806e155d5861ad8'
 PRIOR_DESKTOP_COMMIT = '0ecf132681845231b597ece11bc5f979a9a8f0cc'
 PRIOR_DESKTOP_TREE = 'af3eb1b18ea3b6c80aa8359623e07f473f251c5b'
 PRIOR_BASELINE_PARENT_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
@@ -5481,6 +5481,40 @@ def merge_responsibility_mapping(
         'metadata': predecessor.get('metadata', {}),
     }
 
+def observe_current_desktop_main(observed_sha: str, phase: str) -> str:
+    require(isinstance(observed_sha, str) and SHA.fullmatch(observed_sha) is not None,
+            f'Invalid observed live Desktop main SHA {phase}')
+    require(observed_sha == EXPECTED_DESKTOP_COMMIT,
+            f'Desktop main drift {phase}: expected {EXPECTED_DESKTOP_COMMIT}, got {observed_sha}')
+    return observed_sha
+
+
+def desktop_main_observation_fields(before: str, current: str, after: str) -> dict[str, str | bool]:
+    return {
+        'desktop_main_before': before,
+        'desktop_main_after': after,
+        'authority_current': before == current == after,
+    }
+
+
+def validate_receipt_main_observations(baseline: dict, manifest: dict) -> None:
+    for label, document in (('baseline', baseline), ('manifest', manifest)):
+        require(
+            document.get('desktop_main_before') == EXPECTED_DESKTOP_COMMIT
+            and document.get('desktop_main_after') == EXPECTED_DESKTOP_COMMIT,
+            f'receipt {label} Desktop main before/after must equal the current pinned Desktop SHA',
+        )
+    authority_current = (
+        manifest.get('desktop_main_before')
+        == manifest.get('desktop_commit')
+        == manifest.get('desktop_main_after')
+    )
+    require(
+        manifest.get('authority_current') is authority_current and authority_current,
+        'receipt manifest authority_current must be derived from equal pinned before/commit/after SHAs',
+    )
+
+
 def rebaseline() -> None:
     authority_dir = DOC / 'authority'
     baseline_path = authority_dir / 'baseline.json'
@@ -5493,6 +5527,10 @@ def rebaseline() -> None:
     require(repo == 'bhrumom/fabushi-desktop', 'Unexpected source repository')
     current = EXPECTED_DESKTOP_COMMIT
     require(SHA.fullmatch(current) is not None, 'Invalid pinned Desktop authority SHA')
+    live_main_before = observe_current_desktop_main(
+        get(f'/repos/{repo}/branches/main')['commit']['sha'],
+        'before rebaseline',
+    )
     commit = get(f'/repos/{repo}/git/commits/{current}')
     require(commit.get('sha') == current, 'Pinned Desktop authority commit lookup mismatch')
     tree_sha = commit['tree']['sha']
@@ -5600,9 +5638,6 @@ def rebaseline() -> None:
         'desktop_commit': current,
         'source_commit': current,
         'desktop_root_tree': tree_sha,
-        'desktop_main_before': prior_manifest.get('desktop_commit'),
-        'desktop_main_after': current,
-        'authority_current': True,
         'android_tested_checkout_sha': android['android_checkout_sha'],
         'android_repository': android['android_repository'],
         'android_pr': android['android_pr'],
@@ -5632,8 +5667,6 @@ def rebaseline() -> None:
     baseline['observed_date'] = time.strftime('%Y-%m-%d', time.gmtime())
     baseline['desktop_commit'] = current
     baseline['desktop_root_tree'] = tree_sha
-    baseline['desktop_main_before'] = PREDECESSOR_DESKTOP_COMMIT
-    baseline['desktop_main_after'] = current
     require(responsibility_path.is_file(), 'Persistent responsibility ledger is missing')
 
     touched_responsibilities = 0
@@ -5727,13 +5760,22 @@ def rebaseline() -> None:
         persisted_rows = _parse_persisted_source_inventory(
             ledger_text, manifest, expected_paths=new_by_path
         )
+        latest_desktop_main = observe_current_desktop_main(
+            get(f'/repos/{repo}/branches/main')['commit']['sha'],
+            'after rebaseline',
+        )
+        authority_fields = desktop_main_observation_fields(
+            live_main_before, current, latest_desktop_main
+        )
+        require(authority_fields['authority_current'] is True,
+                'Desktop main observations do not all match the pinned authority')
+        manifest.update(authority_fields)
+        baseline['desktop_main_before'] = live_main_before
+        baseline['desktop_main_after'] = latest_desktop_main
         validate_exact_head_provenance(
             manifest, list(persisted_rows.values()), responsibility_doc,
             android['android_checkout_sha'],
         )
-        latest_desktop_main = get(f'/repos/{repo}/branches/main')['commit']['sha']
-        require(SHA.fullmatch(latest_desktop_main) is not None,
-                'Invalid observed live Desktop main SHA during rebaseline')
         ledger_path.write_text(ledger_text, encoding='utf-8')
         save(responsibility_path, responsibility_doc)
         save(manifest_path, manifest)
@@ -5929,6 +5971,7 @@ def audit_receipt() -> None:
             and manifest.get('source_commit') == manifest.get('desktop_commit')
             and manifest.get('desktop_root_tree') == baseline.get('desktop_root_tree'),
             'receipt source manifest and baseline authority disagree')
+    validate_receipt_main_observations(baseline, manifest)
     require(manifest.get('tree_entries') == EXPECTED_TREE_ENTRY_COUNT
             and manifest.get('tracked_non_tree_entries') == EXPECTED_TRACKED_NON_TREE_COUNT
             and manifest.get('authority_ledger_rows') == EXPECTED_TRACKED_NON_TREE_COUNT,
@@ -5966,9 +6009,10 @@ def audit_receipt() -> None:
         return sorted(signature)
 
     desktop_repo = baseline['desktop_repository']
-    live_main_before = get(f'/repos/{desktop_repo}/branches/main')['commit']['sha']
-    require(live_main_before == EXPECTED_DESKTOP_COMMIT,
-            'receipt current Desktop main does not match the pinned commit')
+    live_main_before = observe_current_desktop_main(
+        get(f'/repos/{desktop_repo}/branches/main')['commit']['sha'],
+        'before receipt verification',
+    )
     commit_doc = get(f'/repos/{desktop_repo}/git/commits/{EXPECTED_DESKTOP_COMMIT}')
     require(commit_doc.get('sha') == EXPECTED_DESKTOP_COMMIT
             and commit_doc.get('tree', {}).get('sha') == EXPECTED_DESKTOP_TREE,
@@ -5992,16 +6036,12 @@ def audit_receipt() -> None:
     require(tree_signature(root_entries, 'saved Desktop root tree')
             == tree_signature(remote_root_entries, 'current Desktop root entries'),
             'receipt saved root-tree evidence differs from current GitHub API root entries')
-    live_main_after = get(f'/repos/{desktop_repo}/branches/main')['commit']['sha']
-    require(live_main_after == EXPECTED_DESKTOP_COMMIT,
-            'receipt Desktop main moved during complete-tree verification')
-    require(manifest.get('desktop_main_before') in {
-                PRIOR_DESKTOP_COMMIT, PERSISTED_INTERMEDIATE_DESKTOP_COMMIT,
-                PREDECESSOR_DESKTOP_COMMIT, EXPECTED_DESKTOP_COMMIT
-            }
-            and manifest.get('desktop_main_after') == EXPECTED_DESKTOP_COMMIT
-            and manifest.get('authority_current') is True,
-            'receipt manifest does not bind the rebaseline to the current Desktop authority')
+    live_main_after = observe_current_desktop_main(
+        get(f'/repos/{desktop_repo}/branches/main')['commit']['sha'],
+        'after receipt verification',
+    )
+    require(live_main_before == EXPECTED_DESKTOP_COMMIT == live_main_after,
+            'receipt live Desktop main observations are inconsistent')
 
     expected_paths = {item['path']: item for item in tree_entries if item.get('type') != 'tree'}
     require(len(expected_paths) == EXPECTED_TRACKED_NON_TREE_COUNT,
