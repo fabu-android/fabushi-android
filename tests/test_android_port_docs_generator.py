@@ -368,6 +368,31 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(evidence["test_step_number"], 24)
         self.assertEqual(responses, [])
 
+    def test_latest_exact_head_evidence_fails_closed_if_run_is_still_active_at_deadline(self):
+        module = load_generator()
+        android_head = "a" * 40
+        active_run = {
+            "id": 39393655286,
+            "name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "event": "pull_request",
+            "head_sha": android_head,
+            "repository": {"full_name": module.ANDROID_REPOSITORY},
+            "status": "in_progress",
+            "conclusion": None,
+            "run_attempt": 1,
+            "run_number": 77,
+        }
+        module.get = lambda path: {"workflow_runs": [active_run]}
+        with patch.dict("os.environ", {"GH_TOKEN": "test", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}):
+            with patch.object(module.time, "monotonic", return_value=0.0):
+                with self.assertRaisesRegex(RuntimeError, "refusing to classify evidence as missing"):
+                    module._latest_exact_head_android_ci_evidence(
+                        android_head,
+                        evidence_label="Box Store chrome-profile archive",
+                    )
+
     def test_latest_exact_head_evidence_never_uses_another_head_or_failed_step(self):
         module = load_generator()
         android_head = "a" * 40

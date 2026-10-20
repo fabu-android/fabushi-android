@@ -1297,6 +1297,7 @@ def _latest_exact_head_android_ci_evidence(
     last_transient_error = None
 
     while True:
+        active_runs = []
         try:
             runs_by_id = {}
             for page in range(1, 21):
@@ -1414,6 +1415,17 @@ def _latest_exact_head_android_ci_evidence(
 
         now = time.monotonic()
         if now >= deadline:
+            if active_runs:
+                active_ids = ','.join(
+                    str(run.get('id')) for run in active_runs if run.get('id') is not None
+                )
+                # A bounded timeout must not turn a still-running exact-head job into a
+                # false "missing" result. Fail closed so the inventory cannot freeze it
+                # as absent; the next workflow attempt can observe the terminal evidence.
+                raise RuntimeError(
+                    f'timed out waiting for terminal exact-head {evidence_label} evidence; '
+                    f'workflow run(s) still active: {active_ids or "unknown"}; refusing to classify evidence as missing'
+                )
             detail = f' ({last_transient_error})' if last_transient_error else ''
             print(
                 f'WARNING: timed out waiting for terminal exact-head {evidence_label} evidence{detail}; '
