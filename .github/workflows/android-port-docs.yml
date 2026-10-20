@@ -110,13 +110,14 @@ jobs:
           test -s docs/android-port/generated/desktop-complete-tree.json
           test -s docs/android-port/generated/desktop-root-tree.json
           python3 - "$EXPECTED_ANDROID_HEAD" <<'PY'
-          import hashlib, json, os, sys
+          import hashlib, json, os, runpy, sys
           from pathlib import Path
           from urllib.request import Request, urlopen
 
           desktop_repo = 'bhrumom/fabushi-desktop'
-          desktop_commit = '5d445687a2ae58a38f7934a9d1dc68c11f908ca3'
-          desktop_tree = '7446c4fc64a07f5fa943e1e68ae7644290d09523'
+          authority = runpy.run_path('scripts/android-port-docs.py')
+          desktop_commit = authority['EXPECTED_DESKTOP_COMMIT']
+          desktop_tree = authority['EXPECTED_DESKTOP_TREE']
           prior_desktop_commits = {
             '12a4e29819592e3a7e32f7435cb0cf2e3cc53848',
             'ca618ae19add78872fcac7cb86bf8754a4ad7a55',
@@ -141,8 +142,8 @@ jobs:
             'be031eae9f178ab080b076cd4bd48ceeabab7de7',
             desktop_commit,
           }
-          expected_tree_entries = 9460
-          expected_non_tree_entries = 8305
+          expected_tree_entries = authority['EXPECTED_TREE_ENTRY_COUNT']
+          expected_non_tree_entries = authority['EXPECTED_TRACKED_NON_TREE_COUNT']
 
           def github_json(path):
             headers = {
