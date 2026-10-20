@@ -760,7 +760,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                     "additionalProperties":false,
                     "required":["action"],
                     "properties":{
-                        "action":{"type":"string","enum":["screenshot","click","move","drag","type","key","scroll","wait"]},
+                        "action":{"type":"string","enum":["mouseMove","click","mouseDown","mouseUp","drag","scroll","type","key","wait","screenshot","cursorPosition"]},
                         "x":{"type":"integer"},
                         "y":{"type":"integer"},
                         "x2":{"type":"integer"},
@@ -768,11 +768,13 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                         "path":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["x","y"],"properties":{"x":{"type":"integer"},"y":{"type":"integer"}}}},
                         "text":{"type":"string"},
                         "key":{"type":"string"},
-                        "button":{"type":"string","enum":["left","right","middle"]},
+                        "button":{"type":"string","enum":["left","right","middle","back","forward"]},
                         "count":{"type":"integer","minimum":1,"maximum":3},
                         "direction":{"type":"string","enum":["up","down","left","right"]},
                         "amount":{"type":"integer"},
                         "durationMs":{"type":"integer","minimum":0,"maximum":30000},
+                        "holdDurationMs":{"type":"integer","minimum":0,"maximum":30000},
+                        "modifierKeys":{"type":"string"},
                         "description":{"type":"string"},
                         "then":{"type":"array","minItems":1,"maxItems":9,"items":{"type":"object"}}
                     }
@@ -859,6 +861,11 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
             return Err("remote tool dispatch cancelled before authorization".into());
         }
         let timeout_ms = validate_remote_tool_input(name, &args)?;
+        let computer_use_summary = if name == "Computer" {
+            Some(summarize_remote_computer_actions(&args)?)
+        } else {
+            None
+        };
         let args_json = serde_json::to_string(&args).map_err(|error| error.to_string())?;
         let identity_hash = sha256_hex(
             format!(
@@ -1036,6 +1043,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                 "deviceId":binding.device_id,
                 "tool":name,
                 "arguments":args,
+                "computerUseSummary":computer_use_summary.as_ref().map(remote_computer_summary_json),
                 "inputIdentity":identity_hash,
                 "autoReviewReason":auto_review_reason,
             }),
@@ -1097,6 +1105,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                         "deviceId":binding.device_id,
                         "tool":name,
                         "arguments":args,
+                        "computerUseSummary":computer_use_summary.as_ref().map(remote_computer_summary_json),
                     },
                     "accountFence":binding.account_fence,
                     "accountEpoch":binding.account_epoch,
@@ -2036,7 +2045,7 @@ fn validate_browser_string_array(
 
 fn validate_browser_button(object: &serde_json::Map<String, Value>) -> Result<(), String> {
     if let Some(button) = object.get("button") {
-        if !matches!(button.as_str(), Some("left" | "right" | "middle")) {
+        if !matches!(button.as_str(), Some("left" | "right" | "middle" | "back" | "forward")) {
             return Err("Remote Browser button is unsupported".into());
         }
     }
@@ -2465,11 +2474,88 @@ fn required_cloud_agent_identity(
     Ok(())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RemoteComputerActionSummary {
+    action_count: usize,
+    action_counts: BTreeMap<&'static str, usize>,
+}
+
+fn canonical_remote_computer_action(action: &str) -> Option<&'static str> {
+    match action {
+        "mouseMove" | "move" => Some("mouseMove"),
+        "click" => Some("click"),
+        "mouseDown" => Some("mouseDown"),
+        "mouseUp" => Some("mouseUp"),
+        "drag" => Some("drag"),
+        "scroll" => Some("scroll"),
+        "type" => Some("type"),
+        "key" => Some("key"),
+        "wait" => Some("wait"),
+        "screenshot" => Some("screenshot"),
+        "cursorPosition" => Some("cursorPosition"),
+        _ => None,
+    }
+}
+
+fn summarize_remote_computer_actions(args: &Value) -> Result<RemoteComputerActionSummary, String> {
+    let mut counts = BTreeMap::from([
+        ("mouse_move", 0usize),
+        ("click", 0usize),
+        ("mouse_down", 0usize),
+        ("mouse_up", 0usize),
+        ("drag", 0usize),
+        ("scroll", 0usize),
+        ("type", 0usize),
+        ("key", 0usize),
+        ("wait", 0usize),
+        ("screenshot", 0usize),
+        ("cursor_position", 0usize),
+    ]);
+    let mut actions = Vec::new();
+    actions.push(args);
+    if let Some(followups) = args.get("then").and_then(Value::as_array) {
+        actions.extend(followups.iter());
+    }
+    for action in &actions {
+        let raw = action
+            .get("action")
+            .and_then(Value::as_str)
+            .ok_or("Remote Computer action is required")?;
+        let canonical = canonical_remote_computer_action(raw)
+            .ok_or_else(|| format!("Remote Computer action is unsupported: {raw}"))?;
+        let key = match canonical {
+            "mouseMove" => "mouse_move",
+            "click" => "click",
+            "mouseDown" => "mouse_down",
+            "mouseUp" => "mouse_up",
+            "drag" => "drag",
+            "scroll" => "scroll",
+            "type" => "type",
+            "key" => "key",
+            "wait" => "wait",
+            "screenshot" => "screenshot",
+            "cursorPosition" => "cursor_position",
+            _ => unreachable!("canonical Remote Computer action"),
+        };
+        *counts.get_mut(key).expect("summary key") += 1;
+    }
+    Ok(RemoteComputerActionSummary {
+        action_count: actions.len(),
+        action_counts: counts,
+    })
+}
+
+fn remote_computer_summary_json(summary: &RemoteComputerActionSummary) -> Value {
+    json!({
+        "actionCount": summary.action_count,
+        "actionCounts": summary.action_counts,
+    })
+}
+
 fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Result<(), String> {
-    const ACTIONS: &[&str] = &["screenshot", "click", "move", "drag", "type", "key", "scroll", "wait"];
     const KEYS: &[&str] = &[
         "action", "x", "y", "x2", "y2", "path", "text", "key", "button", "count",
-        "direction", "amount", "durationMs", "description", "then",
+        "direction", "amount", "durationMs", "holdDurationMs", "modifierKeys", "description", "then",
     ];
     let object = args.as_object().ok_or("Remote Computer arguments must be an object")?;
     if let Some(key) = object.keys().find(|key| !KEYS.contains(&key.as_str())) {
@@ -2479,9 +2565,8 @@ fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Resul
         .get("action")
         .and_then(Value::as_str)
         .ok_or("Remote Computer action is required")?;
-    if !ACTIONS.contains(&action) {
-        return Err(format!("Remote Computer action is unsupported: {action}"));
-    }
+    let canonical_action = canonical_remote_computer_action(action)
+        .ok_or_else(|| format!("Remote Computer action is unsupported: {action}"))?;
     for key in ["x", "y", "x2", "y2", "amount"] {
         if object.get(key).is_some_and(|value| value.as_i64().is_none()) {
             return Err(format!("Remote Computer {key} must be an integer"));
@@ -2489,12 +2574,13 @@ fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Resul
     }
     if object.get("text").is_some_and(|value| !value.is_string())
         || object.get("key").is_some_and(|value| !value.is_string())
+        || object.get("modifierKeys").is_some_and(|value| !value.is_string())
         || object.get("description").is_some_and(|value| !value.is_string())
     {
-        return Err("Remote Computer text/key/description must be strings".into());
+        return Err("Remote Computer text/key/modifierKeys/description must be strings".into());
     }
     if let Some(button) = object.get("button") {
-        if !matches!(button.as_str(), Some("left" | "right" | "middle")) {
+        if !matches!(button.as_str(), Some("left" | "right" | "middle" | "back" | "forward")) {
             return Err("Remote Computer button is unsupported".into());
         }
     }
@@ -2513,6 +2599,36 @@ fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Resul
             return Err("Remote Computer durationMs must be between 0 and 30000".into());
         }
     }
+    if let Some(duration) = object.get("holdDurationMs") {
+        if !matches!(duration.as_u64(), Some(0..=30_000)) {
+            return Err("Remote Computer holdDurationMs must be between 0 and 30000".into());
+        }
+    }
+    let coordinate_pair = |first: &str, second: &str| -> Result<bool, String> {
+        let first_value = object.get(first);
+        let second_value = object.get(second);
+        if first_value.is_some() != second_value.is_some() {
+            return Err(format!("Remote Computer {canonical_action} requires {first} and {second} together"));
+        }
+        Ok(first_value.is_some())
+    };
+    match canonical_action {
+        "mouseMove" => {
+            if !coordinate_pair("x", "y")? {
+                return Err("Remote Computer mouseMove requires x and y".into());
+            }
+        }
+        "click" | "scroll" => {
+            let _ = coordinate_pair("x", "y")?;
+        }
+        "type" if object.get("text").and_then(Value::as_str).is_none() => {
+            return Err("Remote Computer type requires text".into());
+        }
+        "key" if object.get("key").and_then(Value::as_str).is_none() => {
+            return Err("Remote Computer key requires key".into());
+        }
+        _ => {}
+    }
     let path_valid = object.get("path").map(|value| {
         value.as_array().is_some_and(|points| {
             points.len() >= 2 && points.iter().all(|point| {
@@ -2527,7 +2643,7 @@ fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Resul
     if object.get("path").is_some() && path_valid != Some(true) {
         return Err("Remote Computer drag path must contain at least two integer x/y points".into());
     }
-    if action == "drag"
+    if canonical_action == "drag"
         && path_valid != Some(true)
         && !["x", "y", "x2", "y2"]
             .iter()
@@ -2546,9 +2662,6 @@ fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Resul
                 return Err("Remote Computer then must contain between 1 and 9 actions".into());
             }
             for followup in followups {
-                if followup.get("action").and_then(Value::as_str) == Some("screenshot") {
-                    return Err("Remote Computer screenshot is not allowed inside then".into());
-                }
                 validate_remote_computer_action(followup, false)?;
             }
         }
@@ -3683,18 +3796,35 @@ mod tests {
 
     #[test]
     fn remote_computer_validation_matches_desktop_action_bounds() {
-        assert!(validate_remote_computer_action(&json!({"action":"screenshot"}), true).is_ok());
-        assert!(validate_remote_computer_action(&json!({
-            "action":"drag",
-            "path":[{"x":1,"y":2},{"x":3,"y":4}],
-            "then":[{"action":"wait","durationMs":30000}]
-        }), true).is_ok());
+        let eleven = json!({
+            "action":"mouseMove","x":1,"y":2,
+            "then":[
+                {"action":"click","x":3,"y":4,"button":"back","count":1,"modifierKeys":"shift"},
+                {"action":"mouseDown","button":"left"},
+                {"action":"mouseUp","button":"left"},
+                {"action":"drag","path":[{"x":1,"y":2},{"x":3,"y":4}],"button":"left","modifierKeys":"alt"},
+                {"action":"scroll","x":5,"y":6,"direction":"down","amount":120,"modifierKeys":"ctrl"},
+                {"action":"type","text":"hello"},
+                {"action":"key","key":"ENTER","holdDurationMs":50},
+                {"action":"wait","durationMs":30000},
+                {"action":"screenshot"},
+                {"action":"cursorPosition"}
+            ]
+        });
+        assert!(validate_remote_computer_action(&eleven, true).is_ok());
+        let summary = summarize_remote_computer_actions(&eleven).unwrap();
+        assert_eq!(summary.action_count, 11);
+        for key in [
+            "mouse_move","click","mouse_down","mouse_up","drag","scroll",
+            "type","key","wait","screenshot","cursor_position",
+        ] {
+            assert_eq!(summary.action_counts.get(key), Some(&1usize), "{key}");
+        }
+        assert!(validate_remote_computer_action(&json!({"action":"move","x":1,"y":2}), true).is_ok());
+        assert!(validate_remote_computer_action(&json!({"action":"mouseMove","x":1}), true).is_err());
         assert!(validate_remote_computer_action(&json!({"action":"drag","x":1,"y":2}), true).is_err());
         assert!(validate_remote_computer_action(&json!({"action":"click","count":4}), true).is_err());
-        assert!(validate_remote_computer_action(&json!({
-            "action":"click",
-            "then":[{"action":"screenshot"}]
-        }), true).is_err());
+        assert!(validate_remote_computer_action(&json!({"action":"key","key":"A","holdDurationMs":30001}), true).is_err());
         assert!(validate_remote_computer_action(&json!({
             "action":"wait",
             "then":[{"action":"wait","then":[{"action":"wait"}]}]
