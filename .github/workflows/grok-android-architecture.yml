@@ -497,6 +497,11 @@ jobs:
         run: |
           set -euo pipefail
           cargo test -p fabushi-mahayana-host runner::remote_routed_tools::tests::remote_computer_validation_matches_desktop_action_bounds -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::wire_decodes_and_executes_all_eleven_desktop_actions_in_order -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::screenshot_settles_only_when_a_following_action_exists -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::reconciliation_and_cancel_never_blindly_replay_actions -- --exact
+          grep -Fq 'pub const REMOTE_COMPUTER_SCREENSHOT_SETTLE_DELAY_MS: u64 = 2_000;' source/box-exec-daemon/src/remote_computer_backend.rs
+          grep -Fq 'pub mod remote_computer_backend;' source/box-exec-daemon/src/lib.rs
 
       - name: Verify exact-HEAD automation schedule production owner
         run: |

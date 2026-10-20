@@ -776,7 +776,7 @@ impl AndroidRoutedToolBridge for RemoteRoutedTools {
                         "holdDurationMs":{"type":"integer","minimum":0,"maximum":30000},
                         "modifierKeys":{"type":"string"},
                         "description":{"type":"string"},
-                        "then":{"type":"array","minItems":1,"maxItems":9,"items":{"type":"object"}}
+                        "then":{"type":"array","minItems":1,"maxItems":10,"items":{"type":"object"}}
                     }
                 }
             }));
@@ -2658,8 +2658,8 @@ fn validate_remote_computer_action(args: &Value, allow_followups: bool) -> Resul
         }
         Some(value) => {
             let followups = value.as_array().ok_or("Remote Computer then must be an array")?;
-            if followups.is_empty() || followups.len() > 9 {
-                return Err("Remote Computer then must contain between 1 and 9 actions".into());
+            if followups.is_empty() || followups.len() > 10 {
+                return Err("Remote Computer then must contain between 1 and 10 actions".into());
             }
             for followup in followups {
                 validate_remote_computer_action(followup, false)?;

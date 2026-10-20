@@ -28,6 +28,7 @@ pub mod deployment_contract;
 pub mod file_transfer_backend;
 pub mod protected_path_guard;
 pub mod remote_enrollment;
+pub mod remote_computer_backend;
 pub mod server;
 pub mod transport;
 
@@ -86,6 +87,11 @@ pub use file_transfer_backend::{
 };
 pub use remote_enrollment::{
     DurableRemoteRunnerEnrollmentAuthorizer, RemoteRunnerEnrollment, RemoteRunnerGrant,
+};
+pub use remote_computer_backend::{
+    RemoteComputerAction, RemoteComputerActionOutput, RemoteComputerBackend,
+    RemoteComputerExecutor, RemoteComputerRequest, REMOTE_COMPUTER_CAPABILITY,
+    REMOTE_COMPUTER_SCREENSHOT_SETTLE_DELAY_MS,
 };
 pub use transport::{
     AuthenticatedRemoteHttpTransport, RemoteBearerCredential, RemoteCancelOutcome,
