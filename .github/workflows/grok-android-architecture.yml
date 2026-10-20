@@ -468,6 +468,36 @@ jobs:
           set -euo pipefail
           ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.FabushiAppAgentSurfaceTest --tests com.ombhrum.fabushi.RemoteCommandJournalTest
 
+      - name: Verify exact-HEAD Remote Computer Desktop action authority
+        run: |
+          set -euo pipefail
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/fabushi-desktop-remote-computer"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent-exec/computer-use.ts)" = "3f2c0e015b0d0e58294a541065f5445050f64609"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/proto/generated/agent/v1/computer_use_tool_pb.ts)" = "f74de4f1e7808411112121d0d3887c325f4ee2eb"
+          for action in mouseMove click mouseDown mouseUp drag scroll type key wait screenshot cursorPosition; do
+            grep -Fq "| \"$action\"" "$DESKTOP_DIR/source/packages/agent-exec/computer-use.ts"
+          done
+          grep -Fq 'export const COMPUTER_USE_SCREENSHOT_SETTLE_DELAY_MS = 2_000;' "$DESKTOP_DIR/source/packages/agent-exec/computer-use.ts"
+          grep -Fq '"mouseMove" | "move" => Some("mouseMove")' source/host/src/runner/remote_routed_tools.rs
+          for counter in mouse_move click mouse_down mouse_up drag scroll type key wait screenshot cursor_position; do
+            grep -Fq "(\"$counter\", 0usize)" source/host/src/runner/remote_routed_tools.rs
+          done
+      - name: Test exact-HEAD Remote Computer 11-action protocol mapping
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host runner::remote_routed_tools::tests::remote_computer_validation_matches_desktop_action_bounds -- --exact
+
       - name: Verify exact-HEAD automation schedule production owner
         run: |
           set -euo pipefail
