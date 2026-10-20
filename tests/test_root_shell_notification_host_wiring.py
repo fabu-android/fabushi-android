@@ -45,6 +45,7 @@ class RootShellNotificationHostWiringTest(unittest.TestCase):
 
     def test_actions_are_bounded_and_fail_closed(self):
         host = HOST.read_text(encoding="utf-8")
+        renderer = RENDERER.read_text(encoding="utf-8")
         self.assertIn("if (size >= 3) break", host)
         self.assertIn('scheme != "http" && scheme != "https"', host)
         self.assertIn("JSONObject(rawArgs.toString())", host)

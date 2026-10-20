@@ -2307,7 +2307,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
 
 
     def test_agent_run_error_mapping_uses_existing_rust_owner_and_strict_native_recovery_routes(self):
-        module = load_generator_module()
+        module = load_generator()
         self.assertEqual(module.AGENT_RUN_ERROR_SOURCE_PATH, "source/packages/agent-client/errors.ts")
         self.assertEqual(module.AGENT_RUN_ERROR_RESPONSIBILITY_ID, "AGENT-RUN-ERROR-ANDROID-001")
         spec = module.AGENT_RUN_ERROR_SOURCE_SPEC
