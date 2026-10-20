@@ -24,6 +24,11 @@ jobs:
         with:
           ref: ${{ env.SOURCE_SHA }}
       - uses: dtolnay/rust-toolchain@stable
+      - name: Install native Remote Computer Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
       - name: "Focused 1/16 generated-compatible Interaction wire"
         run: |
           set -euo pipefail
