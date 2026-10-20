@@ -44,6 +44,8 @@ import java.util.concurrent.atomic.AtomicReference
 
 private const val WEB_MCP_ORIGIN = "fabushi.ombhrum.com"
 private const val LOCAL_WEB_MCP_ORIGIN = "miniapp.local.fabushi.invalid"
+private const val CAPABILITY_PROBE_TOOL = "offline.capabilities"
+private val MINI_APP_CAPABILITY_PREFIXES = setOf("offline", "selection", "transfer", "scan", "hotspot", "update")
 
 private data class MiniAppBridgeSession(
     val pluginInstanceId: String,
@@ -138,6 +140,12 @@ private class MiniAppNativeWebMcpBridge(
                 .put("error", "Invalid stable WebMCP request id")
                 .toString()
         }
+        if (name == CAPABILITY_PROBE_TOOL) {
+            return JSONObject()
+                .put("ok", true)
+                .put("result", miniAppCapabilityAnswer(plugin.tools))
+                .toString()
+        }
         if (!pending.add(requestId)) {
             return JSONObject()
                 .put("ok", false)
@@ -216,9 +224,29 @@ private class MiniAppNativeWebMcpBridge(
     }
 }
 
+private fun miniAppCapabilityAnswer(tools: List<MiniAppToolContract>): JSONObject {
+    val capabilities = tools.asSequence()
+        .mapNotNull { tool -> tool.name.substringBefore('.').takeIf(MINI_APP_CAPABILITY_PREFIXES::contains) }
+        .distinct()
+        .sorted()
+        .toList()
+    return JSONObject()
+        .put("contract", "fabushi.miniapp.tools.v1")
+        .put("platform", "android")
+        .put("capabilities", JSONArray(capabilities))
+        .put("targetPools", JSONArray())
+}
+
 private fun toolContractJson(plugin: MarketplacePlugin): String {
     val rows = JSONArray()
+    rows.put(
+        JSONObject()
+            .put("name", CAPABILITY_PROBE_TOOL)
+            .put("description", "Inspect native Mini App capability families available for this installed plugin.")
+            .put("readOnlyHint", true),
+    )
     for (tool in plugin.tools) {
+        if (tool.name == CAPABILITY_PROBE_TOOL) continue
         rows.put(
             JSONObject()
                 .put("name", tool.name)

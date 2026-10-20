@@ -300,7 +300,545 @@ mod system {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+
+#[cfg(target_os = "macos")]
+mod macos_system {
+    use super::*;
+    use base64::Engine as _;
+    use core_foundation::base::TCFType;
+    use core_foundation::data::CFData;
+    use core_foundation::string::CFString;
+    use core_foundation_sys::base::{kCFAllocatorDefault, CFRelease, CFTypeRef};
+    use core_foundation_sys::data::{CFDataCreateMutable, CFDataRef, CFMutableDataRef};
+    use core_foundation_sys::dictionary::CFDictionaryRef;
+    use core_foundation_sys::string::CFStringRef;
+    use core_graphics::display::CGDisplay;
+    use core_graphics::event::{
+        CGEvent, CGEventFlags, CGEventTapLocation, CGEventType, CGMouseButton, EventField, KeyCode,
+        ScrollEventUnit,
+    };
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    use core_graphics::geometry::CGPoint;
+    use foreign_types::ForeignType;
+    use std::ffi::c_void;
+    use std::ptr;
+
+    #[link(name = "ApplicationServices", kind = "framework")]
+    unsafe extern "C" {
+        fn AXIsProcessTrusted() -> bool;
+        fn CGSessionCopyCurrentDictionary() -> CFDictionaryRef;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    unsafe extern "C" {
+        fn CFGetTypeID(value: CFTypeRef) -> usize;
+        fn CFBooleanGetTypeID() -> usize;
+        fn CFBooleanGetValue(value: *const c_void) -> u8;
+        fn CFDictionaryGetValue(dictionary: CFDictionaryRef, key: *const c_void) -> *const c_void;
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    unsafe extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+
+    #[link(name = "ImageIO", kind = "framework")]
+    unsafe extern "C" {
+        fn CGImageDestinationCreateWithData(
+            data: CFMutableDataRef,
+            type_identifier: CFStringRef,
+            count: usize,
+            options: CFDictionaryRef,
+        ) -> *mut c_void;
+        fn CGImageDestinationAddImage(
+            destination: *mut c_void,
+            image: *mut c_void,
+            properties: CFDictionaryRef,
+        );
+        fn CGImageDestinationFinalize(destination: *mut c_void) -> u8;
+    }
+
+    fn input_error(message: impl Into<String>) -> ExecutionError {
+        ExecutionError::Transport(format!("remote Computer macOS native input failed: {}", message.into()))
+    }
+
+    fn capture_error(message: impl Into<String>) -> ExecutionError {
+        ExecutionError::Transport(format!("remote Computer macOS native capture failed: {}", message.into()))
+    }
+
+    fn permission_error(message: impl Into<String>) -> ExecutionError {
+        ExecutionError::CapabilityUnavailable(format!("remote Computer macOS permission unavailable: {}", message.into()))
+    }
+
+    fn session_boolean(dictionary: CFDictionaryRef, key: *const c_void) -> Option<bool> {
+        if dictionary.is_null() || key.is_null() {
+            return None;
+        }
+        let value = unsafe { CFDictionaryGetValue(dictionary, key) };
+        if value.is_null() || unsafe { CFGetTypeID(value as CFTypeRef) } != unsafe { CFBooleanGetTypeID() } {
+            return None;
+        }
+        Some(unsafe { CFBooleanGetValue(value) != 0 })
+    }
+
+    fn ensure_interactive_session() -> Result<(), ExecutionError> {
+        let dictionary = unsafe { CGSessionCopyCurrentDictionary() };
+        if dictionary.is_null() {
+            return Err(permission_error("an unlocked interactive session is required"));
+        }
+        let on_console_key = CFString::new("kCGSessionOnConsoleKey");
+        let login_done_key = CFString::new("kCGSessionLoginDoneKey");
+        let locked_key = CFString::new("CGSSessionScreenIsLocked");
+        let on_console = session_boolean(
+            dictionary,
+            on_console_key.as_concrete_TypeRef() as *const c_void,
+        )
+        .unwrap_or(false);
+        let login_done = session_boolean(
+            dictionary,
+            login_done_key.as_concrete_TypeRef() as *const c_void,
+        )
+        .unwrap_or(false);
+        let locked = session_boolean(
+            dictionary,
+            locked_key.as_concrete_TypeRef() as *const c_void,
+        )
+        .unwrap_or(false);
+        unsafe { CFRelease(dictionary as CFTypeRef) };
+        if !on_console || !login_done || locked {
+            return Err(permission_error("the interactive session is locked or unavailable"));
+        }
+        Ok(())
+    }
+
+    fn require_accessibility() -> Result<(), ExecutionError> {
+        ensure_interactive_session()?;
+        if !unsafe { AXIsProcessTrusted() } {
+            return Err(permission_error(
+                "Accessibility permission is required in System Settings > Privacy & Security",
+            ));
+        }
+        Ok(())
+    }
+
+    fn require_screen_recording() -> Result<(), ExecutionError> {
+        ensure_interactive_session()?;
+        if !unsafe { CGPreflightScreenCaptureAccess() } {
+            return Err(permission_error(
+                "Screen Recording permission is required in System Settings > Privacy & Security",
+            ));
+        }
+        Ok(())
+    }
+
+    fn event_source() -> Result<CGEventSource, ExecutionError> {
+        CGEventSource::new(CGEventSourceStateID::HIDSystemState)
+            .map_err(|_| input_error("could not create CoreGraphics event source"))
+    }
+
+    fn cursor_point() -> Result<CGPoint, ExecutionError> {
+        CGEvent::new(event_source()?)
+            .map(|event| event.location())
+            .map_err(|_| input_error("could not read cursor location"))
+    }
+
+    fn position(x: Option<i32>, y: Option<i32>) -> Result<CGPoint, ExecutionError> {
+        match (x, y) {
+            (Some(x), Some(y)) => Ok(CGPoint::new(f64::from(x), f64::from(y))),
+            (None, None) => cursor_point(),
+            _ => Err(ExecutionError::InvalidRequest(
+                "remote Computer coordinate requires both x and y".into(),
+            )),
+        }
+    }
+
+    fn mouse_button(raw: &str) -> Result<CGMouseButton, ExecutionError> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "" | "unspecified" | "left" => Ok(CGMouseButton::Left),
+            "right" => Ok(CGMouseButton::Right),
+            "middle" => Ok(CGMouseButton::Center),
+            "back" | "forward" => Err(ExecutionError::InvalidRequest(
+                "macOS CoreGraphics shipping authority supports left/right/middle mouse buttons".into(),
+            )),
+            other => Err(ExecutionError::InvalidRequest(format!(
+                "unsupported remote Computer mouse button: {other}"
+            ))),
+        }
+    }
+
+    fn mouse_types(button: CGMouseButton) -> (CGEventType, CGEventType, CGEventType) {
+        match button {
+            CGMouseButton::Left => (
+                CGEventType::LeftMouseDown,
+                CGEventType::LeftMouseDragged,
+                CGEventType::LeftMouseUp,
+            ),
+            CGMouseButton::Right => (
+                CGEventType::RightMouseDown,
+                CGEventType::RightMouseDragged,
+                CGEventType::RightMouseUp,
+            ),
+            CGMouseButton::Center => (
+                CGEventType::OtherMouseDown,
+                CGEventType::OtherMouseDragged,
+                CGEventType::OtherMouseUp,
+            ),
+        }
+    }
+
+    fn modifier_flags(raw: Option<&str>) -> Result<CGEventFlags, ExecutionError> {
+        let mut flags = CGEventFlags::empty();
+        let Some(raw) = raw.filter(|value| !value.trim().is_empty()) else {
+            return Ok(flags);
+        };
+        for part in raw
+            .split(|character| character == '+' || character == ',' || character == ' ')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
+            match part.to_ascii_lowercase().as_str() {
+                "ctrl" | "control" => flags |= CGEventFlags::CGEventFlagControl,
+                "alt" | "option" => flags |= CGEventFlags::CGEventFlagAlternate,
+                "shift" => flags |= CGEventFlags::CGEventFlagShift,
+                "cmd" | "command" | "meta" | "super" | "primary" => {
+                    flags |= CGEventFlags::CGEventFlagCommand
+                }
+                other => {
+                    return Err(ExecutionError::InvalidRequest(format!(
+                        "unsupported remote Computer modifier: {other}"
+                    )))
+                }
+            }
+        }
+        Ok(flags)
+    }
+
+    fn post_mouse(
+        event_type: CGEventType,
+        position: CGPoint,
+        button: CGMouseButton,
+        click_count: Option<u32>,
+        flags: CGEventFlags,
+    ) -> Result<(), ExecutionError> {
+        let event = CGEvent::new_mouse_event(event_source()?, event_type, position, button)
+            .map_err(|_| input_error("could not create CoreGraphics mouse event"))?;
+        if let Some(count) = click_count {
+            event.set_integer_value_field(EventField::MOUSE_EVENT_CLICK_STATE, i64::from(count));
+        }
+        event.set_flags(flags);
+        event.post(CGEventTapLocation::HID);
+        Ok(())
+    }
+
+    fn move_to(position: CGPoint, dragged: Option<CGMouseButton>, flags: CGEventFlags) -> Result<(), ExecutionError> {
+        let event_type = dragged.map_or(CGEventType::MouseMoved, |button| mouse_types(button).1);
+        post_mouse(
+            event_type,
+            position,
+            dragged.unwrap_or(CGMouseButton::Left),
+            None,
+            flags,
+        )
+    }
+
+    fn unicode_chunks(text: &str, max_utf16: usize) -> Vec<String> {
+        let mut chunks = Vec::new();
+        let mut current = String::new();
+        let mut units = 0usize;
+        for character in text.chars() {
+            let next = character.len_utf16();
+            if !current.is_empty() && units + next > max_utf16 {
+                chunks.push(std::mem::take(&mut current));
+                units = 0;
+            }
+            current.push(character);
+            units += next;
+        }
+        if !current.is_empty() {
+            chunks.push(current);
+        }
+        chunks
+    }
+
+    fn key_code(raw: &str) -> Option<u16> {
+        let key = raw.to_ascii_lowercase();
+        Some(match key.as_str() {
+            "a" => KeyCode::ANSI_A, "b" => KeyCode::ANSI_B, "c" => KeyCode::ANSI_C,
+            "d" => KeyCode::ANSI_D, "e" => KeyCode::ANSI_E, "f" => KeyCode::ANSI_F,
+            "g" => KeyCode::ANSI_G, "h" => KeyCode::ANSI_H, "i" => KeyCode::ANSI_I,
+            "j" => KeyCode::ANSI_J, "k" => KeyCode::ANSI_K, "l" => KeyCode::ANSI_L,
+            "m" => KeyCode::ANSI_M, "n" => KeyCode::ANSI_N, "o" => KeyCode::ANSI_O,
+            "p" => KeyCode::ANSI_P, "q" => KeyCode::ANSI_Q, "r" => KeyCode::ANSI_R,
+            "s" => KeyCode::ANSI_S, "t" => KeyCode::ANSI_T, "u" => KeyCode::ANSI_U,
+            "v" => KeyCode::ANSI_V, "w" => KeyCode::ANSI_W, "x" => KeyCode::ANSI_X,
+            "y" => KeyCode::ANSI_Y, "z" => KeyCode::ANSI_Z,
+            "0" => KeyCode::ANSI_0, "1" => KeyCode::ANSI_1, "2" => KeyCode::ANSI_2,
+            "3" => KeyCode::ANSI_3, "4" => KeyCode::ANSI_4, "5" => KeyCode::ANSI_5,
+            "6" => KeyCode::ANSI_6, "7" => KeyCode::ANSI_7, "8" => KeyCode::ANSI_8,
+            "9" => KeyCode::ANSI_9,
+            "return" | "enter" => KeyCode::RETURN,
+            "tab" => KeyCode::TAB,
+            "space" | "spacebar" => KeyCode::SPACE,
+            "backspace" => KeyCode::DELETE,
+            "delete" | "forwarddelete" => KeyCode::FORWARD_DELETE,
+            "escape" | "esc" => KeyCode::ESCAPE,
+            "left" | "arrowleft" => KeyCode::LEFT_ARROW,
+            "right" | "arrowright" => KeyCode::RIGHT_ARROW,
+            "up" | "arrowup" => KeyCode::UP_ARROW,
+            "down" | "arrowdown" => KeyCode::DOWN_ARROW,
+            "home" => KeyCode::HOME, "end" => KeyCode::END,
+            "pageup" | "page-up" => KeyCode::PAGE_UP,
+            "pagedown" | "page-down" => KeyCode::PAGE_DOWN,
+            "f1" => KeyCode::F1, "f2" => KeyCode::F2, "f3" => KeyCode::F3, "f4" => KeyCode::F4,
+            "f5" => KeyCode::F5, "f6" => KeyCode::F6, "f7" => KeyCode::F7, "f8" => KeyCode::F8,
+            "f9" => KeyCode::F9, "f10" => KeyCode::F10, "f11" => KeyCode::F11, "f12" => KeyCode::F12,
+            "-" | "minus" => KeyCode::ANSI_MINUS,
+            "=" | "equal" => KeyCode::ANSI_EQUAL,
+            "," | "comma" => KeyCode::ANSI_COMMA,
+            "." | "period" => KeyCode::ANSI_PERIOD,
+            "/" | "slash" => KeyCode::ANSI_SLASH,
+            ";" | "semicolon" => KeyCode::ANSI_SEMICOLON,
+            "'" | "quote" => KeyCode::ANSI_QUOTE,
+            "[" | "leftbracket" => KeyCode::ANSI_LEFT_BRACKET,
+            "]" | "rightbracket" => KeyCode::ANSI_RIGHT_BRACKET,
+            "\\" | "backslash" => KeyCode::ANSI_BACKSLASH,
+            "\`" | "grave" => KeyCode::ANSI_GRAVE,
+            _ => return None,
+        })
+    }
+
+    impl DesktopComputerIo for SystemDesktopComputerIo {
+        fn mouse_move(&mut self, x: i32, y: i32) -> Result<(), ExecutionError> {
+            require_accessibility()?;
+            move_to(CGPoint::new(f64::from(x), f64::from(y)), None, CGEventFlags::empty())
+        }
+
+        fn click(
+            &mut self,
+            x: Option<i32>,
+            y: Option<i32>,
+            button: &str,
+            count: u32,
+            modifiers: Option<&str>,
+        ) -> Result<(), ExecutionError> {
+            require_accessibility()?;
+            let position = position(x, y)?;
+            let button = mouse_button(button)?;
+            let flags = modifier_flags(modifiers)?;
+            let (down, _, up) = mouse_types(button);
+            let count = count.max(1).min(3);
+            move_to(position, None, flags)?;
+            for click_number in 1..=count {
+                post_mouse(down, position, button, Some(click_number), flags)?;
+                post_mouse(up, position, button, Some(click_number), flags)?;
+                if click_number < count {
+                    std::thread::sleep(Duration::from_millis(60));
+                }
+            }
+            Ok(())
+        }
+
+        fn mouse_down(&mut self, button: &str) -> Result<(), ExecutionError> {
+            require_accessibility()?;
+            let button = mouse_button(button)?;
+            let position = cursor_point()?;
+            post_mouse(mouse_types(button).0, position, button, Some(1), CGEventFlags::empty())
+        }
+
+        fn mouse_up(&mut self, button: &str) -> Result<(), ExecutionError> {
+            require_accessibility()?;
+            let button = mouse_button(button)?;
+            let position = cursor_point()?;
+            post_mouse(mouse_types(button).2, position, button, Some(1), CGEventFlags::empty())
+        }
+
+        fn drag(
+            &mut self,
+            path: &[(i32, i32)],
+            button: &str,
+            modifiers: Option<&str>,
+        ) -> Result<(), ExecutionError> {
+            require_accessibility()?;
+            if path.len() < 2 {
+                return Err(ExecutionError::InvalidRequest(
+                    "remote Computer drag requires at least two path coordinates".into(),
+                ));
+            }
+            let button = mouse_button(button)?;
+            let flags = modifier_flags(modifiers)?;
+            let (down, _, up) = mouse_types(button);
+            let first = CGPoint::new(f64::from(path[0].0), f64::from(path[0].1));
+            move_to(first, None, flags)?;
+            post_mouse(down, first, button, Some(1), flags)?;
+            std::thread::sleep(Duration::from_millis(20));
+            for &(x, y) in &path[1..] {
+                move_to(CGPoint::new(f64::from(x), f64::from(y)), Some(button), flags)?;
+                std::thread::sleep(Duration::from_millis(12));
+            }
+            let (x, y) = path[path.len() - 1];
+            post_mouse(
+                up,
+                CGPoint::new(f64::from(x), f64::from(y)),
+                button,
+                Some(1),
+                flags,
+            )
+        }
+
+        fn scroll(
+            &mut self,
+            x: Option<i32>,
+            y: Option<i32>,
+            direction: &str,
+            amount: i32,
+            modifiers: Option<&str>,
+        ) -> Result<(), ExecutionError> {
+            require_accessibility()?;
+            match (x, y) {
+                (Some(x), Some(y)) => move_to(
+                    CGPoint::new(f64::from(x), f64::from(y)),
+                    None,
+                    CGEventFlags::empty(),
+                )?,
+                (None, None) => {}
+                _ => {
+                    return Err(ExecutionError::InvalidRequest(
+                        "remote Computer coordinate requires both x and y".into(),
+                    ))
+                }
+            }
+            let magnitude = amount.saturating_abs().max(1);
+            let (vertical, horizontal) = match direction.trim().to_ascii_lowercase().as_str() {
+                "" | "unspecified" | "down" => (-magnitude, 0),
+                "up" => (magnitude, 0),
+                "left" => (0, magnitude),
+                "right" => (0, -magnitude),
+                other => {
+                    return Err(ExecutionError::InvalidRequest(format!(
+                        "unsupported remote Computer scroll direction: {other}"
+                    )))
+                }
+            };
+            let event = CGEvent::new_scroll_event(
+                event_source()?,
+                ScrollEventUnit::LINE,
+                2,
+                vertical,
+                horizontal,
+                0,
+            )
+            .map_err(|_| input_error("could not create CoreGraphics scroll event"))?;
+            event.set_flags(modifier_flags(modifiers)?);
+            event.post(CGEventTapLocation::HID);
+            Ok(())
+        }
+
+        fn type_text(&mut self, text: &str) -> Result<(), ExecutionError> {
+            require_accessibility()?;
+            for chunk in unicode_chunks(text, 20) {
+                let down = CGEvent::new_keyboard_event(event_source()?, 0, true)
+                    .map_err(|_| input_error("could not create CoreGraphics keyboard event"))?;
+                down.set_string(&chunk);
+                down.post(CGEventTapLocation::HID);
+                let up = CGEvent::new_keyboard_event(event_source()?, 0, false)
+                    .map_err(|_| input_error("could not create CoreGraphics keyboard event"))?;
+                up.post(CGEventTapLocation::HID);
+            }
+            Ok(())
+        }
+
+        fn key(&mut self, chord: &str, hold_duration_ms: Option<u64>) -> Result<(), ExecutionError> {
+            require_accessibility()?;
+            let parts = chord
+                .split('+')
+                .map(str::trim)
+                .filter(|part| !part.is_empty())
+                .collect::<Vec<_>>();
+            let Some(raw_key) = parts.last() else {
+                return Err(ExecutionError::InvalidRequest(
+                    "remote Computer key chord is empty".into(),
+                ));
+            };
+            let flags = modifier_flags(Some(&parts[..parts.len().saturating_sub(1)].join("+")))?;
+            let keycode = key_code(raw_key).ok_or_else(|| {
+                ExecutionError::InvalidRequest(format!("unsupported remote Computer key: {raw_key}"))
+            })?;
+            let down = CGEvent::new_keyboard_event(event_source()?, keycode, true)
+                .map_err(|_| input_error("could not create CoreGraphics key-down event"))?;
+            down.set_flags(flags);
+            down.post(CGEventTapLocation::HID);
+            if let Some(delay) = hold_duration_ms.filter(|delay| *delay > 0) {
+                std::thread::sleep(Duration::from_millis(delay));
+            }
+            let up = CGEvent::new_keyboard_event(event_source()?, keycode, false)
+                .map_err(|_| input_error("could not create CoreGraphics key-up event"))?;
+            up.set_flags(flags);
+            up.post(CGEventTapLocation::HID);
+            Ok(())
+        }
+
+        fn wait(&mut self, duration_ms: u64) -> Result<(), ExecutionError> {
+            std::thread::sleep(Duration::from_millis(duration_ms));
+            Ok(())
+        }
+
+        fn screenshot(&mut self) -> Result<String, ExecutionError> {
+            require_screen_recording()?;
+            let image = CGDisplay::main()
+                .image()
+                .ok_or_else(|| capture_error("CoreGraphics could not capture the main display"))?;
+            let data_ref = unsafe { CFDataCreateMutable(kCFAllocatorDefault, 0) };
+            if data_ref.is_null() {
+                return Err(capture_error("ImageIO could not allocate the encoded screen buffer"));
+            }
+            let type_identifier = CFString::new("public.jpeg");
+            let destination = unsafe {
+                CGImageDestinationCreateWithData(
+                    data_ref,
+                    type_identifier.as_concrete_TypeRef(),
+                    1,
+                    ptr::null(),
+                )
+            };
+            if destination.is_null() {
+                unsafe { CFRelease(data_ref as CFTypeRef) };
+                return Err(capture_error("ImageIO could not create the screen encoder"));
+            }
+            unsafe {
+                CGImageDestinationAddImage(destination, image.as_ptr() as *mut c_void, ptr::null());
+            }
+            let finalized = unsafe { CGImageDestinationFinalize(destination) };
+            unsafe { CFRelease(destination as CFTypeRef) };
+            if finalized == 0 {
+                unsafe { CFRelease(data_ref as CFTypeRef) };
+                return Err(capture_error("ImageIO could not finalize the encoded screen"));
+            }
+            let data = unsafe { CFData::wrap_under_create_rule(data_ref as CFDataRef) };
+            if data.is_empty() {
+                return Err(capture_error("screen capture was empty"));
+            }
+            Ok(base64::engine::general_purpose::STANDARD.encode(data.bytes()))
+        }
+
+        fn cursor_position(&mut self) -> Result<(i32, i32), ExecutionError> {
+            require_accessibility()?;
+            let point = cursor_point()?;
+            if !point.x.is_finite() || !point.y.is_finite() {
+                return Err(input_error("CoreGraphics returned a non-finite cursor location"));
+            }
+            if point.x < f64::from(i32::MIN)
+                || point.x > f64::from(i32::MAX)
+                || point.y < f64::from(i32::MIN)
+                || point.y > f64::from(i32::MAX)
+            {
+                return Err(input_error("CoreGraphics cursor location exceeds protocol range"));
+            }
+            Ok((point.x.round() as i32, point.y.round() as i32))
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 impl DesktopComputerIo for SystemDesktopComputerIo {
     fn mouse_move(&mut self, _x: i32, _y: i32) -> Result<(), ExecutionError> { unavailable() }
     fn click(&mut self, _x: Option<i32>, _y: Option<i32>, _button: &str, _count: u32, _modifier_keys: Option<&str>) -> Result<(), ExecutionError> { unavailable() }
@@ -315,7 +853,7 @@ impl DesktopComputerIo for SystemDesktopComputerIo {
     fn cursor_position(&mut self) -> Result<(i32, i32), ExecutionError> { unavailable() }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows")))]
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 fn unavailable<T>() -> Result<T, ExecutionError> {
     Err(ExecutionError::CapabilityUnavailable(
         "remote Computer native executor requires a desktop Authorized Remote Runner".into(),

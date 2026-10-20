@@ -7,6 +7,8 @@ PORT = ROOT / "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androi
 RUNTIME = ROOT / "source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt"
 BRIDGE = ROOT / "source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/miniapp/MiniAppPlatformBridge.kt"
 VIEW_MODEL = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/presentation/MarketplaceViewModel.kt"
+SURFACE = ROOT / "frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/features/miniapp/MiniAppWebMcpSurface.kt"
+LEGACY_SURFACE = ROOT / "mobile/android/app/src/main/java/com/ombhrum/fabushi/MiniAppWebMcpSurface.kt"
 
 
 class MiniAppHostWiringTest(unittest.TestCase):
@@ -45,6 +47,21 @@ class MiniAppHostWiringTest(unittest.TestCase):
         self.assertIn("coordinator.getInstalledMiniAppResources(", view_model)
         self.assertIn("coordinator.readMiniAppResource(", view_model)
         self.assertIn("coordinator.disposeMiniAppLoad(", view_model)
+
+
+    def test_offline_capabilities_probe_stays_in_the_single_current_webmcp_owner(self):
+        surface = SURFACE.read_text(encoding="utf-8")
+        self.assertFalse(LEGACY_SURFACE.exists(), "legacy mobile MiniApp owner must not return")
+        self.assertIn('CAPABILITY_PROBE_TOOL = "offline.capabilities"', surface)
+        self.assertIn('MINI_APP_CAPABILITY_PREFIXES = setOf("offline", "selection", "transfer", "scan", "hotspot", "update")', surface)
+        self.assertIn('miniAppCapabilityAnswer(plugin.tools)', surface)
+        self.assertIn('.put("contract", "fabushi.miniapp.tools.v1")', surface)
+        self.assertIn('.put("platform", "android")', surface)
+        self.assertIn('.put("targetPools", JSONArray())', surface)
+        self.assertIn('.put("name", CAPABILITY_PROBE_TOOL)', surface)
+        self.assertLess(surface.index("if (name == CAPABILITY_PROBE_TOOL)"), surface.index("if (!pending.add(requestId))"))
+        self.assertLess(surface.index("if (name == CAPABILITY_PROBE_TOOL)"), surface.index("callRuntimeToolJson("))
+        self.assertLess(surface.index('if ("tools/call" !in session.grants)'), surface.index("if (name == CAPABILITY_PROBE_TOOL)"))
 
 
 if __name__ == "__main__":
