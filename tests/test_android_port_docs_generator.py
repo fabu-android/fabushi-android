@@ -2811,14 +2811,14 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
 
         source = SCRIPT.read_text(encoding="utf-8")
         start = source.index("def rebaseline()")
-        end = source.index("\\ndef inventory()", start)
+        end = source.index("\ndef inventory()", start)
         body = source[start:end]
         self.assertLess(
             body.index("live_main_before = observe_current_desktop_main("),
             body.index("commit = get("),
         )
         self.assertIn(
-            "authority_fields = desktop_main_observation_fields(\\n            live_main_before, current, latest_desktop_main",
+            "authority_fields = desktop_main_observation_fields(\n            live_main_before, current, latest_desktop_main",
             body,
         )
         self.assertIn("manifest.update(authority_fields)", body)
