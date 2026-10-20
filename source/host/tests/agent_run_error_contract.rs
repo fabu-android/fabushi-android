@@ -1,10 +1,10 @@
 use fabushi_mahayana_host::extensions::transcript::agent_run_error::{
-    AgentRunErrorDescription, BackendAdditionalInfo, BackendDetail,
-    backend_detail_from_error_message, checkout_deep_control_url,
+    AgentRunErrorClass, AgentRunErrorDescription, BackendAdditionalInfo, BackendDetail,
+    backend_detail_from_error_message, checkout_deep_control_url, classify_agent_run_error,
     describe_agent_run_error, find_backend_connect_error, format_agent_run_error,
-    format_sand_usage_reset_in, get_backend_error_detail_message,
+    format_sand_usage_reset_in, get_backend_error_detail_message, message_matches_agent_transport,
     map_error_detail_buttons, parse_backend_connect_error, provider_failure_tray,
-    with_relative_sand_included_limit_reset,
+    provider_failure_tray_for_request, with_relative_sand_included_limit_reset,
 };
 use serde_json::json;
 
@@ -158,4 +158,79 @@ fn provider_failure_projection_is_ready_for_shipping_trays() {
     assert_eq!(tray.raw_detail.as_deref(), Some("provider disconnected"));
     assert_eq!(tray.error_kind.as_deref(), Some("agent_run_error"));
     assert_eq!(tray.dedupe_key.as_deref(), Some("agent-run-error:agent-a"));
+}
+
+
+#[test]
+fn desktop_agent_client_error_taxonomy_maps_to_single_host_classification_owner() {
+    let classified = |error: &str, retryable: Option<bool>| {
+        let retryable_json = retryable.map(|value| value.to_string()).unwrap_or_else(|| "null".into());
+        let message = format!(
+            r#"provider failed: {{"error":{{"message":"classified","details":[{{"details":{{"error":"{error}","details":{{"isRetryable":{retryable_json}}}}}}}]}}}}"#
+        );
+        classify_agent_run_error(&message, Some("req-taxonomy"), false)
+    };
+    for code in ["NOT_LOGGED_IN","AGENT_REQUIRES_LOGIN","AUTH_TOKEN_NOT_FOUND","AUTH_TOKEN_EXPIRED",
+        "INVALID_AUTH_ID","UNAUTHORIZED","GITHUB_NO_USER_CREDENTIALS","GITHUB_USER_NO_ACCESS"] {
+        let value = classified(code, None);
+        assert_eq!(value.class, AgentRunErrorClass::ActionRequired, "{code}");
+        assert_eq!(value.action.as_deref(), Some("login"), "{code}");
+    }
+    for code in ["FREE_USER_USAGE_LIMIT","FREE_USER_RATE_LIMIT_EXCEEDED","PRO_USER_ONLY","PRO_USER_USAGE_LIMIT",
+        "PRO_USER_RATE_LIMIT_EXCEEDED","RATE_LIMITED","RATE_LIMITED_CHANGEABLE","GENERIC_RATE_LIMIT_EXCEEDED"] {
+        assert_eq!(classified(code, None).action.as_deref(), Some("upgrade"), "{code}");
+    }
+    for code in ["USAGE_PRICING_REQUIRED","USAGE_PRICING_REQUIRED_CHANGEABLE"] {
+        assert_eq!(classified(code, None).action.as_deref(), Some("payment"), "{code}");
+    }
+    for code in ["BAD_API_KEY","BAD_USER_API_KEY","OUTDATED_CLIENT"] {
+        assert_eq!(classified(code, None).action.as_deref(), Some("config"), "{code}");
+    }
+    for code in ["USER_ABORTED_REQUEST","DEBOUNCED"] {
+        assert_eq!(classified(code, None).class, AgentRunErrorClass::Cancelled, "{code}");
+    }
+    assert_eq!(classified("CUSTOM_MESSAGE", Some(false)).class, AgentRunErrorClass::NonRetriable);
+    assert_eq!(classified("CUSTOM_MESSAGE", Some(true)).class, AgentRunErrorClass::Retriable);
+    assert_eq!(classified("UNRECOGNIZED", Some(false)).class, AgentRunErrorClass::NonRetriable);
+}
+
+#[test]
+fn action_required_request_display_details_and_inference_type_are_preserved() {
+    let message = r#"provider failed: {"error":{"message":"auth required","code":16,"inferenceRequestErrorType":"credential","details":[{"details":{"error":"AUTH_TOKEN_EXPIRED","details":{"isRetryable":false,"title":"Sign in again","detail":"Your session expired.","analyticsMetadata":{"actionRequired":"login"}}}}]}}"#;
+    let value = classify_agent_run_error(message, Some("req-42"), false);
+    assert_eq!(value.class, AgentRunErrorClass::ActionRequired);
+    assert_eq!(value.request_id.as_deref(), Some("req-42"));
+    assert_eq!(value.action.as_deref(), Some("login"));
+    assert_eq!(value.display_info.connect_code, Some(16));
+    assert_eq!(value.display_info.error_code.as_deref(), Some("AUTH_TOKEN_EXPIRED"));
+    assert_eq!(value.display_info.title.as_deref(), Some("Sign in again"));
+    assert_eq!(value.display_info.detail.as_deref(), Some("Your session expired."));
+    assert_eq!(value.display_info.is_retryable, Some(false));
+    assert_eq!(value.display_info.inference_request_error_type.as_deref(), Some("credential"));
+    assert!(value.display_info.error_details.is_some());
+    let tray = provider_failure_tray_for_request("agent-a", Some("req-42"), message, NOW);
+    assert_eq!(tray.request_id.as_deref(), Some("req-42"));
+    assert_eq!(tray.classification.as_deref(), Some("action-required"));
+    assert_eq!(tray.recovery_action.as_deref(), Some("login"));
+    assert_eq!(tray.actions[0]["kind"], "recovery-route");
+    assert_eq!(tray.actions[0]["route"], "login");
+    assert_eq!(tray.display_info.as_ref().and_then(|v| v.get("errorCode")).and_then(Value::as_str), Some("AUTH_TOKEN_EXPIRED"));
+}
+
+#[test]
+fn transport_cancel_retry_and_blob_not_found_match_desktop_contract() {
+    assert!(message_matches_agent_transport("ERR_HTTP2_SESSION_ERROR"));
+    assert!(message_matches_agent_transport("ENOTFOUND api.example.test"));
+    assert!(message_matches_agent_transport("socket hang up"));
+    assert!(!message_matches_agent_transport("BAD_API_KEY"));
+    let cancelled = classify_agent_run_error(r#"failure {"error":{"message":"cancelled","code":1}}"#, None, false);
+    assert_eq!(cancelled.class, AgentRunErrorClass::Cancelled);
+    let transport_cancel = classify_agent_run_error(r#"ECONNRESET {"error":{"message":"cancelled","code":1}}"#, None, false);
+    assert_eq!(transport_cancel.class, AgentRunErrorClass::Retriable);
+    assert!(transport_cancel.is_transport);
+    let missing = classify_agent_run_error("blob not found: sha256:missing", Some("req-blob"), false);
+    assert_eq!(missing.class, AgentRunErrorClass::NonRetriable);
+    assert_eq!(missing.display_info.error_code.as_deref(), Some("BLOB_NOT_FOUND"));
+    assert_eq!(missing.display_info.title.as_deref(), Some("Conversation data missing"));
+    assert_eq!(missing.display_info.is_retryable, Some(false));
 }

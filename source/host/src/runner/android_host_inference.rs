@@ -30,6 +30,7 @@ pub const DEFAULT_DACHENG_RESPONSES_BASE_URL: &str =
 pub const DEFAULT_SAND_MODEL_ID: &str = "grok-4.5";
 pub const SAND_SUMMARIZATION_MODEL_ID: &str = "gemini-2.5-flash";
 const SAND_AUTO_REVIEW_CLASSIFIER_TIMEOUT_SECS: u64 = 10;
+const MAX_PROVIDER_ERROR_BODY_BYTES: usize = 64 * 1024;
 const SAND_SUBAGENT_CLASSIFIER_ERROR_REASON: &str =
     "An error occurred while classifying this task action. Please review manually.";
 
@@ -567,10 +568,14 @@ impl AndroidHostInferenceProvider {
             let response = match response {
                 Ok(response) => response,
                 Err(ureq::Error::Status(status, response)) => {
-                    let retry_after_ms = response
-                        .header("Retry-After")
-                        .and_then(parse_retry_after_ms);
-                    let message = provider_http_error_message(status);
+                    let retry_after_ms = response.header("Retry-After").and_then(parse_retry_after_ms);
+                    let inference_request_error_type = response
+                        .header("x-cursor-inference-request-error-type")
+                        .map(str::to_string);
+                    let body = response.into_string().unwrap_or_default();
+                    let message = provider_http_error_message_with_body(
+                        status, &body, inference_request_error_type.as_deref(),
+                    );
                     return Err(ProviderFailure {
                         message,
                         retry_after_ms,
@@ -588,6 +593,9 @@ impl AndroidHostInferenceProvider {
                 }
             };
 
+            let inference_request_error_type = response
+                .header("x-cursor-inference-request-error-type")
+                .map(str::to_string);
             let mut reader = BufReader::new(response.into_reader());
             let mut line = String::new();
             let mut completed = false;
@@ -658,6 +666,9 @@ impl AndroidHostInferenceProvider {
                         break;
                     }
                     Ok(ProviderSseEvent::Failed(message)) => {
+                        let message = with_inference_request_error_type(
+                            &message, inference_request_error_type.as_deref(),
+                        );
                         return Err(ProviderFailure {
                             message,
                             retry_after_ms: None,
@@ -1052,6 +1063,36 @@ fn provider_http_error_message(status: u16) -> String {
 }
 
 
+fn provider_http_error_message_with_body(status: u16, body: &str, inference_request_error_type: Option<&str>) -> String {
+    let base = provider_http_error_message(status);
+    let trimmed = body.trim();
+    let parsed = if !trimmed.is_empty() && trimmed.len() <= MAX_PROVIDER_ERROR_BODY_BYTES {
+        serde_json::from_str::<Value>(trimmed).ok()
+    } else { None };
+    match (parsed, inference_request_error_type.map(str::trim).filter(|value| !value.is_empty())) {
+        (Some(value), Some(kind)) => format!("{base}: {}", json!({"error":{
+            "message":base, "code":status, "inferenceRequestErrorType":kind, "cause":value
+        }})),
+        (Some(value), None) => format!("{base}: {value}"),
+        (None, Some(kind)) => format!("{base}: {}", json!({"error":{
+            "message":base, "code":status, "inferenceRequestErrorType":kind
+        }})),
+        (None, None) => base,
+    }
+}
+fn with_inference_request_error_type(message: &str, kind: Option<&str>) -> String {
+    let Some(kind) = kind.map(str::trim).filter(|value| !value.is_empty()) else {
+        return message.to_string();
+    };
+    let embedded = message.char_indices().find(|(_, ch)| *ch == '{')
+        .and_then(|(index, _)| serde_json::from_str::<Value>(&message[index..]).ok());
+    let prefix = message.split('{').next().unwrap_or(message)
+        .trim_end_matches(|ch| ch == ' ' || ch == ':');
+    format!("{prefix}: {}", json!({"error":{
+        "message":message, "inferenceRequestErrorType":kind, "cause":embedded
+    }}))
+}
+
 fn safe_transport_kind(error: &ureq::Transport) -> &'static str {
     use ureq::ErrorKind;
     match error.kind() {
@@ -1252,6 +1293,17 @@ mod tests {
                 reason: SAND_SUBAGENT_CLASSIFIER_ERROR_REASON.into(),
             }
         );
+    }
+
+    #[test]
+    fn http_errors_preserve_bounded_error_details_and_inference_type() {
+        let body = r#"{"error":{"message":"auth","details":[{"details":{"error":"AUTH_TOKEN_EXPIRED"}}]}}"#;
+        let message = provider_http_error_message_with_body(401, body, Some("upstream-auth"));
+        assert!(message.contains("AUTH_TOKEN_EXPIRED"));
+        assert!(message.contains("inferenceRequestErrorType"));
+        assert!(message.contains("upstream-auth"));
+        let oversized = "x".repeat(MAX_PROVIDER_ERROR_BODY_BYTES + 1);
+        assert!(!provider_http_error_message_with_body(500, &oversized, None).contains(&oversized));
     }
 
     #[test]

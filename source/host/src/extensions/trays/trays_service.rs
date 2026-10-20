@@ -33,6 +33,14 @@ pub struct ErrorTray {
     pub dedupe_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classification: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_action: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_transport: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_info: Option<Value>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -46,6 +54,10 @@ pub struct PushErrorOptions {
     pub actions: Vec<Value>,
     pub dedupe_key: Option<String>,
     pub count: Option<u64>,
+    pub classification: Option<String>,
+    pub recovery_action: Option<String>,
+    pub is_transport: Option<bool>,
+    pub display_info: Option<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -165,6 +177,10 @@ impl TrayManager {
                         error_kind: options.error_kind,
                         raw_detail: options.raw_detail,
                         actions: (!options.actions.is_empty()).then_some(options.actions),
+                        classification: options.classification,
+                        recovery_action: options.recovery_action,
+                        is_transport: options.is_transport,
+                        display_info: options.display_info,
                         ..existing
                     };
                     state.trays[index] = updated.clone();
@@ -205,6 +221,10 @@ impl TrayManager {
             actions: (!options.actions.is_empty()).then_some(options.actions),
             dedupe_key: options.dedupe_key,
             count,
+            classification: options.classification,
+            recovery_action: options.recovery_action,
+            is_transport: options.is_transport,
+            display_info: options.display_info,
         };
         state.trays.push(tray.clone());
         events.push(TrayEvent::Pushed(tray.clone()));

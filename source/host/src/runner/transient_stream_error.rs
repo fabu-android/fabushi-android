@@ -1,29 +1,11 @@
-pub const TRANSIENT_ERRNO_CODES: &[&str] = &[
-    "ECONNRESET",
-    "ETIMEDOUT",
-    "EPIPE",
-    "ECONNABORTED",
-    "ECONNREFUSED",
-    "ENETRESET",
-    "ENETDOWN",
-    "ENETUNREACH",
-    "EHOSTUNREACH",
-    "EAI_AGAIN",
-];
+use crate::extensions::transcript::agent_run_error::message_matches_agent_transport;
 
 pub const TRANSIENT_MESSAGE_TOKENS: &[&str] = &[
     "timeout",
     "timed out",
     "deadline_exceeded",
-    "transport",
-    "socket hang up",
-    "premature close",
     "stream closed",
     "closed stream",
-    "connection",
-    "reset",
-    "broken pipe",
-    "network error",
     "operation was aborted",
     "[aborted]",
     "[unavailable]",
@@ -65,12 +47,8 @@ impl RetryPolicy {
 
 pub fn message_looks_transient(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
-    TRANSIENT_ERRNO_CODES
-        .iter()
-        .any(|code| lower.contains(&code.to_ascii_lowercase()))
-        || TRANSIENT_MESSAGE_TOKENS
-            .iter()
-            .any(|token| lower.contains(token))
+    message_matches_agent_transport(message)
+        || TRANSIENT_MESSAGE_TOKENS.iter().any(|token| lower.contains(token))
 }
 
 pub fn is_provider_capacity_error(message: &str) -> bool {
@@ -204,6 +182,13 @@ mod tests {
             policy,
             false,
         ));
+    }
+
+    #[test]
+    fn canonical_error_owner_supplies_desktop_transport_taxonomy() {
+        assert!(message_looks_transient("ERR_HTTP2_SESSION_ERROR from provider"));
+        assert!(message_looks_transient("ENOTFOUND api.example.test"));
+        assert!(!message_looks_transient("BAD_API_KEY"));
     }
 
     #[test]

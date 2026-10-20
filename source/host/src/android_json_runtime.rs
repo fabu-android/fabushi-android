@@ -4081,12 +4081,12 @@ impl AndroidJsonHost {
             self.push_introduction_failure_tray(agent_id, request_id, message);
             return;
         }
-        let mut tray = crate::extensions::transcript::agent_run_error::provider_failure_tray(
+        let tray = crate::extensions::transcript::agent_run_error::provider_failure_tray_for_request(
             agent_id,
+            request_id,
             message,
             i64::try_from(now_ms()).unwrap_or(i64::MAX),
         );
-        tray.request_id = request_id.map(str::to_string);
         self.trays.push_error(tray);
     }
 

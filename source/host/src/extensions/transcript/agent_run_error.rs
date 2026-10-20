@@ -13,6 +13,173 @@ pub const MAX_TRAY_ACTIONS: usize = 3;
 pub const CURSOR_WEBSITE_ORIGIN: &str = "https://cursor.com";
 pub const SUPPORTED_DASHBOARD_ACTION_VERBS: &[&str] = &["requestLimitIncrease"];
 
+const AUTH_REQUIRED_ERROR_CODES: &[&str] = &[
+    "NOT_LOGGED_IN", "AGENT_REQUIRES_LOGIN", "AUTH_TOKEN_NOT_FOUND", "AUTH_TOKEN_EXPIRED",
+    "INVALID_AUTH_ID", "UNAUTHORIZED", "GITHUB_NO_USER_CREDENTIALS", "GITHUB_USER_NO_ACCESS",
+];
+const UPGRADE_REQUIRED_ERROR_CODES: &[&str] = &[
+    "FREE_USER_USAGE_LIMIT", "FREE_USER_RATE_LIMIT_EXCEEDED", "PRO_USER_ONLY",
+    "PRO_USER_USAGE_LIMIT", "PRO_USER_RATE_LIMIT_EXCEEDED", "RATE_LIMITED",
+    "RATE_LIMITED_CHANGEABLE", "GENERIC_RATE_LIMIT_EXCEEDED",
+];
+const PAYMENT_REQUIRED_ERROR_CODES: &[&str] = &["USAGE_PRICING_REQUIRED", "USAGE_PRICING_REQUIRED_CHANGEABLE"];
+const CONFIG_REQUIRED_ERROR_CODES: &[&str] = &["BAD_API_KEY", "BAD_USER_API_KEY", "OUTDATED_CLIENT"];
+const CANCELLED_ERROR_CODES: &[&str] = &["USER_ABORTED_REQUEST", "DEBOUNCED"];
+const CONNECT_CODE_CANCELLED: u16 = 1;
+const CONNECT_CODE_ABORTED: u16 = 10;
+const CONNECT_CODE_UNAUTHENTICATED: u16 = 16;
+const DESKTOP_TRANSPORT_ERROR_TOKENS: &[&str] = &[
+    "nghttp2", "econnreset", "econnrefused", "etimedout", "epipe", "socket hang up",
+    "premature close", "err_stream", "protocol error", "http/2 stream",
+    "err_http2_session_error", "session closed with error code", "connection aborted",
+    "enotfound", "eai_again", "eai_fail", "enodata", "eservfail", "ehostunreach",
+    "enetdown", "enetunreach", "network error:",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentRunErrorClass { Retriable, ActionRequired, NonRetriable, Cancelled }
+
+impl AgentRunErrorClass {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Retriable => "retriable",
+            Self::ActionRequired => "action-required",
+            Self::NonRetriable => "non-retriable",
+            Self::Cancelled => "cancelled",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentRunErrorDisplayInfo {
+    pub title: Option<String>,
+    pub detail: Option<String>,
+    pub is_retryable: Option<bool>,
+    pub connect_code: Option<u16>,
+    pub error_code: Option<String>,
+    pub inference_request_error_type: Option<String>,
+    pub error_details: Option<Value>,
+}
+impl AgentRunErrorDisplayInfo {
+    pub fn to_json(&self) -> Value {
+        json!({
+            "title": self.title,
+            "detail": self.detail,
+            "isRetryable": self.is_retryable,
+            "connectCode": self.connect_code,
+            "errorCode": self.error_code,
+            "inferenceRequestErrorType": self.inference_request_error_type,
+            "errorDetails": self.error_details,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentRunErrorClassification {
+    pub class: AgentRunErrorClass,
+    pub request_id: Option<String>,
+    pub display_info: AgentRunErrorDisplayInfo,
+    pub action: Option<String>,
+    pub is_transport: bool,
+}
+
+fn code_matches(code: Option<&str>, set: &[&str]) -> bool {
+    code.is_some_and(|code| set.iter().any(|candidate| *candidate == code))
+}
+fn first_backend_error_detail_value(error: &BackendConnectErrorEnvelope) -> Option<&Value> {
+    find_backend_connect_error(error, true)?.details.first()
+}
+fn error_detail_contract_parts(value: &Value) -> (&Value, &Value) {
+    let outer = value.get("details").filter(|value| value.is_object()).unwrap_or(value);
+    let nested = outer.get("details").filter(|value| value.is_object()).unwrap_or(outer);
+    (outer, nested)
+}
+fn find_inference_request_error_type(error: &BackendConnectErrorEnvelope) -> Option<String> {
+    if let Some(value) = error.inference_request_error_type.as_ref() { return Some(value.clone()); }
+    if let Some(cause) = error.cause.as_deref() {
+        if let Some(value) = find_inference_request_error_type(cause) { return Some(value); }
+    }
+    error.errors.iter().find_map(find_inference_request_error_type)
+}
+pub fn message_matches_agent_transport(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    DESKTOP_TRANSPORT_ERROR_TOKENS.iter().any(|token| lower.contains(token))
+}
+pub fn classify_agent_run_error(
+    message: &str, request_id: Option<&str>, is_transport_hint: bool,
+) -> AgentRunErrorClassification {
+    let root = parse_backend_connect_error(message);
+    let raw_error_details = root.as_ref().and_then(first_backend_error_detail_value).cloned();
+    let (error_code, explicit_retryable, action_required) = raw_error_details.as_ref().map(|value| {
+        let (outer, nested) = error_detail_contract_parts(value);
+        let error_code = outer.get("error").or_else(|| nested.get("error"))
+            .and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
+        let explicit_retryable = nested.get("isRetryable").or_else(|| outer.get("isRetryable")).and_then(Value::as_bool);
+        let action_required = nested.get("analyticsMetadata").or_else(|| outer.get("analyticsMetadata"))
+            .and_then(Value::as_object).and_then(|metadata| metadata.get("actionRequired"))
+            .and_then(Value::as_str).map(str::trim).filter(|value| !value.is_empty()).map(str::to_string);
+        (error_code, explicit_retryable, action_required)
+    }).unwrap_or((None, None, None));
+    let connect_code = root.as_ref().and_then(|value| value.code);
+    let is_transport = is_transport_hint || message_matches_agent_transport(message);
+    let lower = message.to_ascii_lowercase();
+    let blob_not_found = lower.contains("blob not found:") || lower.contains("blobnotfounderror");
+    let backend_detail = backend_detail_from_error_message(message);
+    let (class, action) = if let Some(action) = action_required.clone() {
+        (AgentRunErrorClass::ActionRequired, Some(action))
+    } else if code_matches(error_code.as_deref(), AUTH_REQUIRED_ERROR_CODES) || connect_code == Some(CONNECT_CODE_UNAUTHENTICATED) {
+        (AgentRunErrorClass::ActionRequired, Some("login".into()))
+    } else if code_matches(error_code.as_deref(), UPGRADE_REQUIRED_ERROR_CODES) {
+        (AgentRunErrorClass::ActionRequired, Some("upgrade".into()))
+    } else if code_matches(error_code.as_deref(), PAYMENT_REQUIRED_ERROR_CODES) {
+        (AgentRunErrorClass::ActionRequired, Some("payment".into()))
+    } else if code_matches(error_code.as_deref(), CONFIG_REQUIRED_ERROR_CODES) {
+        (AgentRunErrorClass::ActionRequired, Some("config".into()))
+    } else if code_matches(error_code.as_deref(), CANCELLED_ERROR_CODES) {
+        (AgentRunErrorClass::Cancelled, None)
+    } else if connect_code == Some(CONNECT_CODE_CANCELLED) || connect_code == Some(CONNECT_CODE_ABORTED) {
+        if is_transport { (AgentRunErrorClass::Retriable, None) } else { (AgentRunErrorClass::Cancelled, None) }
+    } else if error_code.as_deref() == Some("CUSTOM_MESSAGE") && explicit_retryable != Some(true) {
+        (AgentRunErrorClass::NonRetriable, None)
+    } else if explicit_retryable == Some(false) || blob_not_found {
+        (AgentRunErrorClass::NonRetriable, None)
+    } else if !is_transport && matches!(lower.trim(), "cancelled" | "canceled" | "user cancelled" | "user canceled") {
+        (AgentRunErrorClass::Cancelled, None)
+    } else {
+        (AgentRunErrorClass::Retriable, None)
+    };
+    let mut title = backend_detail.as_ref().and_then(|detail| detail.title.clone());
+    let mut detail = backend_detail.as_ref().and_then(|detail| detail.detail.clone());
+    let mut normalized_error_code = error_code;
+    if blob_not_found {
+        title = Some("Conversation data missing".into());
+        detail = Some("Some conversation data is no longer available. Reopen or recreate the affected conversation instead of retrying the missing blob.".into());
+        normalized_error_code = Some("BLOB_NOT_FOUND".into());
+    }
+    AgentRunErrorClassification {
+        class,
+        request_id: request_id.map(str::trim).filter(|value| !value.is_empty()).map(str::to_string),
+        display_info: AgentRunErrorDisplayInfo {
+            title, detail,
+            is_retryable: explicit_retryable.or(Some(matches!(class, AgentRunErrorClass::Retriable))),
+            connect_code,
+            error_code: normalized_error_code,
+            inference_request_error_type: root.as_ref().and_then(find_inference_request_error_type),
+            error_details: raw_error_details,
+        },
+        action,
+        is_transport,
+    }
+}
+fn recovery_route_action(action: &str) -> Option<Value> {
+    let label = match action {
+        "login" => "Sign in", "upgrade" => "Upgrade", "payment" => "Review billing",
+        "config" => "Open settings", _ => return None,
+    };
+    Some(json!({"kind":"recovery-route","label":label,"route":action}))
+}
+
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BackendAdditionalInfo {
     pub rate_limit_reason: Option<String>,
@@ -41,6 +208,7 @@ pub struct BackendConnectErrorEnvelope {
     pub details: Vec<Value>,
     pub cause: Option<Box<BackendConnectErrorEnvelope>>,
     pub errors: Vec<BackendConnectErrorEnvelope>,
+    pub inference_request_error_type: Option<String>,
 }
 
 fn backend_connect_error_from_value(
@@ -95,12 +263,21 @@ fn backend_connect_error_from_value(
     {
         return None;
     }
+    let inference_request_error_type = object
+        .get("inferenceRequestErrorType")
+        .or_else(|| object.get("metadata").and_then(|value| value.get("x-cursor-inference-request-error-type")))
+        .or_else(|| object.get("headers").and_then(|value| value.get("x-cursor-inference-request-error-type")))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
     Some(BackendConnectErrorEnvelope {
         message,
         code,
         details,
         cause,
         errors,
+        inference_request_error_type,
     })
 }
 
@@ -159,21 +336,24 @@ pub fn find_backend_connect_error(
 fn backend_detail_from_value(value: &Value) -> Option<BackendDetail> {
     let value = value.get("details").unwrap_or(value);
     let object = value.as_object()?;
-    let title = object
+    let display = object.get("details").and_then(Value::as_object).unwrap_or(object);
+    let title = display
         .get("title")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let detail = object
+    let detail = display
         .get("detail")
         .and_then(Value::as_str)
         .map(str::to_string);
-    let buttons = object
+    let buttons = display
         .get("buttons")
+        .or_else(|| object.get("buttons"))
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    let additional_info = object
+    let additional_info = display
         .get("additionalInfo")
+        .or_else(|| object.get("additionalInfo"))
         .and_then(Value::as_object)
         .map(|info| BackendAdditionalInfo {
             rate_limit_reason: info
@@ -391,35 +571,51 @@ pub fn introduction_failure_tray(
     message: &str,
     now_ms: i64,
 ) -> PushErrorOptions {
-    let mut tray = provider_failure_tray(agent_id, message, now_ms);
+    let mut tray = provider_failure_tray_for_request(agent_id, request_id, message, now_ms);
     tray.title = INTRODUCTION_FAILED_TRAY_TITLE.to_string();
     tray.error_kind = Some("agent_introduction_failed".into());
     tray.dedupe_key = Some(format!("introduction-failed:{agent_id}"));
-    tray.request_id = request_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string);
     tray
 }
 
-pub fn provider_failure_tray(
+pub fn provider_failure_tray(agent_id: &str, message: &str, now_ms: i64) -> PushErrorOptions {
+    provider_failure_tray_for_request(agent_id, None, message, now_ms)
+}
+
+pub fn provider_failure_tray_for_request(
     agent_id: &str,
+    request_id: Option<&str>,
     message: &str,
     now_ms: i64,
 ) -> PushErrorOptions {
+    let classification = classify_agent_run_error(message, request_id, false);
     let formatted = format_agent_run_error(message);
-    let detail = backend_detail_from_error_message(message);
-    let described = describe_agent_run_error(&formatted, detail.as_ref(), now_ms);
+    let backend_detail = backend_detail_from_error_message(message);
+    let described = describe_agent_run_error(&formatted, backend_detail.as_ref(), now_ms);
+    let mut actions = Vec::new();
+    if let Some(action) = classification.action.as_deref().and_then(recovery_route_action) { actions.push(action); }
+    for action in described.actions {
+        if actions.len() >= MAX_TRAY_ACTIONS { break; }
+        if !actions.contains(&action) { actions.push(action); }
+    }
+    let title = classification.display_info.title.clone().or(described.title)
+        .unwrap_or_else(|| "Agent run failed".to_string());
+    let detail = if classification.display_info.error_code.as_deref() == Some("BLOB_NOT_FOUND") {
+        classification.display_info.detail.clone().unwrap_or(described.detail)
+    } else { described.detail };
     PushErrorOptions {
         agent_id: Some(agent_id.to_string()),
-        title: described
-            .title
-            .unwrap_or_else(|| "Agent run failed".to_string()),
-        detail: described.detail,
+        title,
+        detail,
+        request_id: classification.request_id.clone(),
         error_kind: Some("agent_run_error".into()),
         raw_detail: Some(message.to_string()),
-        actions: described.actions,
+        actions,
         dedupe_key: Some(format!("agent-run-error:{agent_id}")),
+        classification: Some(classification.class.as_str().into()),
+        recovery_action: classification.action.clone(),
+        is_transport: Some(classification.is_transport),
+        display_info: Some(classification.display_info.to_json()),
         ..PushErrorOptions::default()
     }
 }
