@@ -602,7 +602,7 @@ mod macos_system {
             "[" | "leftbracket" => KeyCode::ANSI_LEFT_BRACKET,
             "]" | "rightbracket" => KeyCode::ANSI_RIGHT_BRACKET,
             "\\" | "backslash" => KeyCode::ANSI_BACKSLASH,
-            "\`" | "grave" => KeyCode::ANSI_GRAVE,
+            "`" | "grave" => KeyCode::ANSI_GRAVE,
             _ => return None,
         })
     }
