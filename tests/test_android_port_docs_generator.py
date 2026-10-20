@@ -13,8 +13,8 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
-CURRENT_DESKTOP_COMMIT = "3d6c2cb24044e4fda1352b259183ff39b56eec11"
-CURRENT_DESKTOP_TREE = "a0e0b305a47e4d6566becec7ae4137b0dd9ac358"
+CURRENT_DESKTOP_COMMIT = "ba9ecce728ef021fee609796c8704d8af6fe4b5a"
+CURRENT_DESKTOP_TREE = "29e6837e6ea9098d64c5de3e0952b3960abbfc86"
 
 
 def load_generator():
@@ -3256,8 +3256,8 @@ class CurrentDesktopAuthorityRegressionTests(unittest.TestCase):
     def test_current_authority_is_pinned_to_live_desktop_main_and_rejects_stale_fallback(self):
         module = load_generator()
         current = (
-            "3d6c2cb24044e4fda1352b259183ff39b56eec11",
-            "a0e0b305a47e4d6566becec7ae4137b0dd9ac358",
+            "ba9ecce728ef021fee609796c8704d8af6fe4b5a",
+            "29e6837e6ea9098d64c5de3e0952b3960abbfc86",
         )
         self.assertEqual((CURRENT_DESKTOP_COMMIT, CURRENT_DESKTOP_TREE), current)
         self.assertEqual((module.EXPECTED_DESKTOP_COMMIT, module.EXPECTED_DESKTOP_TREE), current)
