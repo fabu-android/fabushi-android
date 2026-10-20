@@ -1,0 +1,50 @@
+name: Android Remote Computer macOS
+
+on:
+  push:
+    branches:
+      - spec/grok-bot-018-android-parity-20260922
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-native-remote-computer:
+    runs-on: macos-latest
+    env:
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact HEAD
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify CoreGraphics production owner
+        run: |
+          set -euo pipefail
+          grep -Fq '#[cfg(target_os = "macos")]' source/box-exec-daemon/src/remote_computer_production.rs
+          grep -Fq 'CGEventSourceStateID::HIDSystemState' source/box-exec-daemon/src/remote_computer_production.rs
+          grep -Fq 'CGPreflightScreenCaptureAccess' source/box-exec-daemon/src/remote_computer_production.rs
+          grep -Fq 'AXIsProcessTrusted' source/box-exec-daemon/src/remote_computer_production.rs
+          grep -Fq 'CGDisplay::main()' source/box-exec-daemon/src/remote_computer_production.rs
+          grep -Fq 'core-graphics = { version = "0.25", features = ["highsierra"] }' source/box-exec-daemon/Cargo.toml
+      - name: Compile macOS native Remote Computer owner
+        run: cargo check -p fabushi-android-box-exec-daemon --lib --tests
+      - name: Test 11-action production mapping on macOS target
+        run: cargo test -p fabushi-android-box-exec-daemon production_executor_maps_all_eleven_actions_to_native_io_and_returns_observation_fields -- --nocapture
+      - name: Test screenshot settle without replay on macOS target
+        run: cargo test -p fabushi-android-box-exec-daemon production_executor_routes_screenshot_settle_to_native_wait_without_replaying_actions -- --nocapture
+      - name: Test cancel and reconcile fail-safe without replay on macOS target
+        run: cargo test -p fabushi-android-box-exec-daemon production_executor_cancel_and_reconcile_fail_safe_without_native_replay -- --nocapture
+      - name: Record exact-head evidence
+        run: |
+          mkdir -p evidence
+          printf 'source_sha=%s\n' "$SOURCE_SHA" > evidence/source-sha.txt
+          cargo metadata --format-version=1 --no-deps > evidence/cargo-metadata.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-computer-macos-${{ github.sha }}
+          path: evidence/
+          if-no-files-found: error

@@ -1,0 +1,488 @@
+name: Android migration documentation
+on:
+  push:
+    branches:
+      - 'spec/grok-bot-018-android-parity-20260922'
+    paths:
+      - 'source/**'
+      - 'native/**'
+      - 'frontend/**'
+      - 'contracts/**'
+      - 'projects/**'
+      - 'desktop/**'
+      - 'tests/**'
+      - 'scripts/android-port-docs.py'
+      - 'scripts/check_grok_android_parity.py'
+      - 'scripts/test-android-port-*.py'
+      - 'docs/android-port/authority/**'
+      - '.github/workflows/android-port-docs.yml'
+      - '.github/workflows/grok-android-architecture.yml'
+      - '.github/workflows/android-interaction-focused.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.gradle'
+      - 'build.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
+  pull_request:
+    branches:
+      - 'main'
+    paths:
+      - 'source/**'
+      - 'native/**'
+      - 'frontend/**'
+      - 'contracts/**'
+      - 'projects/**'
+      - 'desktop/**'
+      - 'tests/**'
+      - 'scripts/android-port-docs.py'
+      - 'scripts/check_grok_android_parity.py'
+      - 'scripts/test-android-port-*.py'
+      - 'docs/android-port/authority/**'
+      - '.github/workflows/android-port-docs.yml'
+      - '.github/workflows/grok-android-architecture.yml'
+      - '.github/workflows/android-interaction-focused.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'build.gradle'
+      - 'build.gradle.kts'
+      - 'settings.gradle'
+      - 'settings.gradle.kts'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+concurrency:
+  # Source authority is exact-head evidence: never let a stale SHA hold the queue while the latest PR HEAD waits.
+  group: android-port-docs-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  source-inventory:
+    name: Pinned Desktop complete source inventory
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact Android checkout provenance
+        env:
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$ANDROID_PR_HEAD_SHA"
+      - name: Run Android source-authority generator regression
+        run: python3 -m unittest tests.test_android_port_docs_generator
+      - name: Rebaseline persistent source authority in Actions worktree
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '2100'
+          ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          ANDROID_PR_BASE_REF: 'main'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
+        run: python3 scripts/android-port-docs.py rebaseline
+      - name: Enumerate source and verify authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_CI_EVIDENCE_WAIT_SECONDS: '2100'
+          ANDROID_PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          ANDROID_PR_BASE_REF: 'main'
+        run: python3 scripts/android-port-docs.py inventory
+      - name: Verify generated exact authority bookkeeping
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          EXPECTED_ANDROID_HEAD="$(git rev-parse HEAD)"
+          test -s docs/android-port/generated/desktop-complete-tree.json
+          test -s docs/android-port/generated/desktop-root-tree.json
+          python3 - "$EXPECTED_ANDROID_HEAD" <<'PY'
+          import hashlib, json, os, runpy, sys
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          desktop_repo = 'bhrumom/fabushi-desktop'
+          authority = runpy.run_path('scripts/android-port-docs.py')
+          desktop_commit = authority['EXPECTED_DESKTOP_COMMIT']
+          desktop_tree = authority['EXPECTED_DESKTOP_TREE']
+          expected_tree_entries = authority['EXPECTED_TREE_ENTRY_COUNT']
+          expected_non_tree_entries = authority['EXPECTED_TRACKED_NON_TREE_COUNT']
+
+          def github_json(path):
+            headers = {
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': 'Fabushi-Android-Authority-Gate',
+              'X-GitHub-Api-Version': '2022-11-28',
+            }
+            token = os.environ.get('GH_TOKEN')
+            if token:
+              headers['Authorization'] = 'Bearer ' + token
+            with urlopen(Request('https://api.github.com' + path, headers=headers), timeout=45) as response:
+              return json.load(response)
+
+          def tree_signature(entries, label):
+            assert isinstance(entries, list), (label, 'tree must be a list')
+            paths = []
+            signature = []
+            for item in entries:
+              assert isinstance(item, dict), (label, 'tree entry must be an object')
+              path = item.get('path')
+              assert isinstance(path, str) and path and not path.startswith('/') and '..' not in path.split('/'), (label, path)
+              sha = item.get('sha')
+              assert isinstance(sha, str) and len(sha) == 40 and all(c in '0123456789abcdef' for c in sha), (label, path, sha)
+              assert item.get('mode') in ('040000', '100644', '100755', '120000', '160000'), (label, path, item.get('mode'))
+              assert item.get('type') in ('tree', 'blob', 'commit'), (label, path, item.get('type'))
+              paths.append(path)
+              signature.append((path, sha, item['mode'], item['type']))
+            assert len(paths) == len(set(paths)), (label, 'duplicate tree paths')
+            return sorted(signature)
+
+          live_main_before = github_json(f'/repos/{desktop_repo}/branches/main')['commit']['sha']
+          assert live_main_before == desktop_commit, ('Desktop main moved before authority check', live_main_before)
+          commit_doc = github_json(f'/repos/{desktop_repo}/git/commits/{desktop_commit}')
+          assert commit_doc.get('sha') == desktop_commit
+          assert commit_doc.get('tree', {}).get('sha') == desktop_tree
+          remote_tree = github_json(f'/repos/{desktop_repo}/git/trees/{desktop_tree}?recursive=1')
+          assert remote_tree.get('sha') == desktop_tree
+          assert remote_tree.get('truncated') is False, 'current Desktop recursive API tree is truncated'
+          remote_entries = remote_tree.get('tree')
+          assert isinstance(remote_entries, list) and len(remote_entries) == expected_tree_entries, ('remote tree count', len(remote_entries) if isinstance(remote_entries, list) else None)
+          remote_signature = tree_signature(remote_entries, 'current Desktop recursive tree')
+          assert sum(item['type'] != 'tree' for item in remote_entries) == expected_non_tree_entries
+          live_main_after = github_json(f'/repos/{desktop_repo}/branches/main')['commit']['sha']
+          assert live_main_after == desktop_commit, ('Desktop main moved during authority check', live_main_after)
+
+          tree_path = Path('docs/android-port/generated/desktop-complete-tree.json')
+          assert tree_path.is_file() and tree_path.stat().st_size > 0, 'current Desktop complete-tree evidence is missing'
+          tree_doc = json.loads(tree_path.read_text(encoding='utf-8'))
+          assert tree_doc.get('sha') == desktop_tree
+          assert tree_doc.get('truncated') is False, 'saved Desktop complete-tree evidence is truncated'
+          saved_tree_entries = tree_doc.get('tree')
+          assert isinstance(saved_tree_entries, list) and len(saved_tree_entries) == expected_tree_entries
+          assert tree_signature(saved_tree_entries, 'saved Desktop complete tree') == remote_signature, 'saved complete tree differs from current GitHub API tree'
+
+          root_tree_path = Path('docs/android-port/generated/desktop-root-tree.json')
+          assert root_tree_path.is_file() and root_tree_path.stat().st_size > 0, 'current Desktop root-tree evidence is missing'
+          root_tree_doc = json.loads(root_tree_path.read_text(encoding='utf-8'))
+          assert root_tree_doc.get('sha') == desktop_tree and root_tree_doc.get('truncated') is False
+          root_remote_entries = [item for item in remote_entries if '/' not in item.get('path', '')]
+          assert tree_signature(root_tree_doc.get('tree'), 'saved Desktop root tree') == tree_signature(root_remote_entries, 'current Desktop root entries')
+
+          expected=sys.argv[1]
+          b=json.loads(Path('docs/android-port/authority/baseline.json').read_text(encoding='utf-8'))
+          m=json.loads(Path('docs/android-port/authority/source-inventory-manifest.json').read_text(encoding='utf-8'))
+          assert b['desktop_commit'] == desktop_commit
+          assert b['desktop_root_tree'] == desktop_tree
+          assert b['desktop_main_before'] == desktop_commit
+          assert b['desktop_main_after'] == desktop_commit
+          ledger_bytes=Path('docs/android-port/authority/source-inventory-ledger.jsonl').read_bytes()
+          ledger_lines = ledger_bytes.decode('utf-8').splitlines()
+          assert len(ledger_lines) == expected_non_tree_entries and all(line.strip() for line in ledger_lines)
+          rows = [json.loads(line) for line in ledger_lines]
+          assert hashlib.sha256(ledger_bytes).hexdigest()==m['ledger_sha256']
+          assert m['desktop_commit'] == desktop_commit
+          assert m['source_commit'] == desktop_commit
+          assert m['desktop_root_tree'] == desktop_tree
+          assert m['desktop_main_before'] == desktop_commit
+          assert m['desktop_main_after'] == desktop_commit
+          assert m['authority_current'] is True
+          assert m['tracked_non_tree_entries'] == expected_non_tree_entries and len(rows) == expected_non_tree_entries
+          assert m['tree_entries'] == expected_tree_entries
+          assert m['authority_ledger_rows'] == expected_non_tree_entries
+          for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
+            assert m[field]==expected, (field,m[field],expected)
+          row_paths = [row.get('source_path') for row in rows]
+          assert all(isinstance(path, str) and path for path in row_paths)
+          assert len(row_paths) == len(set(row_paths)) == expected_non_tree_entries
+          assert row_paths == sorted(row_paths), 'source ledger paths are not in canonical order'
+          rows_by_path = {row['source_path']: row for row in rows}
+          non_tree_by_path = {item['path']: item for item in saved_tree_entries if item.get('type') != 'tree'}
+          assert len(non_tree_by_path) == expected_non_tree_entries
+          assert set(rows_by_path) == set(non_tree_by_path), 'source ledger paths differ from current complete tree'
+          for path, row in rows_by_path.items():
+            item = non_tree_by_path[path]
+            assert row['source_blob_sha'] == item['sha'], ('source object SHA mismatch', path)
+            assert row['source_mode'] == item['mode'], ('source object mode mismatch', path)
+            assert row['source_type'] == item['type'], ('source object type mismatch', path)
+          for row in rows:
+            assert row['source_commit']==m['desktop_commit']
+            assert row['source_blob_sha'] and row['source_mode'] and row['source_type']
+            assert row['android_pr_head_sha']==expected
+            assert row['android_tested_checkout_sha']==expected
+            assert row['workflow_sha']==expected
+            assert row['implementation_status']=='unreviewed'
+            assert row['verification_status']=='not-verified'
+          r=json.loads(Path('docs/android-port/authority/responsibility-ledger.json').read_text(encoding='utf-8'))
+          assert r['source_commit'] == desktop_commit
+          assert r.get('authority', {}).get('desktop_commit') == desktop_commit
+          assert r.get('authority', {}).get('desktop_root_tree') == desktop_tree
+          for field in ('android_pr_head_sha','android_tested_checkout_sha','workflow_sha'):
+            assert r[field] == expected, (field,r[field],expected)
+          responsibilities = r.get('responsibilities', [])
+          ids = [item.get('responsibility_id') for item in responsibilities]
+          assert len(responsibilities) == 306 and all(isinstance(rid, str) and rid for rid in ids) and len(set(ids)) == 306
+          reverse_links = {}
+          legacy_fallback_ids = {
+            'RUST-ANDROID-RUNTIME-GATE-001',
+            'AUTHORITY-CANONICAL-MIGRATION-SOURCE-001',
+            'UI-PRODUCTION-COMPOSITION-ANDROID-001',
+            'CI-DESKTOP-SOURCE-AUTHORITY-REPLACEMENT-001',
+            'GOVERNANCE-SPEC-FIRST-ANDROID-001',
+            'GOVERNANCE-REPOSITORY-BOUNDARY-001',
+          }
+          for item in responsibilities:
+            assert item['source_commit'] == desktop_commit
+            assert item['android_head_at_update'] == expected
+            assert item['implementation_status'] == 'unreviewed'
+            assert item['verification_status'] == 'not-verified'
+            sources = item.get('desktop_sources', [])
+            assert isinstance(sources, list)
+            for source in sources:
+              assert isinstance(source, dict)
+              path = source.get('path')
+              assert isinstance(path, str) and path in rows_by_path, ('responsibility anchor missing from source ledger', item['responsibility_id'], path)
+              row = rows_by_path[path]
+              assert source['source_commit'] == desktop_commit
+              assert source['blob_sha'] == row['source_blob_sha']
+              assert source['source_mode'] == row['source_mode']
+              assert source['source_type'] == row['source_type']
+              quality = source.get('mapping_quality')
+              if quality not in ('semantic', 'coverage-only'):
+                has_object_metadata = source.get('source_mode') in ('100644', '100755', '120000', '160000') and source.get('source_type') in ('blob', 'commit')
+                quality = 'coverage-only' if item['responsibility_id'] in legacy_fallback_ids and not has_object_metadata else 'semantic'
+              if quality == 'semantic':
+                reverse_links.setdefault(path, set()).add(item['responsibility_id'])
+          responsibility_id_set = set(ids)
+          for row in rows:
+            linked = row.get('responsibilities', [])
+            assert isinstance(linked, list) and all(isinstance(rid, str) and rid in responsibility_id_set for rid in linked)
+            assert len(linked) == len(set(linked)), ('duplicate responsibility links', row['source_path'])
+            assert set(linked) == reverse_links.get(row['source_path'], set()), ('source/responsibility links are not bidirectional', row['source_path'])
+          coverage=json.loads(Path('docs/android-port/generated/packages-semantic-coverage.json').read_text(encoding='utf-8'))
+          package_rows=[row for row in rows if row['source_path'].startswith('source/packages/')]
+          assert len(package_rows)==852
+          assert coverage['expected_source_rows']==852 and coverage['observed_source_rows']==852
+          assert coverage['complete_rows'] + coverage['strict_incomplete_rows'] == 852
+          assert coverage['strict_incomplete_rows'] == sum(row.get('package_semantic_coverage_status') == 'incomplete' for row in package_rows)
+          assert coverage['complete_rows'] == sum(row.get('package_semantic_coverage_status') == 'complete' for row in package_rows)
+          assert all(row.get('package_semantic_coverage_status') in ('complete','incomplete') for row in package_rows)
+          assert coverage['status'] == ('passed' if coverage['strict_incomplete_rows'] == 0 else 'incomplete')
+          for key in ('semantic_responsibility_rows','real_source_owner_rows','real_android_owner_rows','valid_android_target_rows','valid_disposition_rows'):
+            assert 0 <= coverage[key] <= 852, (key,coverage[key])
+          rejected=json.loads(Path('docs/android-port/generated/rejected-android-targets.json').read_text(encoding='utf-8'))
+          assert rejected['count']==len(rejected['rejected_targets'])
+          assert rejected['status']==('incomplete' if rejected['count'] else 'passed')
+          agent_kv_paths = [
+            'source/packages/agent-kv/agent-store.ts',
+            'source/packages/agent-kv/blob-store.ts',
+            'source/packages/agent-kv/blob-not-found-error.ts',
+            'source/packages/agent-kv/reference.ts',
+            'source/packages/agent-kv/serde.ts',
+            'source/packages/agent-kv/subagent-states.ts',
+            'source/packages/agent-kv/typed-blob-store.ts',
+          ]
+          agent_kv_rows = {
+            row['source_path']: row for row in package_rows
+            if row['source_path'] in agent_kv_paths
+          }
+          assert set(agent_kv_rows) == set(agent_kv_paths), sorted(set(agent_kv_paths) - set(agent_kv_rows))
+          coverage_gaps = {gap['source_path']: gap['reasons'] for gap in coverage.get('gaps', [])}
+          agent_kv_owner = next(item for item in responsibilities
+                                if item['responsibility_id'] == 'AGENT-RUN-LIFECYCLE-001')
+          for path, row in agent_kv_rows.items():
+            assert row['mapping_status'] == 'semantic', (path, row.get('mapping_status'))
+            assert row['responsibilities'] == ['AGENT-RUN-LIFECYCLE-001'], (path, row.get('responsibilities'))
+            assert row['disposition'] == 'android-adapted', (path, row.get('disposition'))
+            assert row['android_targets'], (path, 'missing Android targets')
+            assert row['package_semantic_coverage_status'] == 'complete', (path, row.get('package_semantic_coverage_reasons'))
+            assert path not in coverage_gaps, (path, coverage_gaps.get(path))
+            assert row['implementation_status'] == 'unreviewed'
+            assert row['verification_status'] == 'not-verified'
+            anchor = next(source for source in agent_kv_owner['desktop_sources'] if source['path'] == path)
+            assert anchor['source_commit'] == m['desktop_commit']
+            assert anchor['blob_sha'] == row['source_blob_sha']
+            assert anchor['source_mode'] == row['source_mode']
+            assert anchor['source_type'] == row['source_type']
+            assert anchor['focused_tests'] and anchor['android_targets']
+            for evidence_key, step_name in (
+              ('production_evidence', 'Build exact-HEAD agent-kv production owners'),
+              ('test_evidence', 'Test exact-HEAD agent-kv production owners'),
+            ):
+              candidates = [
+                evidence for evidence in agent_kv_owner.get(evidence_key, [])
+                if path in evidence.get('source_paths', [])
+              ]
+              assert any(
+                evidence.get('result') == 'passed'
+                and evidence.get('workflow_name') == 'Grok Android Architecture'
+                and evidence.get('workflow_id') == 364026685
+                and evidence.get('workflow_path') == '.github/workflows/grok-android-architecture.yml'
+                and evidence.get('workflow_event') in ('pull_request', 'push')
+                and evidence.get('workflow_repository') == 'fabu-android/fabushi-android'
+                and evidence.get('workflow_job_name') == 'agent-kv-exact-head-evidence'
+                and evidence.get('workflow_step_name') == step_name
+                and evidence.get('workflow_run_id')
+                and evidence.get('workflow_job_id')
+                and evidence.get('run_conclusion') == 'success'
+                and evidence.get('android_pr_head_sha') == expected
+                and evidence.get('android_tested_checkout_sha') == expected
+                and evidence.get('workflow_sha') == expected
+                and evidence.get('desktop_commit') == m['desktop_commit']
+                and evidence.get('source_commit') == m['desktop_commit']
+                and (evidence.get('evidence_ref') or '').split('#', 1)[0] in row['android_targets']
+                for evidence in candidates
+              ), (path, evidence_key, step_name)
+          ask_question_path = 'source/packages/constants/ask-question.ts'
+          ask_question_row = next(row for row in package_rows if row['source_path'] == ask_question_path)
+          assert ask_question_row['mapping_status'] == 'semantic'
+          assert ask_question_row['responsibilities'] == ['AGENT-RUN-LIFECYCLE-001']
+          assert ask_question_row['disposition'] == 'android-adapted'
+          assert ask_question_row['package_semantic_coverage_status'] == 'complete', ask_question_row.get('package_semantic_coverage_reasons')
+          assert ask_question_path not in coverage_gaps, coverage_gaps.get(ask_question_path)
+          for target in (
+            'source/packages/constants/src/ask_question.rs',
+            'source/host/src/runner/agent_v1_interaction.rs',
+            'source/host/src/extensions/transcript/transcript_store.rs',
+          ):
+            assert target in ask_question_row['android_targets'], (ask_question_path, target)
+          ask_question_owner = next(item for item in responsibilities
+                                    if item['responsibility_id'] == 'AGENT-RUN-LIFECYCLE-001')
+          ask_question_anchor = next(
+            source for source in ask_question_owner['desktop_sources']
+            if source['path'] == ask_question_path
+          )
+          assert ask_question_anchor['mapping_quality'] == 'semantic'
+          focused_names = set(ask_question_anchor.get('focused_tests', []))
+          for expected_test in (
+            'source/packages/constants/src/ask_question.rs::tests::structured_identity_round_trips_and_legacy_prefix_remains_recognized',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::structured_and_legacy_auto_answer_rejections_do_not_consume_the_completion_receipt_identity',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::ordinary_async_success_error_and_user_rejection_consume_completion_receipts',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::duplicate_sync_settlement_is_rejected_without_replacing_the_first_result',
+            'source/host/src/runner/agent_v1_interaction.rs::tests::completed_receipt_deduplication_is_account_and_process_fenced',
+            'source/host/src/extensions/transcript/transcript_store.rs::tests::async_ask_question_replay_window_is_account_agent_scoped_and_bounded',
+          ):
+            assert expected_test in focused_names, expected_test
+          agent_store_ids_path = 'source/packages/constants/agent-store-ids.ts'
+          agent_store_ids_row = next(row for row in package_rows if row['source_path'] == agent_store_ids_path)
+          assert agent_store_ids_row['responsibilities'] == []
+          assert agent_store_ids_row['package_semantic_coverage_status'] == 'incomplete'
+          assert agent_store_ids_path in coverage_gaps
+          agent_store_ids_reasons = set(agent_store_ids_row.get('package_semantic_coverage_reasons', []))
+          assert 'missing-semantic-responsibility' in agent_store_ids_reasons
+          assert 'missing-real-android-owner' in agent_store_ids_reasons
+          cloud_agent_path = 'source/packages/constants/cloud-agent.ts'
+          cloud_agent_row = next(row for row in package_rows if row['source_path'] == cloud_agent_path)
+          assert cloud_agent_row['responsibilities'] == ['AGENT-RUNTIME-PROMPT-ASSEMBLY-ANDROID-001']
+          assert cloud_agent_row['package_semantic_coverage_status'] == 'complete'
+          assert cloud_agent_path not in coverage_gaps
+          assert cloud_agent_row['mapping_status'] == 'semantic'
+          assert cloud_agent_row['disposition'] == 'android-adapted'
+          assert 'source/packages/constants/src/cloud_agent.rs' in cloud_agent_row['android_targets']
+          assert 'source/host/src/runner/android_system_prompt.rs' in cloud_agent_row['android_targets']
+          assert 'source/box-exec-daemon/src/cloud_agent_production.rs' in cloud_agent_row['android_targets']
+          mcp_constant_path = 'source/packages/constants/mcp.ts'
+          mcp_constant_row = next(row for row in package_rows if row['source_path'] == mcp_constant_path)
+          assert mcp_constant_row['responsibilities'] == []
+          assert mcp_constant_row['package_semantic_coverage_status'] == 'incomplete'
+          assert mcp_constant_path in coverage_gaps
+          mcp_constant_reasons = set(mcp_constant_row.get('package_semantic_coverage_reasons', []))
+          assert 'missing-semantic-responsibility' in mcp_constant_reasons
+          assert 'missing-real-android-owner' in mcp_constant_reasons
+          for item in responsibilities:
+            assert all(
+              source.get('path') not in (agent_store_ids_path, mcp_constant_path)
+              for source in item.get('desktop_sources', [])
+              if isinstance(source, dict)
+            )
+            for evidence_key in ('production_evidence', 'test_evidence'):
+              assert all(
+                source_path not in evidence.get('source_paths', [])
+                for source_path in (agent_store_ids_path, mcp_constant_path)
+                for evidence in item.get(evidence_key, [])
+                if isinstance(evidence, dict)
+              )
+          print(json.dumps({
+            'android_head':expected,
+            'desktop_commit':m['desktop_commit'],
+            'tree_entries':m['tree_entries'],
+            'tracked_non_tree_entries':m['tracked_non_tree_entries'],
+            'ledger_sha256':m['ledger_sha256'],
+            'responsibility_count':len(responsibilities),
+            'package_semantic_coverage':{k:v for k,v in coverage.items() if k!='gaps'},
+            'rejected_android_target_count':rejected['count'],
+          }, sort_keys=True))
+          PY
+      - name: Generate independent audit receipt in RUNNER_TEMP
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ANDROID_PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_WORKFLOW_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ANDROID_PR_HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          ANDROID_PR_NUMBER: '3'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT: '12072277149'
+          ANDROID_RESPONSIBILITY_PREDECESSOR_ARTIFACT_DIGEST: 'sha256:d15bc9e019dfa01307bf92294f78851d01a4cde2d792ab1377591dde52091f2d'
+        run: python3 scripts/android-port-docs.py receipt
+      - name: Upload independent audit receipt
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-audit-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/android-port-audit-receipt.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Package documentation and source evidence
+        if: always()
+        run: python3 scripts/android-port-docs.py bundle
+      - name: Upload source inventory and documentation
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-source-and-docs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            docs/android-port/authority/baseline.json
+            docs/android-port/authority/source-inventory-manifest.json
+            docs/android-port/authority/source-inventory-ledger.jsonl
+            docs/android-port/authority/responsibility-ledger.json
+            docs/android-port/generated/
+            android-port-documentation.zip
+            android-port-documentation.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
+  documentation-contract:
+    name: Documentation completeness and links
+    if: github.event_name != 'pull_request' || github.event.pull_request.number == 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Validate documentation completeness
+        run: python3 scripts/android-port-docs.py validate
+      - name: Assert documentation validation report exists
+        run: test -s docs/android-port/generated/docs-validation.json
+      - name: Upload documentation validation report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: android-port-docs-validation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: docs/android-port/generated/docs-validation.json
+          if-no-files-found: error
+          retention-days: 30

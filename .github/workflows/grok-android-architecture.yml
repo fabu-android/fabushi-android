@@ -1,0 +1,629 @@
+name: Grok Android Architecture
+
+on:
+  push:
+    branches:
+      - spec/grok-bot-018-android-parity-20260922
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Keep only the newest exact HEAD runnable for this workflow/PR. Superseded SHAs are
+# predecessor evidence and must not consume the runner queue ahead of current acceptance.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+jobs:
+  agent-kv-exact-head-evidence:
+    name: agent-kv-exact-head-evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: android-actions/setup-android@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - name: Install Android NDK for agent-kv production evidence
+        run: |
+          set -euo pipefail
+          NDK_PACKAGE='ndk;28.2.13676358'
+          NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
+          NDK_CLANG="$NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+          for attempt in 1 2 3; do
+            if sdkmanager "$NDK_PACKAGE" && test -x "$NDK_CLANG"; then
+              exit 0
+            fi
+            rm -rf "$NDK_HOME" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          exit 1
+      - name: Install cargo-ndk for agent-kv production evidence
+        run: command -v cargo-ndk >/dev/null 2>&1 || cargo install cargo-ndk --locked
+      - name: Install native Remote Computer Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
+      - name: Build exact-HEAD agent-kv production owners
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/28.2.13676358
+        run: |
+          set -euo pipefail
+          rm -rf evidence/agent-kv-jni
+          cargo ndk -t arm64-v8a -o evidence/agent-kv-jni build --release -p fabushi-android-host-jni
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+      - name: Test exact-HEAD agent-kv production owners
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-agent-kv --all-targets
+      - name: Verify exact-HEAD agent-core interaction production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'pub struct InteractionQuery' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'pub struct InteractionResponse' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'pub struct SharedAgentInteractionOwner' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'pub fn drain_post_turn' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'fabushi_constants::ask_question::is_ask_question_auto_answer_reason' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'fn should_receipt_ask_question_result' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'pub fn is_ask_question_auto_answer_reason' source/packages/constants/src/ask_question.rs
+          grep -Fq 'prune_completed_async_receipts_from_transcript_window' source/host/src/runner/agent_v1_interaction.rs
+          grep -Fq 'live_async_ask_question_original_tool_call_ids' source/host/src/extensions/transcript/transcript_store.rs
+          grep -Fq 'native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host' source/android-host-jni/src/lib.rs
+      - name: Test exact-HEAD agent-core interaction production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host generated_compatible_interaction_query_response_wire_roundtrip -- --nocapture
+          cargo test -p fabushi-mahayana-host run_async_completion_is_enqueued_and_privacy_projection_is_redacted -- --nocapture
+          cargo test -p fabushi-mahayana-host stale_account_and_process_epoch_responses_fail_closed -- --nocapture
+          cargo test -p fabushi-mahayana-host android_json_host_settles_generated_ask_question_response_with_exact_fence -- --nocapture
+          cargo test -p fabushi-mahayana-host android_json_host_rejects_stale_interaction_response_after_account_or_process_change -- --nocapture
+          cargo test -p fabushi-constants ask_question::tests::structured_identity_round_trips_and_legacy_prefix_remains_recognized -- --exact
+          cargo test -p fabushi-mahayana-host structured_and_legacy_auto_answer_rejections_do_not_consume_the_completion_receipt_identity -- --nocapture
+          cargo test -p fabushi-mahayana-host ordinary_async_success_error_and_user_rejection_consume_completion_receipts -- --nocapture
+          cargo test -p fabushi-mahayana-host duplicate_sync_settlement_is_rejected_without_replacing_the_first_result -- --nocapture
+          cargo test -p fabushi-mahayana-host completed_receipts_follow_the_live_window_while_pending_receipts_are_preserved -- --nocapture
+          cargo test -p fabushi-mahayana-host completed_receipt_deduplication_is_account_and_process_fenced -- --nocapture
+          cargo test -p fabushi-mahayana-host async_ask_question_replay_window_is_account_agent_scoped_and_bounded -- --nocapture
+          cargo test -p fabushi-mahayana-host live_async_ask_question_ids_follow_the_current_transcript_window_and_fallback -- --nocapture
+          cargo test -p fabushi-android-host-jni native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host -- --nocapture
+      - name: Verify exact-HEAD background completion production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'pub const SYSTEM_NOTIFICATION_TAG: &str = "system_notification";' source/packages/constants/src/system_notification.rs
+          grep -Fq 'pub const SYSTEM_NOTIFICATION_OPEN_TAG: &str = "<system_notification>";' source/packages/constants/src/system_notification.rs
+          grep -Fq 'pub const SYSTEM_NOTIFICATION_CLOSE_TAG: &str = "</system_notification>";' source/packages/constants/src/system_notification.rs
+          grep -Fq 'use fabushi_constants::system_notification::wrap_system_notification;' source/host/src/extensions/transcript/completion_revivals.rs
+          grep -Fq 'wrap_system_notification(&neutralize_background_task_detail_close_tags(&body))' source/host/src/extensions/transcript/completion_revivals.rs
+          grep -Fq '"text":build_shell_revival_prompt(completions)' source/host/src/android_json_runtime.rs
+          grep -Fq '"requestSource":"background-shell-revival"' source/host/src/android_json_runtime.rs
+          grep -Fq '"text":build_subagent_revival_prompt(completions)' source/host/src/android_json_runtime.rs
+          grep -Fq '"requestSource":"cloud-agent-revival"' source/host/src/android_json_runtime.rs
+          grep -Fq 'runtime: AndroidJsonHost' source/android-host-jni/src/lib.rs
+      - name: Test exact-HEAD background completion production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants system_notification::tests::wrapper_is_recognizable_without_matching_partial_tags -- --exact
+          cargo test -p fabushi-mahayana-host extensions::transcript::completion_revivals::tests::revival_prompts_use_canonical_system_notification_and_neutralize_nested_tags -- --exact
+          cargo test -p fabushi-mahayana-host --test android_background_completion_shipping_contract -- --nocapture
+          cargo test -p fabushi-android-host-jni tests::background_completion_hidden_turn_owner_is_linked_through_jni_android_json_host -- --exact
+
+      - name: Verify exact-HEAD cloud-agent constants production owners
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'CLOUD_AGENT_ARTIFACTS_DIR, ENV_SETUP_SKILL_ID' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'name == "canvas" || name == ENV_SETUP_SKILL_ID' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'sections.push(render_android_walkthrough_artifacts_system_prompt(None));' source/host/src/runner/android_system_prompt.rs
+          grep -Fq 'build_android_root_system_instructions(' source/host/src/android_json_runtime.rs
+          grep -Fq 'use fabushi_constants::cloud_agent::CLOUD_AGENT_SINGLE_REPO_WORKSPACE_ROOT;' source/box-exec-daemon/src/cloud_agent_production.rs
+          grep -Fq 'snapshot_workspace_root_path: CLOUD_AGENT_SINGLE_REPO_WORKSPACE_ROOT.into(),' source/box-exec-daemon/src/cloud_agent_production.rs
+          grep -Fq 'pub const ENV_SETUP_MANAGED_SKILL_DIRECTORY: &str = "/.cursor/skills-cursor/env-setup/";' source/packages/constants/src/cloud_agent.rs
+          grep -Fq 'pub const ENV_SETUP_MANAGED_SKILL_PATH: &str = "/.cursor/skills-cursor/env-setup/SKILL.md";' source/packages/constants/src/cloud_agent.rs
+
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-cloud-agent-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/cloud-agent.ts)" = "7f42b8ea9c047959f422a63886931403d3da86ff"
+
+          assert_symbol_count() {
+            local symbol="$1"
+            local expected="$2"
+            mapfile -t matches < <(git -C "$DESKTOP_DIR" grep -n -F "$symbol" -- .)
+            printf '%s\n' "${matches[@]}"
+            test "${#matches[@]}" -eq "$expected"
+          }
+          assert_symbol_count ENV_SETUP_SKILL_ID 2
+          assert_symbol_count ENV_SETUP_MANAGED_SKILL_DIRECTORY 2
+          assert_symbol_count ENV_SETUP_MANAGED_SKILL_PATH 1
+          assert_symbol_count CLOUD_AGENT_SINGLE_REPO_WORKSPACE_ROOT 1
+          assert_symbol_count CLOUD_AGENT_ARTIFACTS_DIR 3
+          grep -Fq 'import { CLOUD_AGENT_ARTIFACTS_DIR } from "../../constants/cloud-agent.js";' "$DESKTOP_DIR/source/packages/agent/prompts/shared.ts"
+          grep -Fq 'resolvePromptArtifactsDir(props)' "$DESKTOP_DIR/source/packages/agent/prompts/testing/parent.ts"
+          grep -Fq 'snapshot_workspace_root_path: "/workspace".into(),' "$DESKTOP_DIR/source/host/src/extensions/cloud_agents/cloud_agents_service.rs"
+          grep -Fq 'matches!(skill_name(&item.full_path).as_str(), "canvas" | "env-setup")' "$DESKTOP_DIR/source/host/src/runner/system_prompt_assembly.rs"
+      - name: Test exact-HEAD cloud-agent constants contracts
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants cloud_agent::tests::constants_match_desktop_cloud_agent_contract -- --exact
+          cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::env_setup_skill_uses_canonical_cloud_agent_identity_and_remains_protected -- --exact
+          cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_directory_uses_canonical_cloud_agent_fallback_and_normalizes_override -- --exact
+          cargo test -p fabushi-mahayana-host runner::android_system_prompt::tests::walkthrough_artifact_prompt_is_deduped_and_does_not_grant_capability -- --exact
+
+      - name: Verify exact-HEAD environment-setup constants owner boundary
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'pub mod environment_setup;' source/packages/constants/src/lib.rs
+          grep -Fq 'use fabushi_constants::environment_setup::DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS;' source/host/src/extensions/experiments/extension.rs
+          grep -Fq 'pub const ENVIRONMENT_SETUP_RESUME_CONFIG_NAME: &str = "environment_setup_resume_config";' source/host/src/extensions/experiments/extension.rs
+          grep -Fq 'ENVIRONMENT_SETUP_RESUME_CONFIG_NAME => BTreeMap::from([' source/host/src/extensions/experiments/extension.rs
+          grep -Fq '("max_resume_age_ms".into(), serde_json::json!(DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS))' source/host/src/extensions/experiments/extension.rs
+
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-environment-setup-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/environment-setup.ts)" = "2e6f6942f567476ea398f4f12da07e9490ca6dbb"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/shared/node/experiments/experiment-config.gen.ts)" = "b4ac08fbb9ec2bf6cccc77c1b1245e08d295ff5e"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/shared/node/experiments/cursor-experiments.ts)" = "b9f644e1795bccc5c27aacc5b0e90b5953409de9"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/electron-main/adapters/experiments.ts)" = "4cefd20a838019c34ac1e954ef5d6d86d223e013"
+          assert_source_symbol_count() {
+            local symbol="$1"
+            local expected="$2"
+            mapfile -t matches < <(git -C "$DESKTOP_DIR" grep -n -F "$symbol" -- source)
+            printf '%s\n' "${matches[@]}"
+            test "${#matches[@]}" -eq "$expected"
+          }
+          assert_source_symbol_count DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS 3
+          assert_source_symbol_count MIN_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS 1
+          assert_source_symbol_count MAX_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS 1
+          assert_source_symbol_count environment_setup_resume_config 1
+          grep -Fq 'max_resume_age_ms: DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS' "$DESKTOP_DIR/source/shared/node/experiments/experiment-config.gen.ts"
+          grep -Fq 'for (const name of Object.keys(DYNAMIC_CONFIGS) as DynamicConfigName[]) dynamicConfigs[name] = this.getDynamicConfig(name);' "$DESKTOP_DIR/source/shared/node/experiments/cursor-experiments.ts"
+          grep -Fq 'emitSnapshotChanged: (snapshot) => context.requireMainEdge().emit("experiments-changed", snapshot)' "$DESKTOP_DIR/source/electron-main/adapters/experiments.ts"
+      - name: Test exact-HEAD environment-setup constants contracts
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants environment_setup::tests::resume_age_policy_is_bounded -- --exact
+          cargo test -p fabushi-mahayana-host extensions::experiments::extension::tests::environment_setup_resume_config_preserves_desktop_fallback_without_claiming_executor_enforcement -- --exact
+
+      - name: Verify exact-HEAD git-diff constants declaration owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'pub mod git_diff;' source/packages/constants/src/lib.rs
+          grep -Fq 'pub const GIT_DIFF_APPROXIMATE_MAX_TOKENS: usize = 10_000;' source/packages/constants/src/git_diff.rs
+          grep -Fq 'pub const GIT_DIFF_CHARS_PER_TOKEN: usize = 4;' source/packages/constants/src/git_diff.rs
+          grep -Fq 'GIT_DIFF_APPROXIMATE_MAX_TOKENS * GIT_DIFF_CHARS_PER_TOKEN;' source/packages/constants/src/git_diff.rs
+          ! grep -Fq 'fn truncate_git_diff' source/packages/constants/src/git_diff.rs
+          mapfile -t ANDROID_GIT_DIFF_SYMBOL_FILES < <(git grep -l -E 'GIT_DIFF_APPROXIMATE_MAX_TOKENS|GIT_DIFF_CHARS_PER_TOKEN|MAX_GIT_DIFF_CHAR_LENGTH|GIT_DIFF_INTRO|GIT_DIFF_UNCOMMITTED_INTRO|GIT_DIFF_TRUNCATION_NOTICE' -- source frontend mobile)
+          printf '%s\n' "${ANDROID_GIT_DIFF_SYMBOL_FILES[@]}"
+          test "${#ANDROID_GIT_DIFF_SYMBOL_FILES[@]}" -eq 1
+          test "${ANDROID_GIT_DIFF_SYMBOL_FILES[0]}" = "source/packages/constants/src/git_diff.rs"
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY2'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY2
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-git-diff-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/git-diff.ts)" = "56fc62ac9910f1c56cb968e78d3c50e63ccbcc09"
+          mapfile -t DESKTOP_GIT_DIFF_SYMBOL_FILES < <(git -C "$DESKTOP_DIR" grep -l -E 'GIT_DIFF_APPROXIMATE_MAX_TOKENS|GIT_DIFF_CHARS_PER_TOKEN|MAX_GIT_DIFF_CHAR_LENGTH|GIT_DIFF_INTRO|GIT_DIFF_UNCOMMITTED_INTRO|GIT_DIFF_TRUNCATION_NOTICE' -- .)
+          printf '%s\n' "${DESKTOP_GIT_DIFF_SYMBOL_FILES[@]}"
+          test "${#DESKTOP_GIT_DIFF_SYMBOL_FILES[@]}" -eq 2
+          printf '%s\n' "${DESKTOP_GIT_DIFF_SYMBOL_FILES[@]}" | grep -Fxq 'source/packages/constants/git-diff.ts'
+          printf '%s\n' "${DESKTOP_GIT_DIFF_SYMBOL_FILES[@]}" | grep -Fxq 'source/packages/agent/git-diff-processing.ts'
+          grep -Fq 'buildGitDiffUncommittedUserContent' "$DESKTOP_DIR/source/packages/agent/context-processing-non-media-assembly.ts"
+          grep -Fq 'selectedContext.gitDiff' "$DESKTOP_DIR/source/packages/agent/context-processing-non-media-assembly.ts"
+          grep -Fq 'buildGitDiffUserContent' "$DESKTOP_DIR/source/packages/agent/context-processing-non-media-assembly.ts"
+          grep -Fq 'selectedContext.gitDiffFromBranchToMain' "$DESKTOP_DIR/source/packages/agent/context-processing-non-media-assembly.ts"
+
+      - name: Test exact-HEAD git-diff constants contract
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants git_diff::tests::constants_match_desktop_git_diff_contract -- --exact
+
+
+      - name: Verify exact-HEAD agent error recovery owner
+        run: |
+          set -euo pipefail
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-agent-error-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent-client/errors.ts)" = "775c90dfd34f60b6efb10dab40247482af068a8a"
+          grep -Fq 'Some("login".into())' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq 'Some("upgrade".into())' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq 'Some("payment".into())' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq 'Some("config".into())' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq '{"kind":"recovery-route","label":label,"route":action}' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq 'route !in setOf("login", "upgrade", "payment", "config")' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellNotificationHost.kt
+          grep -Fq '"login" -> model.beginBrowserLogin()' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt
+          grep -Fq '"upgrade", "payment" -> {' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt
+          grep -Fq 'model.refreshAccountUsageSummary()' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt
+          grep -Fq '"config" -> showSettings = true' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt
+
+      - name: Test exact-HEAD agent error recovery owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host --test agent_run_error_contract
+          (
+            cd mobile/android
+            ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.RootShellNotificationHostTest
+          )
+          python -m unittest tests.test_root_shell_notification_host_wiring
+          python -m unittest tests.test_android_port_docs_generator.AndroidPortDocsGeneratorTest.test_agent_run_error_mapping_uses_existing_rust_owner_and_strict_native_recovery_routes
+
+      - name: Verify exact-HEAD git-repo-utils declaration owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'pub mod repo_label;' source/packages/constants/src/lib.rs
+          grep -Fq 'pub fn extract_repo_name_from_git_url' source/packages/constants/src/repo_label.rs
+          mapfile -t ANDROID_GIT_REPO_UTILS_OWNER_FILES < <(git grep -l -F 'extract_repo_name_from_git_url' -- source frontend mobile)
+          printf '%s\n' "${ANDROID_GIT_REPO_UTILS_OWNER_FILES[@]}"
+          test "${#ANDROID_GIT_REPO_UTILS_OWNER_FILES[@]}" -eq 1
+          test "${ANDROID_GIT_REPO_UTILS_OWNER_FILES[0]}" = "source/packages/constants/src/repo_label.rs"
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY2'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY2
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-git-repo-utils-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent-analytics/commit-scoring/git-repo-utils.ts)" = "6fb67136c110e5c36d7d1c25bd92220c950f717e"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent/prompts/user-info-cloud-sections.ts)" = "579ffbf56f9d2359b355e5655135a94a71454474"
+          mapfile -t DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES < <(git -C "$DESKTOP_DIR" grep -l -F 'extractRepoNameFromGitUrl' -- source)
+          printf '%s\n' "${DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES[@]}"
+          test "${#DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES[@]}" -eq 2
+          printf '%s\n' "${DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES[@]}" | grep -Fxq 'source/packages/agent-analytics/commit-scoring/git-repo-utils.ts'
+          printf '%s\n' "${DESKTOP_GIT_REPO_UTILS_SYMBOL_FILES[@]}" | grep -Fxq 'source/packages/agent/prompts/user-info-cloud-sections.ts'
+          if git -C "$DESKTOP_DIR" grep -n -F 'git-repo-utils' -- source; then
+            echo "git-repo-utils unexpectedly has a source import/caller" >&2
+            exit 1
+          fi
+          grep -Fq 'function repoLabelForPrompt(repo: CloudTaskGitRepo)' "$DESKTOP_DIR/source/packages/agent/prompts/user-info-cloud-sections.ts"
+          grep -Fq 'return extractRepoNameFromGitUrl(repo.remoteUrl)' "$DESKTOP_DIR/source/packages/agent/prompts/user-info-cloud-sections.ts"
+
+      - name: Test exact-HEAD git-repo-utils URL matrix
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants repo_label::tests::desktop_git_repo_utils_matrix_matches_frozen_helper -- --exact
+
+      - name: Verify exact-HEAD Box Store chrome-profile archive owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'pub chrome_profile_root: PathBuf' source/box-exec-daemon/src/box_store_backend.rs
+          grep -Fq '("chrome_profile", self.config.chrome_profile_root.as_path())' source/box-exec-daemon/src/box_store_backend.rs
+          grep -Fq '"*/Service Worker/CacheStorage/"' source/box-exec-daemon/src/box_store_backend.rs
+          grep -Fq 'const CHROME_PROFILE: &str = "home/box/chrome-profile/";' source/box-exec-daemon/src/box_store_backend.rs
+      - name: Test exact-HEAD Box Store Desktop restore and handoff parity
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::snapshot_and_hydrate_keep_profile_state_without_cache_and_do_not_filter_chrome_session -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::frozen_destination_routes_desktop_chrome_profile_to_dedicated_root -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::snapshot_applies_desktop_workspace_ignore_and_negation_semantics -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_backend::tests::vacuum_preserves_desktop_retired_pack_metadata -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::retired_v1_metadata_does_not_expand_the_active_restore_index -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_member_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_object_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_pack_restore::tests::rejects_pack_member_size_sum_above_desktop_restore_threshold -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_hydration::tests::hydration_marker_is_atomic_and_removable -- --exact
+          cargo test -p fabushi-android-box-exec-daemon box_store_hydration::tests::hydration_handoff_path_fences_temporary_marker_variants -- --exact
+
+      - name: Verify exact-HEAD constants composer production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::composer::text_size_allowed' source/host/src/composer_draft.rs
+          grep -Fq 'validate_prompt(prompt)?;' source/host/src/composer_draft.rs
+      - name: Test exact-HEAD constants composer production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants composer::tests::text_limit_is_inclusive -- --exact
+          cargo test -p fabushi-mahayana-host composer_draft::tests::prompt_size_limit_matches_desktop_composer_contract -- --exact
+      - name: Verify exact-HEAD constants structured log production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_constants::structured_log::STRUCTURED_LOG_REPLAY_MAX_AGE_MS' source/host/src/android_structured_log_spill.rs
+          grep -Fq 'fabushi_constants::structured_log::structured_log_timestamp_allowed' source/host/src/android_structured_log_spill.rs
+          grep -Fq 'self.schedule_structured_log_ship();' source/host/src/android_json_runtime.rs
+          grep -Fq 'let receipt = backend.submit_structured_logs(&batch);' source/host/src/android_json_runtime.rs
+          grep -Fq 'pub fn submit_structured_logs(' source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs
+      - name: Test exact-HEAD constants structured log replay and Android hardening
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants structured_log::tests::replay_window_rejects_old_and_far_future_entries -- --exact
+          cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::replay_age_matches_desktop_structured_log_contract -- --exact
+          cargo test -p fabushi-mahayana-host android_structured_log_spill::tests::spill_rejects_far_future_records_under_desktop_skew_contract -- --exact
+
+      - name: Verify exact-HEAD auto-spillover usage UI production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'pub const AUTO_SPILLOVER_UI_DEFAULTS: AutoSpilloverUiDefaults = AutoSpilloverUiDefaults {' source/packages/constants/src/auto_spillover_ui.rs
+          grep -Fq 'auto_title: "Cursor Models",' source/packages/constants/src/auto_spillover_ui.rs
+          grep -Fq 'api_title: "Other Models",' source/packages/constants/src/auto_spillover_ui.rs
+          grep -Fq 'pub mod auto_spillover_ui;' source/packages/constants/src/lib.rs
+          mapfile -t ANDROID_AUTO_SPILLOVER_FILES < <(git grep -l -F 'AUTO_SPILLOVER_UI_DEFAULTS' -- source frontend mobile/android)
+          printf '%s\n' "${ANDROID_AUTO_SPILLOVER_FILES[@]}"
+          test "${#ANDROID_AUTO_SPILLOVER_FILES[@]}" -eq 1
+          test "${ANDROID_AUTO_SPILLOVER_FILES[0]}" = "source/packages/constants/src/auto_spillover_ui.rs"
+          grep -Fq 'pub fn resolve_sand_usage_summary(&self) -> Result<Value, String> {' source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs
+          grep -Fq 'DASHBOARD_GET_CURRENT_PERIOD_USAGE_PATH' source/host/src/mcp_auth/dashboard_mcp_auth_backend.rs
+          grep -Fq '"feature.account.usageSummary" => self.account_usage_summary(),' source/host/src/android_json_runtime.rs
+          grep -Fq 'fun accountUsageSummary(): AndroidAccountUsageSummary' source/android-preload/src/main/kotlin/com/ombhrum/fabushi/androidpreload/runtime/AndroidCoordinatorPort.kt
+          grep -Fq 'host.request("feature.account.usageSummary")' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/coordinator/AndroidCoordinatorRuntime.kt
+          grep -Fq 'accountUsageSummary: AndroidAccountUsageSummary?' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          grep -Fq '"Usage: $percent"' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          grep -Fq '"On-demand: ${onDemand.usedCents} / ${onDemand.limitCents} cents"' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          ! grep -Fq 'Cursor Models' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          ! grep -Fq 'Other Models' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          ! grep -Fq 'auto_spillover_ui' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/FabushiSettingsSurface.kt
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-auto-spillover-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/constants/auto-spillover-ui.ts)" = "16af77656b1b1a01b0dba7541737c0ef233fe760"
+          mapfile -t AUTO_SPILLOVER_MATCHES < <(git -C "$DESKTOP_DIR" grep -n -F 'AUTO_SPILLOVER_UI_DEFAULTS' -- .)
+          printf '%s\n' "${AUTO_SPILLOVER_MATCHES[@]}"
+          test "${#AUTO_SPILLOVER_MATCHES[@]}" -eq 3
+          test "$(printf '%s\n' "${AUTO_SPILLOVER_MATCHES[@]}" | grep -c '^source/packages/constants/auto-spillover-ui.ts:')" -eq 1
+          test "$(printf '%s\n' "${AUTO_SPILLOVER_MATCHES[@]}" | grep -c '^source/shared/node/experiments/experiment-config.gen.ts:')" -eq 2
+          grep -Fq 'const AUTO_SPILLOVER_UI_DEFAULTS = {' "$DESKTOP_DIR/source/shared/node/experiments/experiment-config.gen.ts"
+          grep -Fq 'auto_spillover_ui_config: {' "$DESKTOP_DIR/source/shared/node/experiments/experiment-config.gen.ts"
+          grep -Fq 'fallbackValues: AUTO_SPILLOVER_UI_DEFAULTS' "$DESKTOP_DIR/source/shared/node/experiments/experiment-config.gen.ts"
+          mapfile -t AUTO_SPILLOVER_CONFIG_FILES < <(git -C "$DESKTOP_DIR" grep -l -F 'auto_spillover_ui_config' -- .)
+          printf '%s\n' "${AUTO_SPILLOVER_CONFIG_FILES[@]}"
+          test "${#AUTO_SPILLOVER_CONFIG_FILES[@]}" -eq 1
+          test "${AUTO_SPILLOVER_CONFIG_FILES[0]}" = "source/shared/node/experiments/experiment-config.gen.ts"
+          grep -Fq 'import { DYNAMIC_CONFIGS, EXPERIMENTS, FLAGS' "$DESKTOP_DIR/source/shared/node/experiments/cursor-experiments.ts"
+          grep -Fq 'getExperiment(name: ExperimentName)' "$DESKTOP_DIR/source/shared/node/experiments/cursor-experiments.ts"
+          grep -Fq 'for (const name of Object.keys(EXPERIMENTS) as ExperimentName[]) experiments[name] = this.getExperiment(name);' "$DESKTOP_DIR/source/shared/node/experiments/cursor-experiments.ts"
+          grep -Fq 'createExperimentService: (options) => new SandExperimentService(options)' "$DESKTOP_DIR/source/electron-main/adapters/experiments.ts"
+          grep -Fq 'emitSnapshotChanged: (snapshot) => context.requireMainEdge().emit("experiments-changed", snapshot)' "$DESKTOP_DIR/source/electron-main/adapters/experiments.ts"
+          grep -Fq 'export async function fetchSandUsageSummary' "$DESKTOP_DIR/source/electron-main/account/cursor-profile.ts"
+          grep -Fq 'bridge.cursorAccount.getUsageSummary()' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop.ts"
+          grep -Fq '<UsageSettingsPanel' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop-surface.tsx"
+          grep -Fq 'title: summary.isSandTrial ? "Trial usage" : "Weekly usage",' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop.ts"
+          grep -Fq 'title: "On-demand usage",' "$DESKTOP_DIR/frontend/src/recovered/features/settings/overlay/desktop.ts"
+      - name: Test exact-HEAD auto-spillover usage UI replacement
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants auto_spillover_ui::tests::labels_are_nonempty_and_distinct -- --exact
+          cargo test -p fabushi-mahayana-host mcp_auth::dashboard_mcp_auth_backend::tests::usage_paths_and_decoder_match_desktop_dashboard_contract -- --exact
+          cargo test -p fabushi-mahayana-host mcp_auth::dashboard_mcp_auth_backend::tests::usage_decoder_preserves_enterprise_and_safe_upgrade_cta_contract -- --exact
+          cargo test -p fabushi-mahayana-host mcp_auth::dashboard_mcp_auth_backend::tests::usage_decoder_rejects_unsafe_upgrade_cta_variants -- --exact
+          (
+            cd mobile/android
+            ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.AccountUsageReconciliationTest
+          )
+      - name: Verify exact-HEAD official-device registration owner
+        run: |
+          set -euo pipefail
+          grep -Fq 'internal val OfficialToolNames = FabushiAppAgentSurface.ToolNames' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'private val ReadOnlyOfficialToolNames = setOf(' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq '.put("toolSchemaVersion", "fabushi-app-agent-surface-v1")' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'officialPreflightAllowed(toolName, message)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq '.put("capabilities", JSONArray(OfficialToolNames))' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'require(toolName in OfficialToolNames)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'parseAgentSession(coordinator.authDeviceAgentSession())' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'isReadOnlyOfficialPreflight(message)' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'account-changed-during-device-call' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+          grep -Fq 'officialHeartbeatMessage(System.currentTimeMillis())' source/android-main/src/main/kotlin/com/ombhrum/fabushi/androidmain/remote/FabushiRemoteDeviceGateway.kt
+      - name: Test exact-HEAD official-device registration owner
+        working-directory: mobile/android
+        run: |
+          set -euo pipefail
+          ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.FabushiAppAgentSurfaceTest --tests com.ombhrum.fabushi.RemoteCommandJournalTest
+
+      - name: Verify exact-HEAD Remote Computer Desktop action authority
+        run: |
+          set -euo pipefail
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/fabushi-desktop-remote-computer"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent-exec/computer-use.ts)" = "3f2c0e015b0d0e58294a541065f5445050f64609"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/proto/generated/agent/v1/computer_use_tool_pb.ts)" = "f74de4f1e7808411112121d0d3887c325f4ee2eb"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/host/src/remote_computer_target.rs)" = "602493decac443fbefdf3e9af3ccda2caad2012d"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/mahayana/mahayana-rs/mahayana-computer/src/lib.rs)" = "f85efcd381bbf3000b43f773c1b63fa56a50e0e5"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/mahayana/mahayana-rs/mahayana-computer/Cargo.toml)" = "6c655664d3cab8620e72f039dcb0b2597b96838a"
+          grep -Fq 'pub struct NativeDesktopRemoteExecutor;' "$DESKTOP_DIR/source/host/src/remote_computer_target.rs"
+          grep -Fq 'mahayana_computer::execute_with_lease_fenced(' "$DESKTOP_DIR/source/host/src/remote_computer_target.rs"
+          grep -Fq 'use enigo::{Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};' "$DESKTOP_DIR/source/mahayana/mahayana-rs/mahayana-computer/src/lib.rs"
+          grep -Fq 'use xcap::Monitor;' "$DESKTOP_DIR/source/mahayana/mahayana-rs/mahayana-computer/src/lib.rs"
+          for action in mouseMove click mouseDown mouseUp drag scroll type key wait screenshot cursorPosition; do
+            grep -Fq "| \"$action\"" "$DESKTOP_DIR/source/packages/agent-exec/computer-use.ts"
+          done
+          grep -Fq 'export const COMPUTER_USE_SCREENSHOT_SETTLE_DELAY_MS = 2_000;' "$DESKTOP_DIR/source/packages/agent-exec/computer-use.ts"
+          grep -Fq '"mouseMove" | "move" => Some("mouseMove")' source/host/src/runner/remote_routed_tools.rs
+          for counter in mouse_move click mouse_down mouse_up drag scroll type key wait screenshot cursor_position; do
+            grep -Fq "(\"$counter\", 0usize)" source/host/src/runner/remote_routed_tools.rs
+          done
+      - name: Test exact-HEAD Remote Computer 11-action protocol mapping
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host runner::remote_routed_tools::tests::remote_computer_validation_matches_desktop_action_bounds -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::wire_decodes_and_executes_all_eleven_desktop_actions_in_order -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::screenshot_settles_only_when_a_following_action_exists -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_backend::tests::reconciliation_and_cancel_never_blindly_replay_actions -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_production::tests::production_executor_maps_all_eleven_actions_to_native_io_and_returns_observation_fields -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_production::tests::production_executor_routes_screenshot_settle_to_native_wait_without_replaying_actions -- --exact
+          cargo test -p fabushi-android-box-exec-daemon remote_computer_production::tests::production_executor_cancel_and_reconcile_fail_safe_without_native_replay -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::cancellation_before_dispatch_is_terminal_but_inflight_cancel_requires_reconciliation -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::disconnect_never_blind_replays_and_reconnect_requires_reconciliation -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::timeout_after_dispatch_is_outcome_unknown_and_reconciles -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::stale_account_callback_and_revoked_permission_are_rejected -- --exact
+          cargo test -p fabushi-mahayana-host remote_execution::tests::account_switch_cancels_unsent_and_fences_sent_work -- --exact
+          cargo test -p fabushi-mahayana-host host_runner_composition::tests::remote_operation_identity_is_fenced_by_device -- --exact
+          cargo test -p fabushi-mahayana-host host_runner_composition::tests::accepted_remote_execution_persists_acked_and_reconciles_without_replay -- --exact
+          cargo test -p fabushi-mahayana-host host_runner_composition::tests::outcome_unknown_never_replays_and_reconciliation_settles_original_operation -- --exact
+          cargo test -p fabushi-android-box-exec-daemon transport::tests::network_interruption_after_dispatch_is_outcome_unknown_without_blind_replay -- --exact
+          cargo test -p fabushi-android-box-exec-daemon transport::tests::reconciliation_retries_only_the_idempotent_query_until_terminal -- --exact
+          cargo test -p fabushi-android-box-exec-daemon server::tests::process_death_turns_inflight_execution_into_outcome_unknown_without_replay -- --exact
+          cargo test -p fabushi-android-box-exec-daemon server::tests::cancellation_is_identity_bound_and_terminal_only_after_backend_confirmation -- --exact
+          grep -Fq 'pub const REMOTE_COMPUTER_SCREENSHOT_SETTLE_DELAY_MS: u64 = 2_000;' source/box-exec-daemon/src/remote_computer_backend.rs
+          grep -Fq 'pub mod remote_computer_backend;' source/box-exec-daemon/src/lib.rs
+          grep -Fq 'pub mod remote_computer_production;' source/box-exec-daemon/src/lib.rs
+          grep -Fq 'pub fn open_remote_computer_execution_service<A, E>(' source/box-exec-daemon/src/deployment_contract.rs
+          grep -Fq 'pub fn open_enrolled_remote_computer_execution_service(' source/box-exec-daemon/src/deployment_contract.rs
+          grep -Fq 'ProductionRemoteComputerExecutor::new()' source/box-exec-daemon/src/deployment_contract.rs
+          grep -Fq 'enigo = { version = "0.6.1", features = ["wayland"] }' source/box-exec-daemon/Cargo.toml
+          grep -Fq 'xcap = "0.9.8"' source/box-exec-daemon/Cargo.toml
+
+      - name: Verify exact-HEAD automation schedule production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          cmp source/host/src/automation_schedule.rs source/host/src/automations/automation_schedule.rs
+          grep -Fq 'use crate::automation_schedule::{compute_next_run_at, normalize_schedule};' source/host/src/automation_runtime.rs
+          grep -Fq 'compute_next_run_at(&spec.schedule, anchor as f64, fallback_time_zone)' source/host/src/automation_runtime.rs
+          grep -Fq 'use super::automation_schedule::{compute_next_run_at,normalize_schedule};' source/host/src/automations/automation_store.rs
+      - name: Test exact-HEAD automation schedule production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host --test automation_schedule_contract frozen_next_run_contract_supports_every_alias_timezone_and_explicit_cron_timezone -- --exact
+          cargo test -p fabushi-mahayana-host automation_runtime::tests::schedule_is_normalized_and_next_run_is_host_owned -- --exact
+
+      - name: Verify exact-HEAD MCP tool timeout production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'fabushi_android_mcp_core::config::mcp_tool_call_timeout::DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS' source/host/src/runner/mcp_meta_routed_tools.rs
+          grep -Fq 'pub const LONG_TOOL_TIMEOUT_MS: u64 = DEFAULT_MCP_TOOL_CALL_MAX_TOTAL_TIMEOUT_MS;' source/host/src/runner/mcp_meta_routed_tools.rs
+      - name: Test exact-HEAD MCP tool timeout production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-mcp-core config::mcp_tool_call_timeout::tests::desktop_default_and_legacy_timeouts_are_one_hour -- --exact
+          cargo test -p fabushi-mahayana-host runner::mcp_meta_routed_tools::tests::long_timeout_tier_uses_desktop_mcp_default_contract -- --exact
+
+      - name: Verify exact-HEAD client-side tool v2 relay production owner
+        run: |
+          set -euo pipefail
+          test -s evidence/agent-kv-jni/arm64-v8a/libmahayana_app_host.so
+          grep -Fq 'use crate::client_side_tool_v2_relay::{ClientSideToolV2Relay, RendererToolEvent};' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'client_side_tool_v2: ClientSideToolV2Relay' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn accept_client_side_tool_v2_wire' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn replay_client_side_tool_v2' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq 'pub fn retire_client_side_tool_v2_for_account_switch' source/mahayana-agent-coordinator/src/main.rs
+          grep -Fq '"coordinator.clientSideToolV2.accept"' source/android-host-jni/src/lib.rs
+          grep -Fq 'self.coordinator.accept_client_side_tool_v2_wire(event.clone())' source/android-host-jni/src/lib.rs
+          grep -Fq '"coordinator.clientSideToolV2.replay"' source/android-host-jni/src/lib.rs
+          grep -Fq 'self.coordinator.replay_client_side_tool_v2()' source/android-host-jni/src/lib.rs
+      - name: Test exact-HEAD client-side tool v2 relay production owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::malformed_wire_version_account_base64_type_and_identity_fail_closed -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::duplicate_out_of_order_inconsistent_result_and_stale_epoch_are_rejected -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator client_side_tool_v2_relay::tests::reset_account_switch_and_serialized_reopen_replay_are_fenced -- --exact
+          cargo test -p fabushi-mahayana-agent-coordinator main::tests::client_side_tool_v2_replay_survives_process_reopen_and_account_retirement_is_durable -- --exact
+          cargo test -p fabushi-android-host-jni tests::client_side_tool_v2_wire_ingress_is_reachable_only_through_rust_coordinator -- --exact
+
+  parity-ledger:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Validate complete file-level parity ledger
+        run: python scripts/check_grok_android_parity.py
+      - name: Test architecture checker
+        run: python -m unittest discover -s tests -p 'test_*.py'
+
+  rust-runtime-foundation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native Remote Computer Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
+      - name: Test Android-owned Coordinator Host Runner foundation
+        run: cargo test --workspace --all-targets
+
+  existing-android-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Run existing Android unit tests
+        working-directory: mobile/android
+        run: ./gradlew testCiAcceptanceUnitTest

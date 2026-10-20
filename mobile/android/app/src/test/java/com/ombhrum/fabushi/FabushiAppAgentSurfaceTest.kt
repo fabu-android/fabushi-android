@@ -4,9 +4,135 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import kotlinx.coroutines.test.runTest
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Test
 
 class FabushiAppAgentSurfaceTest {
+    @Test
+    fun officialDeviceGatewayMatchesDesktopSixToolRegistrationBoundary() {
+        assertEquals(
+            FabushiAppAgentSurface.ToolNames,
+            FabushiRemoteDeviceGateway.OfficialToolNames,
+        )
+        assertTrue(FabushiRemoteDeviceGateway.OfficialToolNames.contains(FabushiAppAgentSurface.ActionTool))
+        assertTrue(FabushiRemoteDeviceGateway.OfficialToolNames.contains(FabushiAppAgentSurface.SnapshotTool))
+    }
+
+    @Test
+    fun officialDeviceGatewayFencesExpiryIdentityAndReadOnlyPreflight() {
+        val now = 1_000_000L
+        val token = "fabushi-account-token-".padEnd(48, 'x')
+        assertTrue(
+            FabushiRemoteDeviceGateway.isUsableOfficialSession(
+                token,
+                "device-a",
+                "browser:a",
+                now + 60_000L,
+                now,
+            ),
+        )
+        assertFalse(
+            FabushiRemoteDeviceGateway.isUsableOfficialSession(
+                token,
+                "device-a",
+                "browser:a",
+                now + 30_000L,
+                now,
+            ),
+        )
+        assertTrue(
+            FabushiRemoteDeviceGateway.isSameOfficialSession(
+                "device-a",
+                "browser:a",
+                token,
+                "device-a",
+                "browser:a",
+                token,
+            ),
+        )
+        assertFalse(
+            FabushiRemoteDeviceGateway.isSameOfficialSession(
+                "device-a",
+                "browser:a",
+                token,
+                "device-b",
+                "browser:b",
+                token,
+            ),
+        )
+
+        val readOnly = JSONObject().put(
+            "diskPreflight",
+            JSONObject()
+                .put("impact", "none")
+                .put("targets", JSONArray()),
+        )
+        assertTrue(FabushiRemoteDeviceGateway.isReadOnlyOfficialPreflight(readOnly))
+        val writeShaped = JSONObject().put(
+            "diskPreflight",
+            JSONObject()
+                .put("impact", "writes")
+                .put("targets", JSONArray().put("/tmp/write")),
+        )
+        assertFalse(FabushiRemoteDeviceGateway.isReadOnlyOfficialPreflight(writeShaped))
+        assertFalse(FabushiRemoteDeviceGateway.isReadOnlyOfficialPreflight(JSONObject()))
+        assertTrue(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.SnapshotTool,
+                JSONObject(),
+            ),
+        )
+        assertTrue(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.SnapshotTool,
+                readOnly,
+            ),
+        )
+        assertFalse(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.SnapshotTool,
+                writeShaped,
+            ),
+        )
+        assertFalse(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.ActionTool,
+                JSONObject(),
+            ),
+        )
+        assertTrue(
+            FabushiRemoteDeviceGateway.officialPreflightAllowed(
+                FabushiAppAgentSurface.ActionTool,
+                readOnly,
+            ),
+        )
+
+        assertEquals(
+            "button-a",
+            FabushiRemoteDeviceGateway.officialArguments(
+                JSONObject().put("argumentsJson", """{"agentId":"button-a"}"""),
+            ).getString("agentId"),
+        )
+        assertEquals(
+            "button-b",
+            FabushiRemoteDeviceGateway.officialArguments(
+                JSONObject().put("arguments", JSONObject().put("agentId", "button-b")),
+            ).getString("agentId"),
+        )
+        assertFalse(
+            runCatching {
+                FabushiRemoteDeviceGateway.officialArguments(
+                    JSONObject().put("argumentsJson", "{invalid-json}"),
+                )
+            }.isSuccess,
+        )
+
+        val heartbeat = JSONObject(FabushiRemoteDeviceGateway.officialHeartbeatMessage(now))
+        assertEquals("heartbeat", heartbeat.getString("type"))
+        assertEquals(now, heartbeat.getLong("at"))
+    }
+
     @Test
     fun semanticSurfaceRejectsStaleAndSensitiveWrites() {
         val surface = FabushiAppAgentSurface()

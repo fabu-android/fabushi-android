@@ -1,0 +1,779 @@
+use serde_json::Value;
+use fabushi_constants::environment_setup::DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS;
+use std::collections::BTreeMap;
+use super::model_selection::{configured_model_from_config, read_sand_model_experiment_process_override, SandAgentModelSelection, SandModelExperimentArm, SandModelExperimentState};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, Weak};
+use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
+
+pub const SAND_MODEL_EXPERIMENT_NAME: &str = "sand_model_selection";
+pub const ENVIRONMENT_SETUP_RESUME_CONFIG_NAME: &str = "environment_setup_resume_config";
+pub const SAND_DEFAULT_MODEL_CONFIG_NAME: &str = "sand_default_model";
+pub const SAND_AUTOMATIONS_MODEL_CONFIG_NAME: &str = "sand_automations_model";
+pub const SAND_COMPUTER_USE_CONFIG_NAME: &str = "sand_computer_use_playwright_config";
+pub const SAND_BROWSER_USE_CONFIG_NAME: &str = "sand_browser_use_model";
+pub const SAND_PRODUCT_FEATURE_GATE_DEFAULTS_ENV: &str = "SAND_PRODUCT_FEATURE_GATE_DEFAULTS";
+pub const STATSIG_CLIENT_KEY: &str =
+    "client-Bm4HJ0aDjXHQVsoACMREyLNxm5p6zzuzhO50MgtoT5D";
+pub const STATSIG_LOG_EVENT_PROXY_URL: &str = "https://api3.cursor.sh/tev1/v1";
+pub const STATSIG_JS_SDK_VERSION: &str = "3.31.0";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HostExperimentsOptions {
+    pub is_dev_build: bool,
+    pub env_gate_overrides: Option<String>,
+}
+
+impl HostExperimentsOptions {
+    pub fn from_process_env() -> Self {
+        let is_dev_build = std::env::var("SAND_PACKAGED").as_deref() != Ok("1")
+            || std::env::var("SAND_HOST_DEV_ERROR_DETAIL").as_deref() == Ok("1");
+        Self {
+            is_dev_build,
+            env_gate_overrides: std::env::var("SAND_FEATURE_GATE_OVERRIDES")
+                .ok()
+                .filter(|value| !value.trim().is_empty()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct StatsigExperimentAssignment {
+    value: BTreeMap<String, Value>,
+    group_name: Option<String>,
+    rule_id: Option<String>,
+    secondary_exposures: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct ExperimentsState {
+    options: HostExperimentsOptions,
+    settings_overrides: BTreeMap<String, bool>,
+    network_feature_gates: BTreeMap<String, bool>,
+    network_dynamic_configs: BTreeMap<String, BTreeMap<String, Value>>,
+    network_experiments: BTreeMap<String, StatsigExperimentAssignment>,
+    statsig_user: Option<Value>,
+    hydrated_user_id: Option<String>,
+    authenticated_bootstrap: bool,
+    model_experiment_exposure_logged: bool,
+    refresh_generation: u64,
+}
+
+/// Canonical Android Host owner for experiment/gate state.
+///
+/// Network transport stays outside this state owner. Authenticated Statsig refreshes must obtain
+/// a generation from this owner and commit through the generation-fenced hydrate path so logout,
+/// account switch, and overlapping refreshes cannot publish stale account-scoped truth.
+type GateListener = Arc<dyn Fn(bool) + Send + Sync>;
+pub type StopGateSubscription = Box<dyn Fn() + Send + Sync + 'static>;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExperimentDiagnostic {
+    pub kind: String,
+    pub stage: Option<String>,
+    pub reason: Option<String>,
+    pub error_class: Option<String>,
+    pub gates_on_count: Option<i64>,
+    pub authenticated: Option<bool>,
+}
+
+pub struct HostExperimentsExtension {
+    state: Mutex<ExperimentsState>,
+    gate_listeners: Arc<Mutex<BTreeMap<String, BTreeMap<u64, GateListener>>>>,
+    next_listener_id: AtomicU64,
+}
+
+impl Default for HostExperimentsExtension {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HostExperimentsExtension {
+    pub fn new() -> Self {
+        Self::with_options(HostExperimentsOptions::from_process_env())
+    }
+
+    pub fn with_options(options: HostExperimentsOptions) -> Self {
+        Self {
+            state: Mutex::new(ExperimentsState {
+                options,
+                ..ExperimentsState::default()
+            }),
+            gate_listeners: Arc::new(Mutex::new(BTreeMap::new())),
+            next_listener_id: AtomicU64::new(0),
+        }
+    }
+
+    pub fn check_feature_gate(&self, name: &str) -> bool {
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(value) = state.settings_overrides.get(name).copied() {
+            return value;
+        }
+        if state.options.is_dev_build {
+            if let Some(value) = env_gate_override(name, state.options.env_gate_overrides.as_deref()) {
+                return value;
+            }
+        }
+        if state.authenticated_bootstrap {
+            if let Some(value) = state.network_feature_gates.get(name).copied() {
+                return value;
+            }
+        }
+        if let Some(value) = std::env::var(SAND_PRODUCT_FEATURE_GATE_DEFAULTS_ENV)
+            .ok()
+            .as_deref()
+            .and_then(|raw| env_gate_override(name, Some(raw)))
+        {
+            return value;
+        }
+        bundled_feature_gate_default(name)
+    }
+
+    pub fn subscribe_gate(
+        &self,
+        name: impl Into<String>,
+        listener: GateListener,
+    ) -> StopGateSubscription {
+        let name = name.into();
+        let id = self.next_listener_id.fetch_add(1, Ordering::AcqRel).saturating_add(1);
+        self.gate_listeners
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(name.clone())
+            .or_default()
+            .insert(id, listener);
+        let listeners: Weak<Mutex<BTreeMap<String, BTreeMap<u64, GateListener>>>> =
+            Arc::downgrade(&self.gate_listeners);
+        Box::new(move || {
+            let Some(listeners) = listeners.upgrade() else {
+                return;
+            };
+            let mut listeners = listeners
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if let Some(by_id) = listeners.get_mut(&name) {
+                by_id.remove(&id);
+                if by_id.is_empty() {
+                    listeners.remove(&name);
+                }
+            }
+        })
+    }
+
+    fn notify_gate_listeners(&self) {
+        let names = self
+            .gate_listeners
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for name in names {
+            let value = self.check_feature_gate(&name);
+            let listeners = self
+                .gate_listeners
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .get(&name)
+                .map(|listeners| listeners.values().cloned().collect::<Vec<_>>())
+                .unwrap_or_default();
+            for listener in listeners {
+                listener(value);
+            }
+        }
+    }
+
+    pub fn dynamic_config(&self, name: &str) -> BTreeMap<String, Value> {
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.authenticated_bootstrap {
+            if let Some(config) = state.network_dynamic_configs.get(name) {
+                return config.clone();
+            }
+        }
+        bundled_dynamic_config_default(name)
+    }
+
+    pub fn set_settings_override(&self, name: impl Into<String>, value: Option<bool>) {
+        let name = name.into();
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        match value {
+            Some(value) => {
+                state.settings_overrides.insert(name, value);
+            }
+            None => {
+                state.settings_overrides.remove(&name);
+            }
+        }
+        drop(state);
+        self.notify_gate_listeners();
+    }
+
+    pub fn begin_authenticated_refresh(&self) -> u64 {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.refresh_generation = state.refresh_generation.saturating_add(1);
+        state.refresh_generation
+    }
+
+    /// Atomically accepts a bootstrap only when it carries a non-empty authenticated user id.
+    /// Invalid/anonymous payloads leave the previous canonical state untouched.
+    pub fn hydrate_authenticated_statsig(&self, config: &str) -> Result<(), String> {
+        let generation = self.begin_authenticated_refresh();
+        self.hydrate_authenticated_statsig_if_current(generation, config)
+            .map(|accepted| {
+                debug_assert!(accepted, "fresh synchronous experiment hydrate must be accepted");
+            })
+    }
+
+    /// Commit an authenticated refresh only if no account transition or newer refresh superseded
+    /// it. Parsing happens before the state lock, but generation comparison and mutation happen
+    /// under the same lock used by clear_account_scope(), eliminating a stale-result TOCTOU race.
+    pub fn hydrate_authenticated_statsig_if_current(
+        &self,
+        generation: u64,
+        config: &str,
+    ) -> Result<bool, String> {
+        let parsed = parse_statsig_bootstrap(config)?;
+        let user_id = parsed
+            .hydrated_user_id
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "Statsig bootstrap has no authenticated user id".to_string())?;
+        let mut state = self.state.lock().map_err(|_| "experiments state lock poisoned".to_string())?;
+        if state.refresh_generation != generation {
+            return Ok(false);
+        }
+        state.network_feature_gates = parsed.feature_gates;
+        state.network_dynamic_configs = parsed.dynamic_configs;
+        state.network_experiments = parsed.experiments;
+        state.statsig_user = parsed.statsig_user;
+        state.hydrated_user_id = Some(user_id);
+        state.authenticated_bootstrap = true;
+        state.model_experiment_exposure_logged = false;
+        drop(state);
+        self.notify_gate_listeners();
+        Ok(true)
+    }
+
+    pub fn sand_model_experiment_state(&self) -> Option<SandModelExperimentState> {
+        if let Some(override_state) = read_sand_model_experiment_process_override() { return Some(override_state); }
+        let state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !state.authenticated_bootstrap || state.hydrated_user_id.as_deref().is_none_or(str::is_empty) { return None; }
+        let assignment = state.network_experiments.get(SAND_MODEL_EXPERIMENT_NAME)?;
+        assignment.group_name.as_deref()?;
+        let enabled = assignment.value.get("enabled").and_then(Value::as_bool).unwrap_or(false);
+        Some(SandModelExperimentState { active: true, arm: if enabled { SandModelExperimentArm::Treatment } else { SandModelExperimentArm::Control } })
+    }
+
+    pub fn has_sand_model_experiment_process_override(&self) -> bool {
+        read_sand_model_experiment_process_override().is_some()
+    }
+
+    /// Log the provider-side Statsig exposure exactly once for the current authenticated
+    /// bootstrap. Product Analytics is a separate attribution lane and must never be used to
+    /// pretend that the provider exposure happened.
+    pub fn log_sand_model_experiment_exposure(&self) -> bool {
+        let (user, assignment) = {
+            let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            if !state.authenticated_bootstrap
+                || state.hydrated_user_id.as_deref().is_none_or(str::is_empty)
+            {
+                return false;
+            }
+            if state.model_experiment_exposure_logged {
+                return true;
+            }
+            let Some(assignment) = state
+                .network_experiments
+                .get(SAND_MODEL_EXPERIMENT_NAME)
+                .filter(|assignment| assignment.group_name.is_some())
+                .cloned()
+            else {
+                return false;
+            };
+            let Some(user) = state.statsig_user.clone() else {
+                return false;
+            };
+            state.model_experiment_exposure_logged = true;
+            (user, assignment)
+        };
+
+        let scheduled = spawn_statsig_model_exposure(user, assignment);
+        if !scheduled {
+            if let Ok(mut state) = self.state.lock() {
+                state.model_experiment_exposure_logged = false;
+            }
+        }
+        scheduled
+    }
+
+    pub fn configured_default_model(&self) -> Option<SandAgentModelSelection> {
+        configured_model_from_config(self.dynamic_config(SAND_DEFAULT_MODEL_CONFIG_NAME), self.has_authenticated_bootstrap())
+    }
+
+    pub fn configured_automations_model(&self) -> Option<SandAgentModelSelection> {
+        configured_model_from_config(self.dynamic_config(SAND_AUTOMATIONS_MODEL_CONFIG_NAME), self.has_authenticated_bootstrap())
+    }
+
+    pub fn has_authenticated_bootstrap(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .authenticated_bootstrap
+    }
+
+    pub fn hydrated_user_id(&self) -> Option<String> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .hydrated_user_id
+            .clone()
+    }
+
+    /// Account switch/logout must fence all account-scoped experiment state. Settings overrides
+    /// are installation-local and intentionally survive.
+    pub fn clear_account_scope(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.refresh_generation = state.refresh_generation.saturating_add(1);
+        state.network_feature_gates.clear();
+        state.network_dynamic_configs.clear();
+        state.network_experiments.clear();
+        state.statsig_user = None;
+        state.hydrated_user_id = None;
+        state.authenticated_bootstrap = false;
+        state.model_experiment_exposure_logged = false;
+        drop(state);
+        self.notify_gate_listeners();
+    }
+}
+
+struct ParsedBootstrap {
+    statsig_user: Option<Value>,
+    hydrated_user_id: Option<String>,
+    feature_gates: BTreeMap<String, bool>,
+    dynamic_configs: BTreeMap<String, BTreeMap<String, Value>>,
+    experiments: BTreeMap<String, StatsigExperimentAssignment>,
+}
+
+fn parse_statsig_bootstrap(config: &str) -> Result<ParsedBootstrap, String> {
+    let parsed: Value =
+        serde_json::from_str(config).map_err(|error| format!("invalid Statsig bootstrap: {error}"))?;
+    let statsig_user = parsed.get("user").cloned();
+    let hydrated_user_id = statsig_user
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|user| user.get("userID"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    let feature_gates = parsed
+        .get("feature_gates")
+        .and_then(Value::as_object)
+        .map(|gates| {
+            gates
+                .iter()
+                .filter_map(|(name, raw)| statsig_gate_value(raw).map(|value| (name.clone(), value)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let mut dynamic_configs = BTreeMap::new();
+    let mut experiments = BTreeMap::new();
+    if let Some(configs) = parsed.get("dynamic_configs").and_then(Value::as_object) {
+        for (name, raw) in configs {
+            let values = raw.get("value").and_then(Value::as_object).map(|values| {
+                values.iter().map(|(key, value)| (key.clone(), value.clone())).collect::<BTreeMap<_, _>>()
+            }).unwrap_or_default();
+            dynamic_configs.insert(name.clone(), values.clone());
+            experiments.insert(name.clone(), StatsigExperimentAssignment {
+                value: values,
+                group_name: raw.get("group_name").and_then(Value::as_str).map(str::to_string),
+                rule_id: raw.get("rule_id").and_then(Value::as_str).map(str::to_string),
+                secondary_exposures: raw.get("secondary_exposures").and_then(Value::as_array).cloned().unwrap_or_default(),
+            });
+        }
+    }
+
+    Ok(ParsedBootstrap { statsig_user, hydrated_user_id, feature_gates, dynamic_configs, experiments })
+}
+
+
+fn wall_clock_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
+}
+
+fn statsig_model_exposure_payload(
+    user: Value,
+    assignment: &StatsigExperimentAssignment,
+    now_ms: u64,
+) -> Value {
+    serde_json::json!({
+        "events": [{
+            "eventName": "statsig::config_exposure",
+            "user": user,
+            "time": now_ms,
+            "value": Value::Null,
+            "metadata": {
+                "config": SAND_MODEL_EXPERIMENT_NAME,
+                "ruleID": assignment.rule_id.clone().unwrap_or_default(),
+                "reason": "Network:Recognized"
+            },
+            "secondaryExposures": assignment.secondary_exposures.clone()
+        }],
+        "statsigMetadata": {
+            "sdkType": "js-client",
+            "sdkVersion": STATSIG_JS_SDK_VERSION
+        }
+    })
+}
+
+fn spawn_statsig_model_exposure(
+    user: Value,
+    assignment: StatsigExperimentAssignment,
+) -> bool {
+    let payload = statsig_model_exposure_payload(user, &assignment, wall_clock_now_ms());
+    let now = wall_clock_now_ms().to_string();
+    let session_id = Uuid::new_v4().to_string();
+    let url = format!(
+        "{}/rgstr",
+        STATSIG_LOG_EVENT_PROXY_URL.trim_end_matches('/')
+    );
+    thread::Builder::new()
+        .name("android-experiments-exposure".into())
+        .spawn(move || {
+            let agent = ureq::AgentBuilder::new()
+                .timeout_connect(Duration::from_secs(5))
+                .timeout_read(Duration::from_secs(10))
+                .timeout_write(Duration::from_secs(10))
+                .redirects(0)
+                .build();
+            let _ = agent
+                .post(&url)
+                .query("k", STATSIG_CLIENT_KEY)
+                .query("st", "js-client")
+                .query("sv", STATSIG_JS_SDK_VERSION)
+                .query("t", &now)
+                .query("sid", &session_id)
+                .set("statsig-event-count", "1")
+                .set("statsig-retry-count", "0")
+                .set("statsig-sdk-type", "js-client")
+                .set("statsig-sdk-version", STATSIG_JS_SDK_VERSION)
+                .send_json(payload);
+        })
+        .is_ok()
+}
+
+fn statsig_gate_value(value: &Value) -> Option<bool> {
+    value.as_bool().or_else(|| {
+        value.get("value").and_then(|value| {
+            value
+                .as_bool()
+                .or_else(|| value.get("value").and_then(Value::as_bool))
+        })
+    })
+}
+
+fn env_gate_override(name: &str, raw: Option<&str>) -> Option<bool> {
+    let raw = raw?;
+    for pair in raw.split(',') {
+        let mut parts = pair.splitn(2, '=');
+        let key = parts.next().unwrap_or("").trim();
+        let value = parts.next().unwrap_or("").trim();
+        if key == name {
+            return Some(matches!(value, "1" | "true" | "on"));
+        }
+    }
+    None
+}
+
+fn bundled_feature_gate_default(name: &str) -> bool {
+    matches!(
+        name,
+        "enable_sparse_plugin_clones"
+            | "sand_multitask"
+            | "sand_spotlight"
+            | "sand_computer_use_playwright"
+    )
+}
+
+fn bundled_dynamic_config_default(name: &str) -> BTreeMap<String, Value> {
+    match name {
+        ENVIRONMENT_SETUP_RESUME_CONFIG_NAME => BTreeMap::from([
+            ("max_resume_age_ms".into(), serde_json::json!(DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS)),
+        ]),
+        "grok_bot_conversation_size_limits" => BTreeMap::from([
+            ("soft_limit_mb".into(), serde_json::json!(256)),
+            ("hard_limit_mb".into(), serde_json::json!(1024)),
+        ]),
+        SAND_DEFAULT_MODEL_CONFIG_NAME | SAND_AUTOMATIONS_MODEL_CONFIG_NAME => BTreeMap::from([
+            ("modelId".into(), serde_json::json!("default")),
+            ("maxMode".into(), serde_json::json!(false)),
+            ("parameters".into(), serde_json::json!([])),
+        ]),
+        SAND_COMPUTER_USE_CONFIG_NAME | SAND_BROWSER_USE_CONFIG_NAME => BTreeMap::from([
+            ("modelId".into(), serde_json::json!("claude-opus-4-8")),
+            ("maxMode".into(), serde_json::json!(false)),
+            (
+                "parameters".into(),
+                serde_json::json!([
+                    {"id":"thinking","value":"false"},
+                    {"id":"effort","value":"low"}
+                ]),
+            ),
+        ]),
+        "sand_model_filter" => BTreeMap::from([
+            ("allowedModelIds".into(), serde_json::json!([])),
+            ("defaultParameters".into(), serde_json::json!({})),
+        ]),
+        _ => BTreeMap::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn environment_setup_resume_config_preserves_desktop_fallback_without_claiming_executor_enforcement() {
+        let experiments = HostExperimentsExtension::new();
+        let config = experiments.dynamic_config(ENVIRONMENT_SETUP_RESUME_CONFIG_NAME);
+        assert_eq!(
+            config.get("max_resume_age_ms"),
+            Some(&serde_json::json!(DEFAULT_ENVIRONMENT_SETUP_MAX_RESUME_AGE_MS)),
+        );
+        assert_eq!(config.len(), 1);
+    }
+
+    fn bootstrap(user_id: Option<&str>, gate: bool, model: &str) -> String {
+        serde_json::json!({
+            "user": user_id.map(|value| serde_json::json!({"userID":value})),
+            "feature_gates": {
+                "sand_multiplayer": {"value": gate}
+            },
+            "dynamic_configs": {
+                SAND_DEFAULT_MODEL_CONFIG_NAME: {
+                    "value": {"modelId":model,"maxMode":false,"parameters":[]}
+                }
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn model_exposure_payload_keeps_bootstrap_user_rule_and_secondary_exposures() {
+        let parsed = parse_statsig_bootstrap(
+            &serde_json::json!({
+                "user":{"userID":"user-a","custom":{"plan":"pro"}},
+                "dynamic_configs":{
+                    SAND_MODEL_EXPERIMENT_NAME:{
+                        "value":{"enabled":true},
+                        "group_name":"treatment",
+                        "rule_id":"rule-7",
+                        "secondary_exposures":[{"gate":"g1","gateValue":"true"}]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let assignment = parsed.experiments.get(SAND_MODEL_EXPERIMENT_NAME).unwrap();
+        let payload = statsig_model_exposure_payload(
+            parsed.statsig_user.clone().unwrap(),
+            assignment,
+            123,
+        );
+        assert_eq!(payload["events"][0]["eventName"], "statsig::config_exposure");
+        assert_eq!(payload["events"][0]["user"]["custom"]["plan"], "pro");
+        assert_eq!(payload["events"][0]["metadata"]["config"], SAND_MODEL_EXPERIMENT_NAME);
+        assert_eq!(payload["events"][0]["metadata"]["ruleID"], "rule-7");
+        assert_eq!(payload["events"][0]["secondaryExposures"][0]["gate"], "g1");
+        assert_eq!(payload["statsigMetadata"]["sdkType"], "js-client");
+        assert_eq!(payload["statsigMetadata"]["sdkVersion"], STATSIG_JS_SDK_VERSION);
+    }
+
+    #[test]
+    fn stale_authenticated_refresh_cannot_rehydrate_after_account_clear_or_newer_refresh() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: false,
+            env_gate_overrides: None,
+        });
+        let stale = experiments.begin_authenticated_refresh();
+        experiments.clear_account_scope();
+        assert!(!experiments
+            .hydrate_authenticated_statsig_if_current(
+                stale,
+                &bootstrap(Some("old-account"), true, "old-model"),
+            )
+            .unwrap());
+        assert!(!experiments.has_authenticated_bootstrap());
+
+        let older = experiments.begin_authenticated_refresh();
+        let current = experiments.begin_authenticated_refresh();
+        assert!(!experiments
+            .hydrate_authenticated_statsig_if_current(
+                older,
+                &bootstrap(Some("old-account"), true, "old-model"),
+            )
+            .unwrap());
+        assert!(experiments
+            .hydrate_authenticated_statsig_if_current(
+                current,
+                &bootstrap(Some("new-account"), true, "new-model"),
+            )
+            .unwrap());
+        assert_eq!(experiments.hydrated_user_id().as_deref(), Some("new-account"));
+        assert_eq!(
+            experiments.configured_default_model().unwrap().model_id,
+            "new-model"
+        );
+    }
+
+    #[test]
+    fn dev_override_precedes_authenticated_network_gate() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: true,
+            env_gate_overrides: Some("sand_multiplayer=on".into()),
+        });
+        experiments
+            .hydrate_authenticated_statsig(&bootstrap(Some("user-a"), false, "model-a"))
+            .unwrap();
+        assert!(experiments.check_feature_gate("sand_multiplayer"));
+        experiments.set_settings_override("sand_multiplayer", Some(false));
+        assert!(!experiments.check_feature_gate("sand_multiplayer"));
+    }
+
+    #[test]
+    fn production_mode_ignores_dev_override_string() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: false,
+            env_gate_overrides: Some("sand_multiplayer=on".into()),
+        });
+        assert!(!experiments.check_feature_gate("sand_multiplayer"));
+    }
+
+    #[test]
+    fn anonymous_bootstrap_cannot_replace_canonical_gate_state() {
+        let experiments = HostExperimentsExtension::new();
+        assert!(experiments.check_feature_gate("sand_multitask"));
+        assert!(experiments
+            .hydrate_authenticated_statsig(&bootstrap(None, false, "remote"))
+            .is_err());
+        assert!(!experiments.has_authenticated_bootstrap());
+        assert!(experiments.check_feature_gate("sand_multitask"));
+    }
+
+    #[test]
+    fn authenticated_bootstrap_owns_network_gates_and_dynamic_config() {
+        let experiments = HostExperimentsExtension::new();
+        experiments
+            .hydrate_authenticated_statsig(&bootstrap(Some("user-a"), false, "model-a"))
+            .unwrap();
+        assert!(experiments.has_authenticated_bootstrap());
+        assert_eq!(experiments.hydrated_user_id().as_deref(), Some("user-a"));
+        assert!(!experiments.check_feature_gate("sand_multiplayer"));
+        assert_eq!(
+            experiments
+                .dynamic_config(SAND_DEFAULT_MODEL_CONFIG_NAME)
+                .get("modelId")
+                .and_then(Value::as_str),
+            Some("model-a")
+        );
+    }
+
+    #[test]
+    fn account_switch_clears_network_truth_but_keeps_local_override() {
+        let experiments = HostExperimentsExtension::new();
+        experiments.set_settings_override("sand_multiplayer", Some(true));
+        experiments
+            .hydrate_authenticated_statsig(&bootstrap(Some("user-a"), false, "model-a"))
+            .unwrap();
+        experiments.clear_account_scope();
+        assert!(!experiments.has_authenticated_bootstrap());
+        assert_eq!(experiments.hydrated_user_id(), None);
+        assert!(experiments.check_feature_gate("sand_multiplayer"));
+        assert_eq!(
+            experiments
+                .dynamic_config(SAND_DEFAULT_MODEL_CONFIG_NAME)
+                .get("modelId")
+                .and_then(Value::as_str),
+            Some("default")
+        );
+    }
+
+    #[test]
+    fn gate_subscription_tracks_canonical_changes_and_cancel_is_idempotent() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: false,
+            env_gate_overrides: None,
+        });
+        let seen = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let seen_listener = Arc::clone(&seen);
+        let stop = experiments.subscribe_gate(
+            "sand_multiplayer",
+            Arc::new(move |value| seen_listener.lock().unwrap().push(value)),
+        );
+        experiments.set_settings_override("sand_multiplayer", Some(true));
+        experiments.set_settings_override("sand_multiplayer", Some(false));
+        assert_eq!(*seen.lock().unwrap(), vec![true, false]);
+        stop();
+        stop();
+        experiments.set_settings_override("sand_multiplayer", Some(true));
+        assert_eq!(*seen.lock().unwrap(), vec![true, false]);
+    }
+
+    #[test]
+    fn account_scope_clear_notifies_gate_subscribers() {
+        let experiments = HostExperimentsExtension::with_options(HostExperimentsOptions {
+            is_dev_build: false,
+            env_gate_overrides: None,
+        });
+        let seen = Arc::new(Mutex::new(Vec::<bool>::new()));
+        let sink = Arc::clone(&seen);
+        let _stop = experiments.subscribe_gate(
+            "sand_multiplayer",
+            Arc::new(move |value| sink.lock().unwrap().push(value)),
+        );
+        experiments
+            .hydrate_authenticated_statsig(&bootstrap(Some("user-a"), true, "model-a"))
+            .unwrap();
+        experiments.clear_account_scope();
+        assert_eq!(*seen.lock().unwrap(), vec![true, false]);
+    }
+
+    #[test]
+    fn authenticated_model_experiment_requires_group_and_preserves_assignment() {
+        let experiments = HostExperimentsExtension::new();
+        let payload = serde_json::json!({
+            "user":{"userID":"user-a"},
+            "dynamic_configs":{
+                SAND_MODEL_EXPERIMENT_NAME:{"value":{"enabled":true},"group_name":"treatment","rule_id":"rule-1"},
+                SAND_DEFAULT_MODEL_CONFIG_NAME:{"value":{"modelId":"model-treatment","maxMode":false,"parameters":[]}},
+                SAND_AUTOMATIONS_MODEL_CONFIG_NAME:{"value":{"modelId":"automation-treatment","maxMode":false,"parameters":[]}}
+            }
+        }).to_string();
+        experiments.hydrate_authenticated_statsig(&payload).unwrap();
+        assert_eq!(experiments.sand_model_experiment_state(), Some(SandModelExperimentState { active:true, arm:SandModelExperimentArm::Treatment }));
+        assert_eq!(experiments.configured_default_model().unwrap().model_id, "model-treatment");
+        assert_eq!(experiments.configured_automations_model().unwrap().model_id, "automation-treatment");
+        experiments.clear_account_scope();
+        assert_eq!(experiments.sand_model_experiment_state(), None);
+    }
+
+    #[test]
+    fn malformed_refresh_does_not_destroy_last_good_state() {
+        let experiments = HostExperimentsExtension::new();
+        experiments
+            .hydrate_authenticated_statsig(&bootstrap(Some("user-a"), false, "model-a"))
+            .unwrap();
+        assert!(experiments.hydrate_authenticated_statsig("{").is_err());
+        assert_eq!(experiments.hydrated_user_id().as_deref(), Some("user-a"));
+        assert!(!experiments.check_feature_gate("sand_multiplayer"));
+    }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Fabushi Android per-source parity row",
+  "type": "object",
+  "required": ["source_repository", "source_commit", "source_path", "source_blob_sha", "source_type", "source_mode", "responsibilities", "android_targets", "disposition", "implementation_status", "evidence"],
+  "properties": {
+    "source_repository": {"const": "bhrumom/fabushi-desktop"},
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "source_path": {"type": "string", "minLength": 1},
+    "source_blob_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "source_type": {"enum": ["blob", "commit"]},
+    "source_mode": {"enum": ["100644", "100755", "120000", "160000"]},
+    "responsibilities": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "android_targets": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "disposition": {"enum": [null, "direct-port", "android-adapted", "not-applicable-with-replacement"]},
+    "implementation_status": {"enum": ["unreviewed", "mapped", "implemented", "verified"]},
+    "evidence": {"type": "array", "items": {"type": "object"}}
+  },
+  "allOf": [
+    {"if": {"properties": {"implementation_status": {"enum": ["mapped", "implemented", "verified"]}}}, "then": {"properties": {"responsibilities": {"minItems": 1}, "android_targets": {"minItems": 1}, "disposition": {"type": "string"}}}},
+    {"if": {"properties": {"implementation_status": {"const": "verified"}}}, "then": {"properties": {"evidence": {"minItems": 1}}}}
+  ]
+}

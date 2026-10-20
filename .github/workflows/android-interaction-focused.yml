@@ -1,0 +1,107 @@
+name: Android Interaction Focused
+
+on:
+  push:
+    branches:
+      - spec/grok-bot-018-android-parity-20260922
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SOURCE_SHA: ${{ github.sha }}
+
+jobs:
+  interaction-focused:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native Remote Computer Linux dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwayland-dev libpipewire-0.3-dev libegl1-mesa-dev libegl-dev libgbm-dev libdrm-dev libxkbcommon-dev
+      - name: "Focused 1/16 generated-compatible Interaction wire"
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          cargo test -p fabushi-mahayana-host generated_compatible_interaction_query_response_wire_roundtrip -- --nocapture 2>&1 | tee evidence/01-generated-wire.log
+      - name: "Focused 2/16 runAsync + turnEnded + privacy post-turn"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host run_async_completion_is_enqueued_and_privacy_projection_is_redacted -- --nocapture 2>&1 | tee evidence/02-run-async.log
+      - name: "Focused 3/16 account/process stale fencing"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host stale_account_and_process_epoch_responses_fail_closed -- --nocapture 2>&1 | tee evidence/03-stale-fence.log
+      - name: "Focused 4/16 AndroidJsonHost sync AskQuestion settlement"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host android_json_host_settles_generated_ask_question_response_with_exact_fence -- --nocapture 2>&1 | tee evidence/04-host-sync-ask.log
+      - name: "Focused 5/16 AndroidJsonHost stale dispatch"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host android_json_host_rejects_stale_interaction_response_after_account_or_process_change -- --nocapture 2>&1 | tee evidence/05-host-stale.log
+      - name: "Focused 6/16 android-host-jni nativeDispatch"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-android-host-jni native_dispatch_routes_interaction_post_turn_flush_through_coordinator_host -- --nocapture 2>&1 | tee evidence/06-jni-native-dispatch.log
+      - name: "Focused 7/16 canonical AskQuestion transcript replay window"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host async_ask_question_replay_window_is_account_agent_scoped_and_bounded -- --nocapture 2>&1 | tee evidence/07-transcript-window.log
+      - name: "Focused 8/16 failed transcript update preserves replay window"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host failed_transcript_update_preserves_the_canonical_ask_question_replay_window -- --nocapture 2>&1 | tee evidence/08-transcript-update-failure.log
+      - name: "Focused 9/16 completed receipts follow live window"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host completed_receipts_follow_the_live_window_while_pending_receipts_are_preserved -- --nocapture 2>&1 | tee evidence/09-receipt-window.log
+      - name: "Focused 10/16 concurrent live window pruning"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host concurrent_live_window_keeps_each_receipt_and_prunes_only_the_old_call -- --nocapture 2>&1 | tee evidence/10-concurrent-window.log
+      - name: "Focused 11/16 transcript window failure keeps dedup receipt"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host transcript_window_failure_preserves_completed_receipt_and_never_publishes_retry -- --nocapture 2>&1 | tee evidence/11-window-failure.log
+      - name: "Focused 12/16 tool-call fallback follows canonical transcript"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host live_async_ask_question_ids_follow_the_current_transcript_window_and_fallback -- --nocapture 2>&1 | tee evidence/12-tool-call-fallback.log
+      - name: "Focused 13/16 structured + legacy auto-answer rejection does not consume receipt"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-constants ask_question::tests::structured_identity_round_trips_and_legacy_prefix_remains_recognized -- --exact 2>&1 | tee evidence/13-ask-question-auto-answer-constant.log
+          cargo test -p fabushi-mahayana-host structured_and_legacy_auto_answer_rejections_do_not_consume_the_completion_receipt_identity -- --nocapture 2>&1 | tee evidence/13-ask-question-auto-answer-receipt.log
+      - name: "Focused 14/16 ordinary success/error/user-rejection receipt consumption"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host ordinary_async_success_error_and_user_rejection_consume_completion_receipts -- --nocapture 2>&1 | tee evidence/14-ordinary-receipts.log
+      - name: "Focused 15/16 duplicate settlement keeps first result"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host duplicate_sync_settlement_is_rejected_without_replacing_the_first_result -- --nocapture 2>&1 | tee evidence/15-duplicate-settlement.log
+      - name: "Focused 16/16 completed receipt account/process fencing"
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host completed_receipt_deduplication_is_account_and_process_fenced -- --nocapture 2>&1 | tee evidence/16-completed-receipt-fence.log
+      - name: Record exact SHA
+        if: always()
+        run: |
+          printf 'source_sha=%s\n' "$SOURCE_SHA" > evidence/source-sha.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-interaction-focused-${{ env.SOURCE_SHA }}
+          path: evidence/
+          if-no-files-found: error
