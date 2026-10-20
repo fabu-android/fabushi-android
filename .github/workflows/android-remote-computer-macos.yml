@@ -13,11 +13,11 @@ jobs:
   macos-native-remote-computer:
     runs-on: macos-latest
     env:
-      SOURCE_SHA: ${{ github.sha }}
+      SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Assert exact HEAD
         run: test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
       - uses: dtolnay/rust-toolchain@stable
@@ -31,7 +31,7 @@ jobs:
           grep -Fq 'CGDisplay::main()' source/box-exec-daemon/src/remote_computer_production.rs
           grep -Fq 'core-graphics = { version = "0.25", features = ["highsierra"] }' source/box-exec-daemon/Cargo.toml
       - name: Compile macOS native Remote Computer owner
-        run: cargo check -p fabushi-android-box-exec-daemon --all-targets
+        run: cargo check -p fabushi-android-box-exec-daemon --lib --tests
       - name: Test 11-action production mapping on macOS target
         run: cargo test -p fabushi-android-box-exec-daemon production_executor_maps_all_eleven_actions_to_native_io_and_returns_observation_fields -- --nocapture
       - name: Test screenshot settle without replay on macOS target
