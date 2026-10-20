@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
-  "observed_date": "2026-10-19",
+  "observed_date": "2026-10-20",
   "desktop_repository": "bhrumom/fabushi-desktop",
   "desktop_branch": "main",
-  "desktop_commit": "0ecf132681845231b597ece11bc5f979a9a8f0cc",
-  "desktop_root_tree": "af3eb1b18ea3b6c80aa8359623e07f473f251c5b",
+  "desktop_commit": "ba9ecce728ef021fee609796c8704d8af6fe4b5a",
+  "desktop_root_tree": "29e6837e6ea9098d64c5de3e0952b3960abbfc86",
   "android_repository": "fabu-android/fabushi-android",
   "android_main_at_discovery": "59f6fc8885ce1cb8d1ad4fc5d4ab36f690fb99a2",
   "android_pr": 3,
@@ -33,8 +33,8 @@
     "docs/specs/offline-first-installable-mini-app-platform.md",
     "docs/specs/fabushi-plugins-marketplace-owner-inventory.md"
   ],
-  "rebaseline_note": "Persisted exact Desktop authority snapshot from successful Android migration documentation run 39281039002 attempt 1: 0ecf132681845231b597ece11bc5f979a9a8f0cc/tree af3eb1b18ea3b6c80aa8359623e07f473f251c5b with 8288 non-tree/9443 recursive entries. Current Desktop main has advanced; GitHub Actions must re-enumerate the new exact authority, reset changed/new rows to unreviewed, and must not inherit implementation verification.",
+  "rebaseline_note": "Persisted exact Desktop authority from Android migration documentation run 39474756775 attempt 1: ba9ecce728ef021fee609796c8704d8af6fe4b5a/tree 29e6837e6ea9098d64c5de3e0952b3960abbfc86 with 8327 tracked non-tree / 9482 recursive entries. Targeted REMOTE-COMPUTER-001 source evidence remains fail-closed until the new ledger commit is re-tested.",
   "rebaseline_requested_at": "2026-10-19T11:18:00Z",
-  "desktop_main_before": "12a4e29819592e3a7e32f7435cb0cf2e3cc53848",
-  "desktop_main_after": "0ecf132681845231b597ece11bc5f979a9a8f0cc"
+  "desktop_main_before": "ba9ecce728ef021fee609796c8704d8af6fe4b5a",
+  "desktop_main_after": "ba9ecce728ef021fee609796c8704d8af6fe4b5a"
 }
