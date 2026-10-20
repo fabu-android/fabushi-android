@@ -1295,9 +1295,13 @@ def _latest_exact_head_android_ci_evidence(
     wait_seconds = min(2100, max(0, wait_seconds))
     deadline = time.monotonic() + wait_seconds
     last_transient_error = None
+    # Preserve the last complete run-list snapshot across transient API failures. If
+    # the last observed exact-head run was active, a failed poll must not erase that fact.
+    last_observed_active_runs = []
 
     while True:
         active_runs = []
+        snapshot_completed = False
         try:
             runs_by_id = {}
             for page in range(1, 21):
@@ -1323,6 +1327,10 @@ def _latest_exact_head_android_ci_evidence(
 
             matching_runs = list(runs_by_id.values())
             active_runs = [run for run in matching_runs if run.get('status') != 'completed']
+            # Update the remembered active set only after the entire paginated snapshot
+            # has been read successfully; a transient API failure must not clear it.
+            last_observed_active_runs = list(active_runs)
+            snapshot_completed = True
             # An active exact-head run takes precedence over any older success.
             if not active_runs:
                 successful_runs = [
@@ -1355,7 +1363,7 @@ def _latest_exact_head_android_ci_evidence(
                         and value.get('status') == 'completed'
                         and value.get('conclusion') == 'success'
                         and value.get('run_attempt') == run.get('run_attempt')
-                        and value.get('head_sha') in (None, android_head)
+                        and value.get('head_sha') == android_head
                     ), None)
                     if not job:
                         continue
@@ -1403,21 +1411,24 @@ def _latest_exact_head_android_ci_evidence(
                 ):
                     last_transient_error = 'terminal successful run has no passing evidence job/steps'
                 elif matching_runs:
-                    print(
-                        f'WARNING: no terminal successful exact-head {evidence_label} evidence; '
-                        f'{evidence_label} remains incomplete',
-                        file=sys.stderr,
+                    # A failed/cancelled terminal run is not proof that no successful
+                    # same-head attempt will appear: Actions may queue the architecture
+                    # workflow after this inventory job starts. Keep polling until the
+                    # bounded deadline instead of freezing a false missing-evidence result.
+                    last_transient_error = (
+                        'matching exact-head runs are terminal without passing production/test evidence; '
+                        'waiting for a later exact-head attempt'
                     )
-                    return None
         except (RuntimeError, KeyError, TypeError, ValueError, OSError) as error:
             # GitHub API visibility can lag workflow/job transitions; retry within the deadline.
             last_transient_error = type(error).__name__
 
         now = time.monotonic()
         if now >= deadline:
-            if active_runs:
+            still_active_runs = active_runs if snapshot_completed else last_observed_active_runs
+            if still_active_runs:
                 active_ids = ','.join(
-                    str(run.get('id')) for run in active_runs if run.get('id') is not None
+                    str(run.get('id')) for run in still_active_runs if run.get('id') is not None
                 )
                 # A bounded timeout must not turn a still-running exact-head job into a
                 # false "missing" result. Fail closed so the inventory cannot freeze it

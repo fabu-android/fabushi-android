@@ -393,6 +393,137 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
                         evidence_label="Box Store chrome-profile archive",
                     )
 
+    def test_latest_exact_head_evidence_waits_after_terminal_failure_for_later_success(self):
+        module = load_generator()
+        android_head = "a" * 40
+        base_run = {
+            "name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "event": "pull_request",
+            "head_sha": android_head,
+            "repository": {"full_name": module.ANDROID_REPOSITORY},
+            "run_attempt": 1,
+        }
+        failed_run = {
+            **base_run, "id": 100, "status": "completed", "conclusion": "failure",
+            "run_number": 76,
+        }
+        successful_run = {
+            **base_run, "id": 101, "status": "completed", "conclusion": "success",
+            "run_number": 77,
+        }
+        job = {
+            "id": 102,
+            "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+            "head_sha": android_head,
+            "steps": [
+                {"name": module.SAND_BOX_ARCHIVE_PRODUCTION_STEP, "number": 23,
+                 "status": "completed", "conclusion": "success"},
+                {"name": module.SAND_BOX_ARCHIVE_TEST_STEP, "number": 24,
+                 "status": "completed", "conclusion": "success"},
+            ],
+        }
+        responses = [
+            {"workflow_runs": [failed_run]},
+            {"workflow_runs": [failed_run, successful_run]},
+            {"jobs": [job]},
+        ]
+        module.get = lambda path: responses.pop(0)
+        with patch.dict("os.environ", {"GH_TOKEN": "test", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "30"}):
+            with patch.object(module.time, "monotonic", side_effect=[0.0, 0.0]):
+                with patch.object(module.time, "sleep") as sleep:
+                    evidence = module._latest_exact_head_android_ci_evidence(
+                        android_head,
+                        production_step_name=module.SAND_BOX_ARCHIVE_PRODUCTION_STEP,
+                        test_step_name=module.SAND_BOX_ARCHIVE_TEST_STEP,
+                        evidence_label="Box Store chrome-profile archive",
+                    )
+        self.assertEqual(sleep.call_count, 1)
+        self.assertEqual(evidence["workflow_run_id"], successful_run["id"])
+        self.assertEqual(evidence["workflow_job_id"], job["id"])
+        self.assertEqual(evidence["android_head"], android_head)
+        self.assertEqual(responses, [])
+
+    def test_latest_exact_head_evidence_fails_closed_after_active_snapshot_and_api_error(self):
+        module = load_generator()
+        android_head = "a" * 40
+        active_run = {
+            "id": 39393655286,
+            "name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "event": "pull_request",
+            "head_sha": android_head,
+            "repository": {"full_name": module.ANDROID_REPOSITORY},
+            "status": "in_progress",
+            "conclusion": None,
+            "run_attempt": 1,
+            "run_number": 77,
+        }
+        responses = [{"workflow_runs": [active_run]}, RuntimeError("API unavailable")]
+
+        def fake_get(path):
+            response = responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+
+        module.get = fake_get
+        with patch.dict("os.environ", {"GH_TOKEN": "test", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "1"}):
+            with patch.object(module.time, "monotonic", side_effect=[0.0, 0.0, 1.0]):
+                with patch.object(module.time, "sleep"):
+                    with self.assertRaisesRegex(RuntimeError, "refusing to classify evidence as missing"):
+                        module._latest_exact_head_android_ci_evidence(android_head)
+        self.assertEqual(responses, [])
+
+    def test_latest_exact_head_evidence_rejects_job_with_missing_or_mismatched_head_sha(self):
+        module = load_generator()
+        android_head = "a" * 40
+        run = {
+            "id": 456,
+            "name": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_NAME,
+            "workflow_id": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID,
+            "path": module.ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH,
+            "event": "pull_request",
+            "head_sha": android_head,
+            "repository": {"full_name": module.ANDROID_REPOSITORY},
+            "status": "completed",
+            "conclusion": "success",
+            "run_attempt": 1,
+            "run_number": 77,
+        }
+        steps = [
+            {"name": module.SAND_BOX_ARCHIVE_PRODUCTION_STEP, "number": 23,
+             "status": "completed", "conclusion": "success"},
+            {"name": module.SAND_BOX_ARCHIVE_TEST_STEP, "number": 24,
+             "status": "completed", "conclusion": "success"},
+        ]
+        for job_head in (None, "b" * 40):
+            job = {
+                "id": 789,
+                "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME,
+                "status": "completed",
+                "conclusion": "success",
+                "run_attempt": 1,
+                "head_sha": job_head,
+                "steps": steps,
+            }
+            module.get = lambda path, candidate=job: (
+                {"workflow_runs": [run]} if "/actions/runs?" in path else {"jobs": [candidate]}
+            )
+            with self.subTest(job_head=job_head), \
+                 patch.dict("os.environ", {"GH_TOKEN": "test", "ANDROID_CI_EVIDENCE_WAIT_SECONDS": "0"}), \
+                 patch.object(module.time, "monotonic", return_value=0.0):
+                self.assertIsNone(module._latest_exact_head_android_ci_evidence(
+                    android_head,
+                    production_step_name=module.SAND_BOX_ARCHIVE_PRODUCTION_STEP,
+                    test_step_name=module.SAND_BOX_ARCHIVE_TEST_STEP,
+                ))
+
     def test_latest_exact_head_evidence_never_uses_another_head_or_failed_step(self):
         module = load_generator()
         android_head = "a" * 40
@@ -2402,6 +2533,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         }
         job = {
             "id": 789, "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME, "run_attempt": 1,
+            "head_sha": android_head,
             "status": "completed", "conclusion": "success",
             "steps": [
                 {"name": module.COMPOSER_CONSTANT_PRODUCTION_STEP, "number": 9,
@@ -2878,6 +3010,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         }
         job = {
             "id": 789, "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME, "run_attempt": 1,
+            "head_sha": android_head,
             "status": "completed", "conclusion": "success",
             "steps": [
                 {"name": module.AGENT_KV_PRODUCTION_STEP, "number": 6,
@@ -2916,6 +3049,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         }
         job = {
             "id": 789, "name": module.ANDROID_AGENT_KV_EVIDENCE_JOB_NAME, "run_attempt": 1,
+            "head_sha": android_head,
             "status": "completed", "conclusion": "success",
             "steps": [
                 {"name": module.AGENT_KV_PRODUCTION_STEP,
