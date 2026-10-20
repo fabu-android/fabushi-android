@@ -13,8 +13,8 @@ from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "android-port-docs.py"
-CURRENT_DESKTOP_COMMIT = "afb489baef4f501a0b9a6b8ff8cefef7f90470b5"
-CURRENT_DESKTOP_TREE = "e69aaad184adaf66e0d4c130707bd7e4f34537d0"
+CURRENT_DESKTOP_COMMIT = "ad35ac8b1834d7bceb853759827de9196429e227"
+CURRENT_DESKTOP_TREE = "6226ffdeab4ee9f61fd4dd53d47ce8c304929498"
 
 
 def load_generator():
@@ -1050,7 +1050,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8319, 9474),
+            (8258, 9412, 8320, 9475),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
