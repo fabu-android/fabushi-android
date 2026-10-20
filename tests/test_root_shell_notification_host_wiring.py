@@ -52,6 +52,12 @@ class RootShellNotificationHostWiringTest(unittest.TestCase):
         self.assertNotIn("rawArgs.opt(key) as? String ?: return null", host)
         self.assertIn("invokeRootNotificationDashboardAction", host)
         self.assertIn("key in _pendingActions.value", host)
+        self.assertIn('route !in setOf("login", "upgrade", "payment", "config")', host)
+        self.assertIn("is RootShellNotificationAction.RecoveryRoute -> onRecoveryRoute(action.route)", host)
+        self.assertIn('"login" -> model.beginBrowserLogin()', renderer)
+        self.assertIn('"upgrade", "payment" -> {', renderer)
+        self.assertIn("model.refreshAccountUsageSummary()", renderer)
+        self.assertIn('"config" -> showSettings = true', renderer)
 
 if __name__ == "__main__":
     unittest.main()

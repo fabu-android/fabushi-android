@@ -204,6 +204,16 @@ internal fun ProductionRenderer(
                         showModelPicker = true
                         botModel.refreshAvailableModels()
                     },
+                    onRecoveryRoute = { route ->
+                        when (route) {
+                            "login" -> model.beginBrowserLogin()
+                            "upgrade", "payment" -> {
+                                showSettings = true
+                                model.refreshAccountUsageSummary()
+                            }
+                            "config" -> showSettings = true
+                        }
+                    },
                 )
                 if (showModelPicker) {
                     FabushiProductModal(

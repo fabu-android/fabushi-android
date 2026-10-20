@@ -253,6 +253,45 @@ jobs:
           set -euo pipefail
           cargo test -p fabushi-constants git_diff::tests::constants_match_desktop_git_diff_contract -- --exact
 
+
+      - name: Verify exact-HEAD agent error recovery owner
+        run: |
+          set -euo pipefail
+          DESKTOP_AUTHORITY_SHA="$(python3 - <<'PY'
+          import runpy
+          print(runpy.run_path('scripts/android-port-docs.py')['EXPECTED_DESKTOP_COMMIT'])
+          PY
+          )"
+          DESKTOP_DIR="$RUNNER_TEMP/desktop-agent-error-authority"
+          rm -rf "$DESKTOP_DIR"
+          git init -q "$DESKTOP_DIR"
+          git -C "$DESKTOP_DIR" remote add origin https://github.com/bhrumom/fabushi-desktop.git
+          git -C "$DESKTOP_DIR" fetch -q --depth=1 origin "$DESKTOP_AUTHORITY_SHA"
+          git -C "$DESKTOP_DIR" checkout -q --detach FETCH_HEAD
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD)" = "$DESKTOP_AUTHORITY_SHA"
+          test "$(git -C "$DESKTOP_DIR" rev-parse HEAD:source/packages/agent-client/errors.ts)" = "775c90dfd34f60b6efb10dab40247482af068a8a"
+          grep -Fq 'Some("login".into())' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq 'Some("upgrade".into())' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq 'Some("payment".into())' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq 'Some("config".into())' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq '{"kind":"recovery-route","label":label,"route":action}' source/host/src/extensions/transcript/agent_run_error.rs
+          grep -Fq 'route !in setOf("login", "upgrade", "payment", "config")' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellNotificationHost.kt
+          grep -Fq '"login" -> model.beginBrowserLogin()' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt
+          grep -Fq '"upgrade", "payment" -> {' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt
+          grep -Fq 'model.refreshAccountUsageSummary()' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt
+          grep -Fq '"config" -> showSettings = true' frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt
+
+      - name: Test exact-HEAD agent error recovery owner
+        run: |
+          set -euo pipefail
+          cargo test -p fabushi-mahayana-host --test agent_run_error_contract
+          (
+            cd mobile/android
+            ./gradlew testCiAcceptanceUnitTest --tests com.ombhrum.fabushi.RootShellNotificationHostTest
+          )
+          python -m unittest tests.test_root_shell_notification_host_wiring
+          python -m unittest tests.test_android_port_docs_generator.AndroidPortDocsGeneratorTest.test_agent_run_error_mapping_uses_existing_rust_owner_and_strict_native_recovery_routes
+
       - name: Verify exact-HEAD git-repo-utils declaration owner
         run: |
           set -euo pipefail

@@ -37,6 +37,27 @@ class RootShellNotificationHostTest {
         assertEquals("Switch model", action!!.label)
     }
 
+    @Test fun recoveryRoutesAreStrictlyAllowlisted() {
+        for (route in listOf("login", "upgrade", "payment", "config")) {
+            val action = projectRootShellNotificationAction(
+                JSONObject()
+                    .put("kind", "recovery-route")
+                    .put("label", "Recover")
+                    .put("route", route),
+            )
+            assertTrue(action is RootShellNotificationAction.RecoveryRoute)
+            assertEquals(route, (action as RootShellNotificationAction.RecoveryRoute).route)
+        }
+        assertNull(
+            projectRootShellNotificationAction(
+                JSONObject()
+                    .put("kind", "recovery-route")
+                    .put("label", "Unsafe")
+                    .put("route", "arbitrary"),
+            ),
+        )
+    }
+
     @Test fun reducerReplacesPushAndHandlesDismissAndClear() {
         val first = RootShellNotificationTray("one", "First")
         val replacement = JSONObject()

@@ -49,6 +49,11 @@ internal sealed interface RootShellNotificationAction {
     data class SwitchModel(
         override val label: String = "Switch model",
     ) : RootShellNotificationAction
+
+    data class RecoveryRoute(
+        override val label: String,
+        val route: String,
+    ) : RootShellNotificationAction
 }
 
 internal data class RootShellNotificationAccountScope(
@@ -73,6 +78,19 @@ internal fun projectRootShellNotificationAction(value: JSONObject): RootShellNot
         return RootShellNotificationAction.SwitchModel(
             label = value.optString("label").trim().ifBlank { "Switch model" },
         )
+    }
+    if (kind == "recovery-route") {
+        val route = value.optString("route").trim()
+        if (route !in setOf("login", "upgrade", "payment", "config")) return null
+        val label = value.optString("label").trim().ifBlank {
+            when (route) {
+                "login" -> "Sign in"
+                "upgrade" -> "Upgrade"
+                "payment" -> "Review billing"
+                else -> "Open settings"
+            }
+        }
+        return RootShellNotificationAction.RecoveryRoute(label = label, route = route)
     }
     val label = value.optString("label").trim()
     if (label.isEmpty()) return null
@@ -265,6 +283,7 @@ internal class RootShellNotificationController(
                         }
                     }
                     is RootShellNotificationAction.SwitchModel -> null
+                    is RootShellNotificationAction.RecoveryRoute -> null
                 }
             }.getOrElse { "Couldn’t complete the action — try again" }
             synchronized(this) {
@@ -311,6 +330,7 @@ internal class RootShellNotificationController(
             is RootShellNotificationAction.OpenUrl -> "url:" + action.url
             is RootShellNotificationAction.DashboardAction -> "dashboard:" + action.action
             is RootShellNotificationAction.SwitchModel -> "switch-model"
+            is RootShellNotificationAction.RecoveryRoute -> "recovery-route:" + action.route
         }
 
     @Synchronized
@@ -338,6 +358,7 @@ internal fun RootShellNotificationHost(
     accountIdentity: String?,
     transport: RootConnectionTransportState,
     onSwitchModel: () -> Unit,
+    onRecoveryRoute: (String) -> Unit,
 ) {
     val controller = remember(runtimePort) { RootShellNotificationController(runtimePort) }
     val trays by controller.trays.collectAsState()
@@ -390,10 +411,10 @@ internal fun RootShellNotificationHost(
                             Button(
                                 enabled = key !in pending,
                                 onClick = {
-                                    if (action is RootShellNotificationAction.SwitchModel) {
-                                        onSwitchModel()
-                                    } else {
-                                        controller.runAction(tray.id, action)
+                                    when (action) {
+                                        is RootShellNotificationAction.SwitchModel -> onSwitchModel()
+                                        is RootShellNotificationAction.RecoveryRoute -> onRecoveryRoute(action.route)
+                                        else -> controller.runAction(tray.id, action)
                                     }
                                 },
                             ) { Text(action.label) }

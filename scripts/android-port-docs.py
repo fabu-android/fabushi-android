@@ -48,8 +48,8 @@ LEGACY_FALLBACK_RESPONSIBILITY_IDS = frozenset({
     'GOVERNANCE-REPOSITORY-BOUNDARY-001',
 })
 EXPECTED_RESPONSIBILITY_COUNT = 306
-EXPECTED_TREE_ENTRY_COUNT = 9468
-EXPECTED_TRACKED_NON_TREE_COUNT = 8313
+EXPECTED_TREE_ENTRY_COUNT = 9474
+EXPECTED_TRACKED_NON_TREE_COUNT = 8319
 PRIOR_TREE_ENTRY_COUNT = 9443
 PRIOR_TRACKED_NON_TREE_COUNT = 8288
 PERSISTED_INTERMEDIATE_TREE_ENTRY_COUNT = 9431
@@ -69,8 +69,8 @@ ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_ID = 364026685
 ANDROID_AGENT_KV_EVIDENCE_WORKFLOW_PATH = '.github/workflows/grok-android-architecture.yml'
 ANDROID_AGENT_KV_EVIDENCE_JOB_NAME = 'agent-kv-exact-head-evidence'
 PREDECESSOR_SEMANTIC_SOURCE_ANCHOR_COUNT = 6066
-EXPECTED_DESKTOP_COMMIT = '0f6551f0bd30732a1a133575fc2fbe757baee337'
-EXPECTED_DESKTOP_TREE = 'fc9b34214daf8fd07b626f229541ca11e3fca6fc'
+EXPECTED_DESKTOP_COMMIT = '2bfc3fd3638596b37a01c54e17a333c1798414f3'
+EXPECTED_DESKTOP_TREE = '5bec4909144a966372f3e0e0579828f7a7785900'
 PRIOR_DESKTOP_COMMIT = '0ecf132681845231b597ece11bc5f979a9a8f0cc'
 PRIOR_DESKTOP_TREE = 'af3eb1b18ea3b6c80aa8359623e07f473f251c5b'
 PRIOR_BASELINE_PARENT_DESKTOP_COMMIT = '72ca525b7c2f5d1d605bf4a3261485609bd2c05f'
@@ -319,6 +319,56 @@ GIT_DIFF_CONSTANT_SOURCE_SPEC = {
         'promote source/packages/agent/git-diff-processing.ts or selected Git-diff UI/runtime parity to implemented.'
     ),
     'disposition': 'direct-port',
+}
+
+
+AGENT_RUN_ERROR_SOURCE_PATH = 'source/packages/agent-client/errors.ts'
+AGENT_RUN_ERROR_RESPONSIBILITY_ID = 'AGENT-RUN-ERROR-ANDROID-001'
+AGENT_RUN_ERROR_PRODUCTION_STEP = 'Verify exact-HEAD agent error recovery owner'
+AGENT_RUN_ERROR_TEST_STEP = 'Test exact-HEAD agent error recovery owner'
+AGENT_RUN_ERROR_SOURCE_SPEC = {
+    'symbols': [
+        'AgentError', 'AgentErrorType', 'ConnectError', 'findConnectError',
+        'isConnectError', 'isRetryableError', 'isAbortError',
+    ],
+    'source_owner': (
+        'Desktop source/packages/agent-client/errors.ts@775c90dfd34f60b6efb10dab40247482af068a8a '
+        'owns the Agent client error taxonomy and recovery classification used by downstream run failure handling: '
+        'authentication failures require login; quota/rate-limit failures require upgrade; usage-pricing failures '
+        'require payment; bad API key/outdated-client failures require configuration; cancellation/abort and transport '
+        'failures retain distinct retry semantics; explicit isRetryable=false and blob-not-found are terminal.'
+    ),
+    'android_owner': (
+        'Existing Rust Host source/host/src/extensions/transcript/agent_run_error.rs remains the single canonical '
+        'classification owner. It projects only login/upgrade/payment/config recovery-route actions. '
+        'RootShellNotificationHost performs a strict route allowlist and ProductionRenderer binds login to the existing '
+        'browser-login owner, upgrade/payment to the existing Settings usage surface, and config to Settings without '
+        'creating a second error, account, billing, or retry owner.'
+    ),
+    'android_targets': [
+        'source/host/src/extensions/transcript/agent_run_error.rs',
+        'frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/recovered/features/window-chrome/RootShellNotificationHost.kt',
+        'frontend/src/main/kotlin/com/ombhrum/fabushi/frontend/production/ProductionRenderer_view.kt',
+    ],
+    'production_target': 'source/host/src/extensions/transcript/agent_run_error.rs',
+    'test_target': 'source/host/tests/agent_run_error_contract.rs',
+    'focused_tests': [
+        'source/host/tests/agent_run_error_contract.rs::desktop_agent_client_error_taxonomy_maps_to_single_host_classification_owner',
+        'source/host/tests/agent_run_error_contract.rs::transport_cancel_retry_and_blob_not_found_match_desktop_contract',
+        'mobile/android/app/src/test/java/com/ombhrum/fabushi/RootShellNotificationHostTest.kt::recoveryRoutesAreStrictlyAllowlisted',
+        'tests/test_root_shell_notification_host_wiring.py',
+    ],
+    'platform_delta': (
+        'Desktop recovery presentation is adapted to native Compose routing. Android does not execute arbitrary route '
+        'strings: only login/upgrade/payment/config cross the presentation boundary, and they reuse existing account '
+        'login and Settings/billing owners. Unknown routes fail closed.'
+    ),
+    'evidence_semantics': (
+        'Same-head evidence pins the exact Desktop errors.ts blob, proves the Rust single-owner taxonomy and recovery '
+        'projection, proves the Compose allowlist and production route bindings, and executes focused Rust, JVM, and '
+        'Python wiring tests. It does not treat UI routing as ownership of retry or billing state.'
+    ),
+    'disposition': 'android-adapted',
 }
 
 GIT_REPO_UTILS_SOURCE_PATH = 'source/packages/agent-analytics/commit-scoring/git-repo-utils.ts'
@@ -2902,6 +2952,73 @@ def _ensure_git_diff_constant_semantic_mapping(
 
 
 
+
+def _ensure_agent_run_error_semantic_mapping(
+    responsibilities: list[dict],
+    new_by_path: dict[str, dict],
+    desktop_commit: str,
+) -> None:
+    source_object = new_by_path.get(AGENT_RUN_ERROR_SOURCE_PATH)
+    if source_object is None:
+        return
+    require(
+        source_object.get('type') == 'blob' and source_object.get('mode') in ALLOWED_SOURCE_MODES,
+        'Desktop agent-client/errors.ts has invalid blob/mode/type',
+    )
+    matches = [
+        item for item in responsibilities
+        if item.get('responsibility_id') == AGENT_RUN_ERROR_RESPONSIBILITY_ID
+    ]
+    require(
+        len(matches) == 1,
+        'agent error semantic mapping requires exactly one ' + AGENT_RUN_ERROR_RESPONSIBILITY_ID,
+    )
+    item = matches[0]
+    existing_sources = {
+        source.get('path'): dict(source)
+        for source in item.get('desktop_sources', [])
+        if isinstance(source, dict) and isinstance(source.get('path'), str)
+    }
+    source = existing_sources.get(AGENT_RUN_ERROR_SOURCE_PATH, {})
+    source.update({
+        'path': AGENT_RUN_ERROR_SOURCE_PATH,
+        'blob_sha': source_object['sha'],
+        'source_mode': source_object['mode'],
+        'source_type': source_object['type'],
+        'source_commit': desktop_commit,
+        'mapping_quality': 'semantic',
+        'symbols': list(AGENT_RUN_ERROR_SOURCE_SPEC['symbols']),
+        'focused_tests': list(AGENT_RUN_ERROR_SOURCE_SPEC['focused_tests']),
+        'android_targets': list(AGENT_RUN_ERROR_SOURCE_SPEC['android_targets']),
+        'source_owner': AGENT_RUN_ERROR_SOURCE_SPEC['source_owner'],
+        'android_owner': AGENT_RUN_ERROR_SOURCE_SPEC['android_owner'],
+        'platform_delta': AGENT_RUN_ERROR_SOURCE_SPEC['platform_delta'],
+        'evidence_semantics': AGENT_RUN_ERROR_SOURCE_SPEC['evidence_semantics'],
+    })
+    existing_sources[AGENT_RUN_ERROR_SOURCE_PATH] = source
+    item['desktop_sources'] = sorted(existing_sources.values(), key=lambda value: value.get('path', ''))
+    raw_targets = item.get('android_target')
+    if not isinstance(raw_targets, list):
+        raw_targets = []
+    for target in AGENT_RUN_ERROR_SOURCE_SPEC['android_targets']:
+        if target not in raw_targets:
+            raw_targets.append(target)
+    item['android_target'] = raw_targets
+    note = (
+        'Desktop agent-client/errors.ts is mapped existing-owner-first into the Rust Host agent_run_error classifier; '
+        'native recovery routes are strictly allowlisted and reuse existing login/settings owners.'
+    )
+    notes = item.get('notes')
+    if isinstance(notes, str):
+        if note not in notes:
+            item['notes'] = notes + ' ' + note
+    elif isinstance(notes, list):
+        if note not in notes:
+            notes.append(note)
+    else:
+        item['notes'] = note
+
+
 def _ensure_git_repo_utils_semantic_mapping(
     responsibilities: list[dict],
     new_by_path: dict[str, dict],
@@ -4021,8 +4138,85 @@ def merge_responsibility_mapping(
         _ensure_git_diff_constant_semantic_mapping(responsibilities, new_by_path, current)
     if GIT_REPO_UTILS_SOURCE_PATH in new_by_path:
         _ensure_git_repo_utils_semantic_mapping(responsibilities, new_by_path, current)
+    if AGENT_RUN_ERROR_SOURCE_PATH in new_by_path:
+        _ensure_agent_run_error_semantic_mapping(responsibilities, new_by_path, current)
     _keep_agent_store_ids_incomplete(responsibilities)
     _keep_mcp_constant_incomplete(responsibilities)
+
+    if AGENT_RUN_ERROR_SOURCE_PATH in new_by_path:
+        agent_error_responsibility = next(
+            item for item in responsibilities
+            if item.get('responsibility_id') == AGENT_RUN_ERROR_RESPONSIBILITY_ID
+        )
+        for evidence_key in ('production_evidence', 'test_evidence'):
+            existing_evidence = agent_error_responsibility.get(evidence_key)
+            if not isinstance(existing_evidence, list):
+                existing_evidence = []
+            agent_error_responsibility[evidence_key] = [
+                entry for entry in existing_evidence
+                if AGENT_RUN_ERROR_SOURCE_PATH not in (
+                    entry.get('source_paths')
+                    if isinstance(entry.get('source_paths'), list)
+                    else [entry.get('source_path')]
+                )
+            ]
+        agent_error_evidence = _latest_exact_head_android_ci_evidence(
+            android['android_pr_head_sha'],
+            production_step_name=AGENT_RUN_ERROR_PRODUCTION_STEP,
+            test_step_name=AGENT_RUN_ERROR_TEST_STEP,
+            evidence_label='agent error recovery owner',
+        )
+        if agent_error_evidence is not None:
+            production_target = AGENT_RUN_ERROR_SOURCE_SPEC['production_target']
+            test_target = AGENT_RUN_ERROR_SOURCE_SPEC['test_target']
+            require(
+                production_target in tracked_android_paths and test_target in tracked_android_paths,
+                'agent error recovery evidence target is not tracked at exact HEAD',
+            )
+            common = {
+                'source_paths': [AGENT_RUN_ERROR_SOURCE_PATH],
+                'source_commit': current,
+                'desktop_commit': current,
+                'desktop_root_tree': tree_sha,
+                'android_pr_head_sha': android['android_pr_head_sha'],
+                'android_tested_checkout_sha': android['android_checkout_sha'],
+                'workflow_sha': android['workflow_sha'],
+                'workflow_name': agent_error_evidence['workflow_name'],
+                'workflow_id': agent_error_evidence['workflow_id'],
+                'workflow_path': agent_error_evidence['workflow_path'],
+                'workflow_event': agent_error_evidence['workflow_event'],
+                'workflow_repository': agent_error_evidence['workflow_repository'],
+                'workflow_run_id': agent_error_evidence['workflow_run_id'],
+                'workflow_job_name': agent_error_evidence['workflow_job_name'],
+                'workflow_job_id': agent_error_evidence['workflow_job_id'],
+                'workflow_job_run_attempt': agent_error_evidence['workflow_job_run_attempt'],
+                'run_attempt': agent_error_evidence['run_attempt'],
+                'run_conclusion': agent_error_evidence['run_conclusion'],
+                'result': 'passed',
+                'evidence_semantics': AGENT_RUN_ERROR_SOURCE_SPEC['evidence_semantics'],
+            }
+            agent_error_responsibility['production_evidence'].append({
+                **common,
+                'kind': 'production-wiring',
+                'workflow_step_name': agent_error_evidence['production_step_name'],
+                'workflow_step_number': agent_error_evidence['production_step_number'],
+                'evidence_ref': production_target + '#single-agent-error-classification-owner',
+            })
+            agent_error_responsibility['test_evidence'].append({
+                **common,
+                'kind': 'focused-contract-test',
+                'workflow_step_name': agent_error_evidence['test_step_name'],
+                'workflow_step_number': agent_error_evidence['test_step_number'],
+                'evidence_ref': test_target + '#desktop-agent-client-error-recovery-contract',
+                'focused_tests': list(AGENT_RUN_ERROR_SOURCE_SPEC['focused_tests']),
+            })
+        else:
+            print(
+                'WARNING: no successful same-exact-head agent error recovery evidence; '
+                'agent-client/errors.ts package coverage remains incomplete',
+                file=sys.stderr,
+            )
+
     if COMPOSER_CONSTANT_SOURCE_PATH in new_by_path:
         _ensure_constants_composer_semantic_mapping(responsibilities, new_by_path, current)
     if AUTO_SPILLOVER_UI_SOURCE_PATH in new_by_path:
@@ -5113,6 +5307,8 @@ def merge_responsibility_mapping(
             row['disposition'] = GIT_DIFF_CONSTANT_SOURCE_SPEC['disposition']
         elif path == GIT_REPO_UTILS_SOURCE_PATH:
             row['disposition'] = GIT_REPO_UTILS_SOURCE_SPEC['disposition']
+        elif path == AGENT_RUN_ERROR_SOURCE_PATH:
+            row['disposition'] = AGENT_RUN_ERROR_SOURCE_SPEC['disposition']
         elif path == COMPOSER_CONSTANT_SOURCE_PATH:
             row['disposition'] = COMPOSER_CONSTANT_SOURCE_SPEC['disposition']
         elif path == STRUCTURED_LOG_CONSTANT_SOURCE_PATH:

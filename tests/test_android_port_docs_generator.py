@@ -1050,7 +1050,7 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertEqual(
             (module.PREDECESSOR_TRACKED_NON_TREE_COUNT, module.PREDECESSOR_TREE_ENTRY_COUNT,
              module.EXPECTED_TRACKED_NON_TREE_COUNT, module.EXPECTED_TREE_ENTRY_COUNT),
-            (8258, 9412, 8313, 9468),
+            (8258, 9412, 8319, 9474),
         )
         current_commit, current_tree = "d" * 40, "e" * 40
         predecessor_commit, predecessor_tree = "p" * 40, "q" * 40
@@ -2304,6 +2304,25 @@ class AndroidPortDocsGeneratorTest(unittest.TestCase):
         self.assertIn("repoLabelForPrompt", workflow)
         self.assertIn("elif path == GIT_REPO_UTILS_SOURCE_PATH:", merge_source)
         self.assertIn("row['disposition'] = GIT_REPO_UTILS_SOURCE_SPEC['disposition']", merge_source)
+
+
+    def test_agent_run_error_mapping_uses_existing_rust_owner_and_strict_native_recovery_routes(self):
+        module = load_generator_module()
+        self.assertEqual(module.AGENT_RUN_ERROR_SOURCE_PATH, "source/packages/agent-client/errors.ts")
+        self.assertEqual(module.AGENT_RUN_ERROR_RESPONSIBILITY_ID, "AGENT-RUN-ERROR-ANDROID-001")
+        spec = module.AGENT_RUN_ERROR_SOURCE_SPEC
+        self.assertEqual(spec["disposition"], "android-adapted")
+        self.assertIn("source/host/src/extensions/transcript/agent_run_error.rs", spec["android_targets"])
+        self.assertIn("single canonical", spec["android_owner"])
+        workflow = (ROOT / ".github" / "workflows" / "grok-android-architecture.yml").read_text(encoding="utf-8")
+        self.assertIn("Verify exact-HEAD agent error recovery owner", workflow)
+        self.assertIn("Test exact-HEAD agent error recovery owner", workflow)
+        host = (ROOT / "frontend" / "src" / "main" / "kotlin" / "com" / "ombhrum" / "fabushi" / "frontend" / "recovered" / "features" / "window-chrome" / "RootShellNotificationHost.kt").read_text(encoding="utf-8")
+        renderer = (ROOT / "frontend" / "src" / "main" / "kotlin" / "com" / "ombhrum" / "fabushi" / "frontend" / "production" / "ProductionRenderer_view.kt").read_text(encoding="utf-8")
+        self.assertIn('route !in setOf("login", "upgrade", "payment", "config")', host)
+        self.assertIn('"login" -> model.beginBrowserLogin()', renderer)
+        self.assertIn('"upgrade", "payment" -> {', renderer)
+        self.assertIn('"config" -> showSettings = true', renderer)
 
     def test_auto_spillover_ui_contract_keeps_constants_declaration_only_and_verifies_native_usage_replacement(self):
         constants = (ROOT / "source" / "packages" / "constants" / "src" / "auto_spillover_ui.rs").read_text(encoding="utf-8")
