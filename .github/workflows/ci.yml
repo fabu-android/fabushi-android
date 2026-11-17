@@ -1,0 +1,69 @@
+name: Android & Rust CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Rust JNI Host + Mika Core/Agent + Telegram Android APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK & NDK 27
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-37.0 platforms;android-36 build-tools;37.0.0 build-tools;36.0.0 build-tools;35.0.0 ndk;27.2.12479018"
+
+      - name: Set up Rust stable & Android cross targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - name: Cache Rust compilation
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mobile/android/rust/mahayana_android_host
+          cache-on-failure: true
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Rust host unit & integration tests
+        working-directory: mobile/android/rust/mahayana_android_host
+        run: cargo test -- --nocapture
+
+      - name: Cross-compile 16KB-aligned libmahayana_app_host.so (Android + Host JVM)
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: bash scripts/build_rust_android.sh
+
+      - name: Verify Mika Core, Mika Agent, App JVM JNI tests, UI test compile & Debug APK
+        working-directory: mobile/android
+        run: |
+          ./gradlew \
+            --max-workers=2 \
+            :mika-core:test \
+            :mika-core:knowledgeIndex \
+            :mika-agent:testDebugUnitTest \
+            :app:testDebugUnitTest \
+            :app:compileDebugAndroidTestKotlin \
+            :app:assembleDebug \
+            --stacktrace

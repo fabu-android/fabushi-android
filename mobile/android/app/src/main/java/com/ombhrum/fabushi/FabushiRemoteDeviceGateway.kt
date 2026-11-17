@@ -33,11 +33,17 @@ internal class FabushiRemoteDeviceGateway(
     private val surface: FabushiAppAgentSurface,
     private val metadata: Map<String, String>,
     private val configuredDeviceName: String? = null,
+    private val phoneBridge: com.ombhrum.fabushi.telegram.MikaBridgeCallbacks? = null,
 ) : AutoCloseable {
     companion object {
         private const val OfficialGatewayUrl = "wss://fabushi-mcp.ombhrum.com/agent"
         private const val LeaseSeconds = 14_400
         private const val MaxMessageBytes = 32 * 1024 * 1024
+
+        const val PhoneStatusTool = "fabushi.phone.status"
+        const val PhoneDispatchTool = "fabushi.phone.dispatch"
+        const val PhoneStopTool = "fabushi.phone.stop"
+        val PhoneToolNames: List<String> = listOf(PhoneStatusTool, PhoneDispatchTool, PhoneStopTool)
     }
 
     private data class AgentSession(
@@ -112,12 +118,17 @@ internal class FabushiRemoteDeviceGateway(
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 synchronized(stateLock) { socket = webSocket }
+                val advertisedCapabilities = if (phoneBridge != null) {
+                    FabushiAppAgentSurface.ToolNames + PhoneToolNames
+                } else {
+                    FabushiAppAgentSurface.ToolNames
+                }
                 val registration = JSONObject()
                     .put("type", "register")
                     .put("deviceId", session.deviceId)
                     .put("name", configuredDeviceName ?: "Fabushi Android ${session.deviceId}".take(200))
                     .put("platform", "android")
-                    .put("capabilities", JSONArray(FabushiAppAgentSurface.ToolNames))
+                    .put("capabilities", JSONArray(advertisedCapabilities))
                     .put("tools", toolDescriptors())
                     .put("leaseSeconds", LeaseSeconds)
                     .put("metadata", JSONObject(metadata))
@@ -212,10 +223,42 @@ internal class FabushiRemoteDeviceGateway(
             }
     }
 
-    private suspend fun invokeTool(toolName: String, arguments: JSONObject): JSONObject =
+    internal suspend fun invokeTool(toolName: String, arguments: JSONObject): JSONObject =
         withContext(Dispatchers.Main.immediate) {
-            require(toolName in FabushiAppAgentSurface.ToolNames) { "unknown_fabushi_app_tool" }
+            val allowedTools = if (phoneBridge != null) {
+                FabushiAppAgentSurface.ToolNames + PhoneToolNames
+            } else {
+                FabushiAppAgentSurface.ToolNames
+            }
+            require(toolName in allowedTools) { "unknown_fabushi_app_tool" }
             when (toolName) {
+                PhoneStatusTool -> {
+                    val snap = checkNotNull(phoneBridge).currentSnapshot()
+                    JSONObject()
+                        .put("available", snap.available)
+                        .put("accessibilityEnabled", snap.accessibilityEnabled)
+                        .put("wirelessAdbPaired", snap.wirelessAdbPaired)
+                        .put("helperBinderAlive", snap.helperBinderAlive)
+                        .put("virtualDisplayActive", snap.virtualDisplayActive)
+                        .put("capsuleVisible", snap.capsuleVisible)
+                        .put("sandboxReady", snap.sandboxReady)
+                        .put("activeSpeedProfile", snap.activeSpeedProfile)
+                        .put("hasActiveTask", snap.activeTask != null)
+                        .put("hasPendingConfirmation", snap.pendingConfirmationPrompt != null)
+                }
+                PhoneDispatchTool -> {
+                    val prompt = arguments.optString("prompt").trim()
+                    require(prompt.isNotEmpty() && prompt.length <= 2000) { "invalid_device_gateway_call" }
+                    val sourceChat = arguments.optString("conversationId").takeIf(String::isNotBlank)
+                    checkNotNull(phoneBridge).submitPhoneTask(prompt, sourceChat)
+                    JSONObject()
+                        .put("accepted", true)
+                        .put("promptLength", prompt.length)
+                }
+                PhoneStopTool -> {
+                    checkNotNull(phoneBridge).stopActiveTask()
+                    JSONObject().put("stopped", true)
+                }
                 FabushiAppAgentSurface.StatusTool -> statusJson(surface.status())
                 FabushiAppAgentSurface.SnapshotTool -> {
                     val maximum = arguments.optInt("maxElements", 500).coerceIn(1, 500)
@@ -327,7 +370,7 @@ internal class FabushiRemoteDeviceGateway(
         return AgentSession(accessToken, deviceId, sessionId, username, expiresAt)
     }
 
-    private fun toolDescriptors(): JSONArray {
+    internal fun toolDescriptors(): JSONArray {
         fun schema(vararg properties: Pair<String, Any>, required: List<String> = emptyList()): JSONObject {
             val objectValue = JSONObject().put("type", "object").put("properties", JSONObject())
             properties.forEach { (name, value) -> objectValue.getJSONObject("properties").put(name, value) }
@@ -351,13 +394,20 @@ internal class FabushiRemoteDeviceGateway(
             "role" to stringSchema(), "name" to stringSchema(), "text" to stringSchema(),
             "state" to stringSchema("present", "absent", "enabled", "disabled", "visible", "hidden"),
         )
-        return JSONArray()
+        val arr = JSONArray()
             .put(descriptor(FabushiAppAgentSurface.StatusTool, "Fabushi app agent-surface status", "Report whether the active Fabushi Android application exposes its structured semantic surface.", schema(), true))
             .put(descriptor(FabushiAppAgentSurface.SnapshotTool, "Read the Fabushi semantic UI", "Return a structured redacted semantic snapshot of the active Fabushi Android UI.", schema("maxElements" to integerSchema(), "includeText" to booleanSchema()), true))
             .put(descriptor(FabushiAppAgentSurface.FindTool, "Find Fabushi UI elements", "Find semantic elements by stable id, generation-bound ref, role, accessible name, or visible text.", schema("agentId" to stringSchema(), "ref" to stringSchema(), "role" to stringSchema(), "name" to stringSchema(), "text" to stringSchema(), "limit" to integerSchema()), true))
             .put(descriptor(FabushiAppAgentSurface.ActionTool, "Operate the Fabushi semantic UI", "Perform one allowlisted action against the exact current semantic generation.", schema("generation" to integerSchema(), "ref" to stringSchema(), "agentId" to stringSchema(), "action" to stringSchema("invoke", "focus", "setValue", "pressKey", "scroll", "selectOption", "toggle"), "value" to stringSchema(), required = listOf("generation", "action")), false))
             .put(descriptor(FabushiAppAgentSurface.WaitTool, "Wait for Fabushi UI state", "Wait for a bounded semantic UI condition.", schema(*(stateProperties + ("timeoutMs" to integerSchema()))), true))
             .put(descriptor(FabushiAppAgentSurface.AssertTool, "Assert Fabushi UI state", "Evaluate a deterministic semantic UI assertion for CI evidence.", schema(*stateProperties), true))
+        if (phoneBridge != null) {
+            arr
+                .put(descriptor(PhoneStatusTool, "Mika phone-control status", "Report Accessibility, Wireless ADB helper, VirtualDisplay, Capsule, and Sandbox readiness.", schema(), true))
+                .put(descriptor(PhoneDispatchTool, "Dispatch Mika phone-control task", "Submit a ConfirmationGate-protected phone task to Mika TaskService.", schema("prompt" to stringSchema(), "conversationId" to stringSchema(), required = listOf("prompt")), false))
+                .put(descriptor(PhoneStopTool, "Stop Mika phone-control task", "Immediately cancel the active Mika phone task.", schema(), false))
+        }
+        return arr
     }
 
     private fun statusJson(status: FabushiAppAgentSurface.Status) = JSONObject()

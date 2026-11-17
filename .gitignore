@@ -1,0 +1,28 @@
+# Gradle & Android
+.gradle/
+**/build/
+**/local.properties
+**/.cxx/
+**/*.apk
+**/*.aab
+**/*.ap_
+**/*.dex
+
+# Rust / Cargo
+**/target/
+mobile/android/app/src/main/jniLibs/*/libmahayana_app_host.so
+mobile/android/rust/host-lib/
+
+# Signing & Secrets (NEVER commit keystores or session files)
+*.jks
+*.keystore
+*.p12
+fabushi-ci-session.json
+release-signing/
+dist/
+
+# IDE & OS
+.idea/
+*.iml
+.DS_Store
+Thumbs.db

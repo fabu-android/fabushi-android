@@ -1,15 +1,15 @@
 # Fabushi Android — Agent Instructions
 
-These instructions apply repository-wide to AI-assisted development in `bhrumom/fabushi-android`.
+These instructions apply repository-wide to AI-assisted development in `fabu-android/fabushi-android` (`bhrumom/fabushi-android`).
 
 ## CRITICAL: Repository ownership
 
-This repository is the canonical source for **native Android application, Android-specific UI/runtime integration, packaging and Play distribution**.
+This repository is the canonical source for **native Android application, Android-specific UI/runtime integration, on-device Mika phone-control agent modules (`:mika-core`, `:mika-agent`), Android Rust JNI host bridge (`mobile/android/rust/mahayana_android_host`), packaging and Play/GitHub distribution** (see `docs/specs/gpui-telegram-android-mika-fusion.md`).
 
 - Verify the current GitHub repository before product-affecting work.
-- Do not implement another Fabushi platform's product code here. Switch to that platform's canonical repository first.
+- Do not implement another Fabushi platform's product code (Desktop/iOS/Web) here. Switch to that platform's canonical repository first.
 - `bhrumom/fabushi` is the legacy migration/source-history repository, not the canonical implementation repository for this scope.
-- Shared Mahayana/Rust runtime/contracts belong in `bhrumom/fabushi-platform-core`; this repository owns only its platform-specific consumer/integration.
+- Keep Cargo profiles lean (`debug = 0`, `strip = "debuginfo"`, `incremental = false`) and never commit generated `jniLibs/*/libmahayana_app_host.so` or signing keystores to git.
 
 ## CRITICAL: Spec-first development — No Spec, No Code
 

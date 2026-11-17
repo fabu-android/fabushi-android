@@ -102,7 +102,11 @@ object AndroidVersion {
     }
 
     private fun parse(value: String): Parsed {
-        val normalized = value.trim().removePrefix("v").substringBefore('+')
+        val normalized = value
+            .trim()
+            .removePrefix("android-v")
+            .removePrefix("v")
+            .substringBefore('+')
         val pieces = normalized.split('-', limit = 2)
         val core = pieces.firstOrNull().orEmpty().split('.')
             .filter { it.isNotBlank() }
@@ -113,19 +117,50 @@ object AndroidVersion {
     }
 }
 
+internal object AndroidUpdateValidator {
+    const val CANONICAL_REPOSITORY = "fabu-android/fabushi-android"
+    val TRUSTED_REPOSITORIES: Set<String> = setOf(
+        "fabu-android/fabushi-android",
+        "bhrumom/fabushi-android",
+        "bhrumom/fabushi",
+    )
+    private val APK_NAME_REGEX = Regex("^[A-Za-z0-9._-]+[.]apk$")
+    private val SHA256_REGEX = Regex("^[a-f0-9]{64}$")
+
+    fun isTrustedRepository(repository: String): Boolean = repository.trim() in TRUSTED_REPOSITORIES
+
+    fun isSupportedReleaseTag(tag: String): Boolean {
+        val trimmed = tag.trim()
+        return (trimmed.startsWith("v") && trimmed.length > 1 && trimmed[1].isDigit()) ||
+            (trimmed.startsWith("android-v") && trimmed.length > 9 && trimmed[9].isDigit())
+    }
+
+    fun isValidApkFileName(name: String): Boolean = APK_NAME_REGEX.matches(name.trim())
+
+    fun isValidSha256Hex(sha256: String): Boolean = SHA256_REGEX.matches(sha256.trim().lowercase())
+
+    fun trustedReleaseDownloadUrl(value: String): String {
+        val url = URL(value)
+        require(url.protocol == "https" && url.host == "github.com") { "Untrusted GitHub release URL." }
+        val matchedRepo = TRUSTED_REPOSITORIES.any { repo ->
+            url.path.startsWith("/$repo/releases/download/")
+        }
+        require(matchedRepo) { "Unexpected GitHub release path." }
+        return url.toString()
+    }
+}
+
 class AndroidUpdateViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
-        private const val RELEASES_API = "https://api.github.com/repos/bhrumom/fabushi/releases?per_page=100"
+        internal const val REPOSITORY = AndroidUpdateValidator.CANONICAL_REPOSITORY
+        internal const val RELEASES_API = "https://api.github.com/repos/fabu-android/fabushi-android/releases?per_page=100"
         private const val UPDATE_MANIFEST_NAME = "fabushi-android-update.json"
-        private const val REPOSITORY = "bhrumom/fabushi"
         private const val UPDATE_CHECK_MIN_INTERVAL_MS = 60_000L
         private const val UPDATE_FOREGROUND_INTERVAL_MS = 5 * 60_000L
         private const val STARTUP_DELAY_MS = 4_000L
         private const val MAX_METADATA_BYTES = 2 * 1024 * 1024
         private const val MAX_MANIFEST_BYTES = 128 * 1024
         private const val MAX_APK_BYTES = 768L * 1024L * 1024L
-        private val APK_NAME = Regex("^[A-Za-z0-9._-]+[.]apk$")
-        private val SHA256 = Regex("^[a-f0-9]{64}$")
     }
 
     private val applicationContext = getApplication<Application>()
@@ -261,12 +296,12 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             val release = releases.optJSONObject(index) ?: continue
             if (release.optBoolean("draft") || release.optBoolean("prerelease")) continue
             val tag = release.optString("tag_name")
-            if (!tag.startsWith("android-v")) continue
+            if (!AndroidUpdateValidator.isSupportedReleaseTag(tag)) continue
             val assets = release.optJSONArray("assets") ?: continue
             val manifestAsset = assetNamed(assets, UPDATE_MANIFEST_NAME) ?: continue
             val manifestUrl = trustedReleaseDownloadUrl(manifestAsset.optString("browser_download_url"))
             val manifest = JSONObject(httpGetText(manifestUrl, MAX_MANIFEST_BYTES))
-            if (manifest.optInt("schemaVersion") != 1 || manifest.optString("repository") != REPOSITORY) continue
+            if (manifest.optInt("schemaVersion") != 1 || !AndroidUpdateValidator.isTrustedRepository(manifest.optString("repository"))) continue
             if (manifest.optString("tag") != tag) continue
 
             val version = manifest.optString("version").trim()
@@ -274,7 +309,7 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
             val apkName = manifest.optString("apk").trim()
             val sha256 = manifest.optString("sha256").trim().lowercase()
             val manifestSize = manifest.optLong("size", -1L)
-            if (version.isEmpty() || versionCode <= 0L || !APK_NAME.matches(apkName) || !SHA256.matches(sha256)) continue
+            if (version.isEmpty() || versionCode <= 0L || !AndroidUpdateValidator.isValidApkFileName(apkName) || !AndroidUpdateValidator.isValidSha256Hex(sha256)) continue
             if (!AndroidVersion.isNewer(version, versionCode, currentVersion, currentVersionCode)) continue
 
             val apkAsset = assetNamed(assets, apkName) ?: continue
@@ -314,12 +349,8 @@ class AndroidUpdateViewModel(application: Application) : AndroidViewModel(applic
         return null
     }
 
-    private fun trustedReleaseDownloadUrl(value: String): String {
-        val url = URL(value)
-        require(url.protocol == "https" && url.host == "github.com") { "Untrusted GitHub release URL." }
-        require(url.path.startsWith("/bhrumom/fabushi/releases/download/")) { "Unexpected GitHub release path." }
-        return url.toString()
-    }
+    private fun trustedReleaseDownloadUrl(value: String): String =
+        AndroidUpdateValidator.trustedReleaseDownloadUrl(value)
 
     private fun httpGetText(urlValue: String, maxBytes: Int): String {
         val connection = openConnection(urlValue, "application/vnd.github+json, application/json")

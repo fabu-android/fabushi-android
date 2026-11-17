@@ -1,0 +1,19 @@
+全球法布施 / Fabushi Android
+Copyright 2026 OmBhrum / fabu-android Contributors
+Licensed under the Apache License, Version 2.0 (https://github.com/fabu-android/fabushi-android)
+
+This product incorporates and builds upon software from the following open-source projects:
+
+1. GPUI-Telegram & Fabushi Desktop/Server
+   Copyright 2025-2026 bhrum / OmBhrum Contributors
+   Source: https://github.com/bhrum/gpui-telegram
+   License: Apache License, Version 2.0
+
+2. Mika — On-Device Android AI Phone Agent
+   Copyright 2026 wangzan101
+   Source: https://github.com/wangzan101/Mika
+   License: Apache License, Version 2.0
+   Modules: mobile/android/mika-core (:mika-core), mobile/android/mika-agent (:mika-agent)
+
+See licenses/THIRD_PARTY_NOTICES.md for complete third-party component notices and bundled
+Alpine Linux / PRoot standalone runtime license disclosures.
