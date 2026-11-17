@@ -111,10 +111,10 @@ def ensure_signed_apk(input_apk: Path, output_apk: Path, keystore_dir: Path) -> 
         shutil.copy2(input_apk, output_apk)
         return
 
-    ks_path_env = os.environ.get("ANDROID_KEYSTORE_PATH")
-    ks_pass = os.environ.get("ANDROID_KEYSTORE_PASSWORD", "fabushi-release-pass")
-    key_alias = os.environ.get("ANDROID_KEY_ALIAS", "fabushi-release")
-    key_pass = os.environ.get("ANDROID_KEY_PASSWORD", ks_pass)
+    ks_path_env = (os.environ.get("ANDROID_KEYSTORE_PATH") or "").strip()
+    ks_pass = (os.environ.get("ANDROID_KEYSTORE_PASSWORD") or "").strip() or "fabushi-release-pass"
+    key_alias = (os.environ.get("ANDROID_KEY_ALIAS") or "").strip() or "fabushi-release"
+    key_pass = (os.environ.get("ANDROID_KEY_PASSWORD") or "").strip() or ks_pass
 
     if ks_path_env and Path(ks_path_env).is_file():
         ks_file = Path(ks_path_env)

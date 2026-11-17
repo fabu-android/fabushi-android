@@ -21,7 +21,9 @@ fabushi-ci-session.json
 release-signing/
 dist/
 
-# IDE & OS
+# IDE, Python & OS
+__pycache__/
+*.py[cod]
 .idea/
 *.iml
 .DS_Store
