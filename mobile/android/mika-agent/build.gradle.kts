@@ -4,6 +4,34 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+val resolvedVersionName: String =
+    (project.findProperty("versionName")?.toString()?.trim()?.takeIf { it.isNotEmpty() }) ?: "2.0.0"
+val resolvedVersionCode: Int =
+    (project.findProperty("versionCode")?.toString()?.trim()?.takeIf { it.isNotEmpty() })
+        ?.let { raw ->
+            raw.toIntOrNull()?.takeIf { it > 0 }
+                ?: throw GradleException("Invalid -PversionCode='$raw': must be a positive 32-bit integer")
+        } ?: 20000
+val resolvedGitHash: String =
+    (project.findProperty("gitHash")?.toString()?.trim()?.takeIf { it.isNotEmpty() })
+        ?: "v$resolvedVersionName"
+
+fun escapeJavaBuildConfigString(value: String): String =
+    buildString(value.length + 2) {
+        append('"')
+        for (ch in value) {
+            when (ch) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                '\t' -> append("\\t")
+                else -> append(ch)
+            }
+        }
+        append('"')
+    }
+
 android {
     namespace = "com.wangzan101.mika"
     compileSdk = 37
@@ -12,9 +40,9 @@ android {
         minSdk = 29
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
-        buildConfigField("String", "VERSION_NAME", "\"2.0.0\"")
-        buildConfigField("int", "VERSION_CODE", "20000")
-        buildConfigField("String", "GIT_HASH", "\"v2.0.0\"")
+        buildConfigField("String", "VERSION_NAME", escapeJavaBuildConfigString(resolvedVersionName))
+        buildConfigField("int", "VERSION_CODE", resolvedVersionCode.toString())
+        buildConfigField("String", "GIT_HASH", escapeJavaBuildConfigString(resolvedGitHash))
         buildConfigField("boolean", "BETA", "false")
         buildConfigField("boolean", "ADB_LOGS", "false")
     }

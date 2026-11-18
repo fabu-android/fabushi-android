@@ -8,13 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release tag (e.g. v2.0.0)"
+        description: "Release tag (e.g. v2.1.0)"
         required: true
         type: string
       version_code:
-        description: "Monotonic Android versionCode"
+        description: "Optional monotonic Android versionCode override (leave empty to derive from semver tag)"
         required: false
-        default: "20000"
+        default: ""
         type: string
 
 permissions:
@@ -27,6 +27,25 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+
+      - name: Resolve deterministic release version & monotonic versionCode
+        env:
+          INPUT_TAG: ${{ inputs.tag_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VCODE: ${{ inputs.version_code }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-$REF_NAME}"
+          args=(
+            scripts/package_android_release.py
+            --resolve-release-metadata
+            --tag="$TAG"
+            --github-env="$GITHUB_ENV"
+          )
+          if [ -n "$INPUT_VCODE" ]; then
+            args+=(--version-code="$INPUT_VCODE")
+          fi
+          python3 "${args[@]}"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -56,6 +75,7 @@ jobs:
       - name: Build 16KB-aligned Rust JNI Libraries
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          ANDROID_API_LEVEL: "29"
         run: bash scripts/build_rust_android.sh
 
       - name: Materialize Optional Signing Keystore from Secrets
@@ -64,7 +84,9 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
             mkdir -p "$RUNNER_TEMP/keystore"
+            chmod 700 "$RUNNER_TEMP/keystore"
             printf '%s' "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/keystore/release.keystore"
+            chmod 600 "$RUNNER_TEMP/keystore/release.keystore"
             echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/keystore/release.keystore" >> "$GITHUB_ENV"
           fi
 
@@ -75,51 +97,47 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          TAG="${{ inputs.tag_name || github.ref_name }}"
-          VER="${TAG#android-}"
-          VER="${VER#v}"
-          VCODE="${{ inputs.version_code || '20000' }}"
           ./gradlew \
             --max-workers=2 \
-            -PversionName="$VER" \
-            -PversionCode="$VCODE" \
+            -PversionName="$RELEASE_VER" \
+            -PversionCode="$RELEASE_VCODE" \
+            -PgitHash="$RELEASE_TAG" \
             :mika-core:test \
             :app:testDebugUnitTest \
             :app:assembleDebug \
             --stacktrace
           ./gradlew \
             --max-workers=2 \
-            -PversionName="$VER" \
-            -PversionCode="$VCODE" \
+            -PversionName="$RELEASE_VER" \
+            -PversionCode="$RELEASE_VCODE" \
+            -PgitHash="$RELEASE_TAG" \
             :app:assembleRelease \
             --stacktrace
           ./gradlew \
             --max-workers=2 \
-            -PversionName="$VER" \
-            -PversionCode="$VCODE" \
+            -PversionName="$RELEASE_VER" \
+            -PversionCode="$RELEASE_VCODE" \
+            -PgitHash="$RELEASE_TAG" \
             :app:assembleGithubRelease \
             --stacktrace
 
       - name: Package, Sign, Verify 16KB Alignment & Generate Update Manifest
         env:
+          GH_REPOSITORY: ${{ github.repository }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          TAG="${{ inputs.tag_name || github.ref_name }}"
-          VER="${TAG#android-}"
-          VER="${VER#v}"
-          VCODE="${{ inputs.version_code || '20000' }}"
           python3 scripts/package_android_release.py \
-            --repository "${{ github.repository }}" \
-            --tag "$TAG" \
-            --version "$VER" \
-            --version-code "$VCODE"
+            --repository="$GH_REPOSITORY" \
+            --tag="$RELEASE_TAG" \
+            --version="$RELEASE_VER" \
+            --version-code="$RELEASE_VCODE"
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: fabushi-telegram-mika-android-${{ inputs.tag_name || github.ref_name }}
+          name: fabushi-telegram-mika-android-${{ env.RELEASE_TAG }}
           path: |
             dist/*.apk
             dist/fabushi-android-update.json
@@ -130,6 +148,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          TAG="${{ inputs.tag_name || github.ref_name }}"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Fabushi Telegram + Mika Android ${TAG}" --generate-notes
-          gh release upload "$TAG" dist/*.apk dist/fabushi-android-update.json dist/SHA256SUMS --clobber
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || gh release create "$RELEASE_TAG" --title "Fabushi Telegram + Mika Android ${RELEASE_TAG}" --generate-notes
+          gh release upload "$RELEASE_TAG" dist/*.apk dist/fabushi-android-update.json dist/SHA256SUMS --clobber

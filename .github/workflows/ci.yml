@@ -53,6 +53,7 @@ jobs:
       - name: Cross-compile 16KB-aligned libmahayana_app_host.so (Android + Host JVM)
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          ANDROID_API_LEVEL: "29"
         run: bash scripts/build_rust_android.sh
 
       - name: Verify Mika Core, Mika Agent, App JVM JNI tests, UI test compile & Debug APK

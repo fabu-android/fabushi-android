@@ -1,9 +1,9 @@
 # Spec-first AI development
 
 Status: active  
-Date: 2026-09-21  
-Repository: `bhrumom/fabushi-android`  
-Repository scope: native Android application, Android-specific UI/runtime integration, packaging and Play distribution
+Date: 2026-11-18  
+Repository: `fabu-android/fabushi-android`  
+Repository scope: native Android application, Android-specific UI/runtime integration, on-device Mika phone-control agent modules (`:mika-core`, `:mika-agent`), Android Rust JNI host bridge (`mobile/android/rust/mahayana_android_host`), packaging and Play/GitHub distribution
 
 ## Rule
 
