@@ -58,11 +58,14 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.collectLatest
+import com.wangzan101.mika.pocket.LockTriggerPolicy
 import java.util.concurrent.atomic.AtomicInteger
 import java.time.LocalTime
 import com.wangzan101.mika.core.cap.web.KeptPageClose
@@ -182,7 +185,7 @@ class TaskService : Service() {
 
     private fun channelFor(peer: ChannelPeer, scheduled: Boolean = false): Channel = when (peer.channelId) {
         LocalChannel.ID -> if (scheduled) scheduledLocalChannel else localChannel
-        else -> checkNotNull((application as com.wangzan101.mika.MikaApp).wechat.channelFor(peer.channelId)) {
+        else -> checkNotNull((application as com.wangzan101.mika.MikaApp).resolveChannel(peer.channelId)) {
             "unknown channel ${peer.channelId}"
         }
     }
@@ -215,8 +218,11 @@ class TaskService : Service() {
     internal fun hasActiveRuns() = center.running().isNotEmpty()
     internal fun hasQueuedRuns() = center.queued().isNotEmpty()
 
+    private val pocketGuard by lazy { com.wangzan101.mika.pocket.PocketGuardManager(this) }
+
     private fun publishRuns() {
         val r = center.runs()
+        pocketGuard.setTasksActive(center.running().isNotEmpty())
         taskState._runs.value = r
         taskState._activeConversations.value = r.map { it.conversationId }
     }
@@ -314,8 +320,11 @@ class TaskService : Service() {
             ACTION_START_CHANNEL -> {
                 val peer = ChannelPeer(intent.getStringExtra(EXTRA_CHANNEL_ID).orEmpty(),
                     intent.getStringExtra(EXTRA_PEER_ID).orEmpty(), intent.getStringExtra(EXTRA_CONVERSATION).orEmpty())
+                val confirms = runCatching { channelFor(peer).confirms }.getOrDefault(false)
+                val channelProvenance = if (confirms) RunProvenance(RunOrigin.Ui, Attendance.Present)
+                    else RunProvenance(RunOrigin.Channel, Attendance.Reachable)
                 begin(intent.getStringExtra(EXTRA_GOAL).orEmpty(), peer.threadId,
-                    provenance = RunProvenance(RunOrigin.Channel, Attendance.Reachable),
+                    provenance = channelProvenance,
                     channelPeer = peer, channelMessageId = intent.getStringExtra(EXTRA_CHANNEL_MESSAGE_ID))
             }
             ACTION_CANCEL_MCP -> intent.getStringExtra(EXTRA_MCP_ID)?.let { id -> center.runs().firstOrNull { it.mcpExternalId == id } }
@@ -361,7 +370,7 @@ class TaskService : Service() {
         parallel = FeatureFlags.get(this).speedFlags().parallelTasks
         // 同一对话里正在执行或排队的任务收到新原话时，交给它的 Inbox。
         requestedConversation?.let(center::byConversation)?.let { existing ->
-            if (provenance.origin == RunOrigin.Ui) {
+            if (provenance.origin == RunOrigin.Ui && channelPeer == null) {
                 if (messageId != null) existing.steer(newGoal, messageId) else existing.steer(newGoal)
                 keepForeground()
                 return
@@ -406,8 +415,9 @@ class TaskService : Service() {
         // 对话页先等服务空下来再交过来,但查完到交到之间别处(定时、电脑)可能先开始了一个,这里同样排上
         val store = ConversationStore.shared(this)
         val conversationId = requestedConversation ?: store.newConversation()
-        // 定时和电脑交来的任务不丢:这个对话还有任务时排在它后面
-        val queueHere = provenance.origin == RunOrigin.Trigger || provenance.origin == RunOrigin.Mcp || provenance.origin == RunOrigin.Channel
+        // 定时、电脑和渠道交来的任务不丢:这个对话还有任务时排在它后面
+        val queueHere = provenance.origin == RunOrigin.Trigger || provenance.origin == RunOrigin.Mcp ||
+            provenance.origin == RunOrigin.Channel || channelPeer != null
         when (val r = center.tryStart(conversationId, newGoal, queueInConversation = queueHere,
             channelPeer = channelPeer, channelMessageId = channelMessageId, followUp = followUp)) {
             StartResult.DuplicateChannelMessage -> acknowledgeChannel(channelPeer, channelMessageId)
@@ -495,6 +505,18 @@ class TaskService : Service() {
     }
 
     private fun launch(run: TaskRun, store: ConversationStore) {
+        val waitingLockWatcher = scope.launch {
+            run.state.collectLatest { state ->
+                if (LockTriggerPolicy.isWaiting(state)) {
+                    pocketGuard.lockWhileWaitingIfCovered {
+                        LockTriggerPolicy.isWaiting(run.state.value) && run in center.running() &&
+                            center.running().none { it !== run } && center.queued().isEmpty()
+                    }
+                } else if (state is TaskState.Running) {
+                    pocketGuard.onTaskResumed()
+                }
+            }
+        }
         run.job = scope.launch {
             center.markRunning(run)
             // 定时任务没人在场,卡住了没人停:跑过设置里的最长运行时间就停下(默认不限制)
@@ -557,6 +579,11 @@ class TaskService : Service() {
                         .onFailure { Log.w(TAG, "condition failure notification failed", it) }
                 }
                 center.markDelivered(run)
+                if (outcome is ConditionOutcome.Error) withContext(NonCancellable) {
+                    pocketGuard.lockAfterStopIfCovered {
+                        center.running().none { it !== run } && center.queued().isEmpty()
+                    }
+                }
                 onRunEnded(run, store)
                 return@launch
             }
@@ -594,10 +621,17 @@ class TaskService : Service() {
                 }
             }.onFailure { Log.w(TAG, "result notification failed", it) }
             if (delivered) center.markDelivered(run)
+            if (LockTriggerPolicy.shouldCheck(end)) {
+                withContext(NonCancellable) {
+                    pocketGuard.lockAfterStopIfCovered {
+                        center.running().none { it !== run } && center.queued().isEmpty()
+                    }
+                }
+            }
             onRunEnded(run, store)
         }
         // 收尾前被取消(服务退出)、放出来还没跑就被停掉时,替它拿着的屏幕锁没交出去也没放开:这里放开
-        run.job?.invokeOnCompletion { run.wakeHandoff?.release(); run.wakeHandoff = null }
+        run.job?.invokeOnCompletion { waitingLockWatcher.cancel(); run.wakeHandoff?.release(); run.wakeHandoff = null }
     }
 
     /**
@@ -990,6 +1024,7 @@ class TaskService : Service() {
     private fun openApp(threadId: String? = null) = openApp(this, threadId)
 
     override fun onDestroy() {
+        pocketGuard.close()
         scope.cancel()
         // 服务没了就撑不住进程:留着的那一页如实关掉,对话里记下
         keeper.close(KeptPageClose.AppExit)

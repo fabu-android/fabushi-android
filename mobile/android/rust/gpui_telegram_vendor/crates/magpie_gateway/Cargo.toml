@@ -1,0 +1,23 @@
+[package]
+name = "magpie_gateway"
+version = "1.2.0"
+edition = "2021"
+description = "Magpie AI Gateway — Multi-provider LLM router, protocol translator, PII masker, and subscription hub"
+
+[features]
+default = []
+axum-server = []
+
+[dependencies]
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+hmac = "0.12"
+parking_lot = "0.12"
+rand = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+thiserror = "1.0"
+ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+url = "2.5"
+uuid = { version = "1.10", features = ["v4", "serde"] }

@@ -748,9 +748,122 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             rarity TEXT NOT NULL,
             stars_value INTEGER NOT NULL,
             metadata_json TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS wallet_chain_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            rpc_endpoint TEXT NOT NULL,
+            api_key TEXT,
+            quote_endpoint TEXT NOT NULL,
+            network TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS wallet_price_cache (
+            asset TEXT PRIMARY KEY,
+            usd_price REAL NOT NULL,
+            source TEXT NOT NULL,
+            updated_at_ms INTEGER NOT NULL
         );",
     )
-    .map_err(|e| format!("Failed to initialize wallet schema: {e}"))
+    .map_err(|e| format!("Failed to initialize wallet schema: {e}"))?;
+
+    conn.execute(
+        "INSERT OR IGNORE INTO wallet_chain_config (id, rpc_endpoint, api_key, quote_endpoint, network)
+         VALUES (1, 'https://toncenter.com/api/v2/jsonRPC', NULL, 'https://tonapi.io/v2/rates?tokens=ton&currencies=usd', 'mainnet')",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn load_chain_config(conn: &Connection) -> Result<(String, Option<String>, String, String), String> {
+    conn.query_row(
+        "SELECT rpc_endpoint, api_key, quote_endpoint, network FROM wallet_chain_config WHERE id = 1",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )
+    .map_err(|e| e.to_string())
+}
+
+fn call_ton_json_rpc(
+    rpc_endpoint: &str,
+    api_key: Option<&str>,
+    method: &str,
+    rpc_params: Value,
+) -> Result<Value, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(8))
+        .timeout_read(std::time::Duration::from_secs(15))
+        .build();
+    let mut req = agent
+        .post(rpc_endpoint)
+        .set("Content-Type", "application/json");
+    if let Some(key) = api_key.map(str::trim).filter(|k| !k.is_empty()) {
+        req = req.set("X-API-Key", key);
+    }
+    let body = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": rpc_params,
+    });
+    let resp = match req.send_json(body) {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let err_txt = r.into_string().unwrap_or_default();
+            return Err(format!("RPC_UNAVAILABLE: TON RPC {method} HTTP {code}: {err_txt}"));
+        }
+        Err(ureq::Error::Transport(tr)) => {
+            return Err(format!("RPC_UNAVAILABLE: TON RPC {method} transport error: {tr}"));
+        }
+    };
+    let val: Value = resp
+        .into_json()
+        .map_err(|e| format!("RPC_UNAVAILABLE: Invalid TON RPC JSON for {method}: {e}"))?;
+    if val.get("ok").and_then(Value::as_bool) == Some(false) {
+        let err_msg = val
+            .get("error")
+            .and_then(Value::as_str)
+            .or_else(|| val.pointer("/error/message").and_then(Value::as_str))
+            .unwrap_or("TON JSON-RPC returned ok=false");
+        return Err(format!("RPC_REJECTED: {err_msg}"));
+    }
+    if let Some(err_obj) = val.get("error").filter(|e| !e.is_null() && e.is_object()) {
+        let err_msg = err_obj
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("TON JSON-RPC error");
+        return Err(format!("RPC_REJECTED: {err_msg}"));
+    }
+    Ok(val.get("result").cloned().unwrap_or(val))
+}
+
+fn fetch_live_ton_usd_quote(quote_endpoint: &str) -> Result<f64, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(8))
+        .timeout_read(std::time::Duration::from_secs(12))
+        .build();
+    let resp = match agent.get(quote_endpoint).call() {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, r)) => {
+            let body = r.into_string().unwrap_or_default();
+            return Err(format!("QUOTE_UNAVAILABLE: HTTP {code}: {body}"));
+        }
+        Err(ureq::Error::Transport(tr)) => {
+            return Err(format!("QUOTE_UNAVAILABLE: transport error: {tr}"));
+        }
+    };
+    let val: Value = resp
+        .into_json()
+        .map_err(|e| format!("QUOTE_UNAVAILABLE: invalid quote JSON: {e}"))?;
+    let price = val
+        .pointer("/rates/TON/prices/USD")
+        .or_else(|| val.pointer("/rates/ton/prices/usd"))
+        .or_else(|| val.pointer("/the-open-network/usd"))
+        .or_else(|| val.get("tonUsdPrice"))
+        .or_else(|| val.get("price"))
+        .and_then(Value::as_f64)
+        .filter(|&p| p.is_finite() && p > 0.0)
+        .ok_or_else(|| "QUOTE_UNAVAILABLE: response did not contain a positive TON/USD rate".to_string())?;
+    Ok(price)
 }
 
 fn seed_default_collectibles(conn: &Connection, account_id: &str) -> Result<(), String> {
@@ -864,8 +977,7 @@ fn build_signed_transfer_boc(
     }
     let signing_key = SigningKey::from_bytes(&sk_bytes);
 
-    let (wc, dest_hash) = parse_ton_address(recipient)
-        .unwrap_or_else(|_| (0i8, Sha256::digest(recipient.as_bytes()).into()));
+    let (wc, dest_hash) = parse_ton_address(recipient)?;
 
     let mut comment_cell = TonCell::new();
     comment_cell.write_uint(0, 32)?; // text comment op = 0
@@ -908,12 +1020,27 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
     init_schema(conn)?;
     match submethod {
         "status" | "balance" => {
+            let cached_quote: Option<(f64, i64)> = conn
+                .query_row(
+                    "SELECT usd_price, updated_at_ms FROM wallet_price_cache WHERE asset = 'TON'",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            let (rpc_endpoint, _, _, network) = load_chain_config(conn)?;
+            let ton_usd_val = cached_quote.map(|(p, _)| p);
+            let ton_usd_ts = cached_quote.map(|(_, ts)| ts);
+
             let active = conn
                 .query_row(
                     "SELECT account_id, label, public_key_hex, raw_address, address_bounceable, address_non_bounceable, balance_nanotons, stars_balance, seqno
                      FROM wallet_accounts WHERE is_active = 1 LIMIT 1",
                     [],
                     |r| {
+                        let nanos: i64 = r.get(6)?;
+                        let ton_amount = (nanos as f64) / 1_000_000_000.0;
+                        let balance_usd = ton_usd_val.map(|p| ((ton_amount * p) * 100.0).round() / 100.0);
                         Ok(json!({
                             "hasWallet": true,
                             "accountId": r.get::<_, String>(0)?,
@@ -923,12 +1050,16 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                             "addressBounceable": r.get::<_, String>(4)?,
                             "address": r.get::<_, String>(5)?,
                             "addressNonBounceable": r.get::<_, String>(5)?,
-                            "balanceNanotons": r.get::<_, i64>(6)?,
-                            "balanceTon": format!("{:.4}", (r.get::<_, i64>(6)? as f64) / 1_000_000_000.0),
+                            "balanceNanotons": nanos,
+                            "balanceTon": format!("{ton_amount:.4}"),
+                            "balanceUsd": balance_usd,
                             "starsBalance": r.get::<_, i64>(7)?,
                             "seqno": r.get::<_, i64>(8)?,
                             "walletVersion": "v4r2",
-                            "tonUsdPrice": 5.42,
+                            "network": network,
+                            "rpcEndpoint": rpc_endpoint,
+                            "tonUsdPrice": ton_usd_val,
+                            "tonUsdUpdatedAtMs": ton_usd_ts,
                         }))
                     },
                 )
@@ -940,10 +1071,191 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                     "hasWallet": false,
                     "balanceNanotons": 0,
                     "balanceTon": "0.0000",
+                    "balanceUsd": Value::Null,
                     "starsBalance": 0,
                     "walletVersion": "v4r2",
-                    "tonUsdPrice": 5.42,
+                    "network": network,
+                    "rpcEndpoint": rpc_endpoint,
+                    "tonUsdPrice": ton_usd_val,
+                    "tonUsdUpdatedAtMs": ton_usd_ts,
                 })
+            }))
+        }
+
+        "configureRpc" => {
+            let (cur_rpc, cur_key, cur_quote, cur_net) = load_chain_config(conn)?;
+            let rpc_endpoint = params
+                .get("rpcEndpoint")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(&cur_rpc);
+            let api_key = params
+                .get("apiKey")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .or(cur_key);
+            let quote_endpoint = params
+                .get("quoteEndpoint")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(&cur_quote);
+            let network = params
+                .get("network")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(&cur_net);
+            conn.execute(
+                "UPDATE wallet_chain_config SET rpc_endpoint = ?1, api_key = ?2, quote_endpoint = ?3, network = ?4 WHERE id = 1",
+                params![rpc_endpoint, api_key, quote_endpoint, network],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "rpcEndpoint": rpc_endpoint,
+                "quoteEndpoint": quote_endpoint,
+                "network": network,
+                "hasApiKey": api_key.is_some(),
+            }))
+        }
+
+        "refreshQuote" => {
+            let (_, _, cfg_quote, _) = load_chain_config(conn)?;
+            let quote_url = params
+                .get("quoteEndpoint")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(&cfg_quote);
+            let price = fetch_live_ton_usd_quote(quote_url)?;
+            let now = chrono::Utc::now().timestamp_millis();
+            conn.execute(
+                "INSERT OR REPLACE INTO wallet_price_cache (asset, usd_price, source, updated_at_ms)
+                 VALUES ('TON', ?1, ?2, ?3)",
+                params![price, quote_url, now],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "asset": "TON",
+                "tonUsdPrice": price,
+                "updatedAtMs": now,
+                "source": quote_url,
+            }))
+        }
+
+        "syncChain" => {
+            let (account_id, addr_bounceable): (String, String) = conn
+                .query_row(
+                    "SELECT account_id, address_bounceable FROM wallet_accounts WHERE is_active = 1 LIMIT 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "No active TON wallet found".to_string())?;
+            let (rpc_endpoint, api_key, _, _) = load_chain_config(conn)?;
+
+            let info = call_ton_json_rpc(
+                &rpc_endpoint,
+                api_key.as_deref(),
+                "getAddressInformation",
+                json!({ "address": addr_bounceable }),
+            )?;
+            let balance_nanos: i64 = info
+                .get("balance")
+                .and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+                })
+                .unwrap_or(0);
+            let state = info
+                .get("state")
+                .and_then(Value::as_str)
+                .unwrap_or("uninitialized")
+                .to_string();
+
+            let mut synced_seqno: Option<i64> = None;
+            if state == "active" {
+                if let Ok(winfo) = call_ton_json_rpc(
+                    &rpc_endpoint,
+                    api_key.as_deref(),
+                    "getWalletInformation",
+                    json!({ "address": addr_bounceable }),
+                ) {
+                    synced_seqno = winfo.get("seqno").and_then(Value::as_i64);
+                }
+            }
+
+            if let Some(sq) = synced_seqno {
+                conn.execute(
+                    "UPDATE wallet_accounts SET balance_nanotons = ?1, seqno = ?2 WHERE account_id = ?3",
+                    params![balance_nanos, sq, account_id],
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                conn.execute(
+                    "UPDATE wallet_accounts SET balance_nanotons = ?1 WHERE account_id = ?2",
+                    params![balance_nanos, account_id],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            let mut synced_tx_count = 0usize;
+            if let Ok(txs_res) = call_ton_json_rpc(
+                &rpc_endpoint,
+                api_key.as_deref(),
+                "getTransactions",
+                json!({ "address": addr_bounceable, "limit": 20 }),
+            ) {
+                if let Some(arr) = txs_res.as_array() {
+                    for tx in arr {
+                        let hash = tx
+                            .pointer("/transaction_id/hash")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if hash.is_empty() {
+                            continue;
+                        }
+                        let utime = tx.get("utime").and_then(Value::as_i64).unwrap_or(0) * 1000;
+                        let fee = tx
+                            .get("fee")
+                            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                            .unwrap_or(0);
+                        let in_val = tx
+                            .pointer("/in_msg/value")
+                            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                            .unwrap_or(0);
+                        let src = tx
+                            .pointer("/in_msg/source")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        conn.execute(
+                            "INSERT OR IGNORE INTO wallet_transactions
+                            (tx_id, account_id, asset, direction, counterparty, amount, fee_nanotons, comment, boc_hash_hex, created_at_ms)
+                            VALUES (?1, ?2, 'TON', ?3, ?4, ?5, ?6, '', ?7, ?8)",
+                            params![
+                                format!("chain_{hash}"),
+                                account_id,
+                                if in_val > 0 { "in" } else { "out" },
+                                src,
+                                in_val,
+                                fee,
+                                hash,
+                                if utime > 0 { utime } else { chrono::Utc::now().timestamp_millis() },
+                            ],
+                        )
+                        .map_err(|e| e.to_string())?;
+                        synced_tx_count += 1;
+                    }
+                }
+            }
+
+            Ok(json!({
+                "accountId": account_id,
+                "addressBounceable": addr_bounceable,
+                "state": state,
+                "balanceNanotons": balance_nanos,
+                "seqno": synced_seqno,
+                "syncedTransactions": synced_tx_count,
             }))
         }
 
@@ -960,11 +1272,11 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
             let initial_nanotons = params
                 .get("initialNanotons")
                 .and_then(Value::as_i64)
-                .unwrap_or(25_000_000_000); // 25.0 TON starter balance
+                .unwrap_or(0);
             let initial_stars = params
                 .get("initialStars")
                 .and_then(Value::as_i64)
-                .unwrap_or(1_080);
+                .unwrap_or(0);
             let words = generate_mnemonic_24();
             persist_wallet_from_words(conn, &words, passphrase, label, initial_nanotons, initial_stars)
         }
@@ -1000,11 +1312,11 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
             let initial_nanotons = params
                 .get("initialNanotons")
                 .and_then(Value::as_i64)
-                .unwrap_or(15_000_000_000);
+                .unwrap_or(0);
             let initial_stars = params
                 .get("initialStars")
                 .and_then(Value::as_i64)
-                .unwrap_or(500);
+                .unwrap_or(0);
             persist_wallet_from_words(conn, &words, passphrase, label, initial_nanotons, initial_stars)
         }
 
@@ -1066,8 +1378,33 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
 
             let (boc_b64, boc_hash) =
                 build_signed_transfer_boc(&sk_hex, seqno, recipient, amount_nanos, comment)?;
+
+            let broadcast = params
+                .get("broadcast")
+                .or_else(|| params.get("liveNetwork"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let mut chain_hash: Option<String> = None;
+            if broadcast {
+                let (rpc_endpoint, api_key, _, _) = load_chain_config(conn)?;
+                let rpc_res = call_ton_json_rpc(
+                    &rpc_endpoint,
+                    api_key.as_deref(),
+                    "sendBocReturnHash",
+                    json!({ "boc": boc_b64 }),
+                )
+                .map_err(|e| format!("BROADCAST_FAILED: {e}"))?;
+                chain_hash = rpc_res
+                    .get("hash")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+            }
+
             let new_bal = cur_bal - total_debit;
-            let tx_id = format!("ton_tx_{}", &boc_hash[..24]);
+            let tx_id = chain_hash
+                .as_deref()
+                .map(|h| format!("ton_tx_{h}"))
+                .unwrap_or_else(|| format!("ton_tx_{}", &boc_hash[..24]));
             let now = chrono::Utc::now().timestamp_millis();
 
             conn.execute(
@@ -1087,7 +1424,7 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                     amount_nanos as i64,
                     DEFAULT_FEE_NANOTONS as i64,
                     comment,
-                    boc_hash,
+                    chain_hash.as_deref().unwrap_or(&boc_hash),
                     now,
                 ],
             )
@@ -1097,6 +1434,8 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 "txId": tx_id,
                 "bocBase64": boc_b64,
                 "bocHashHex": boc_hash,
+                "chainHash": chain_hash,
+                "broadcasted": broadcast,
                 "amountNanotons": amount_nanos,
                 "feeNanotons": DEFAULT_FEE_NANOTONS,
                 "newBalanceNanotons": new_bal,

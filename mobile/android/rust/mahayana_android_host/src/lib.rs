@@ -295,57 +295,188 @@ impl MahayanaAndroidHost {
                     .and_then(Value::as_str)
                     .unwrap_or("agent");
 
-                let masked = magpie::mask_sensitive_text(text);
-                let (provider, model, step_title, step_detail, reply_text) =
-                    build_agent_chat_reply(conn, agent_id, &masked.masked_text)?;
+                if text.is_empty() {
+                    return Err("chat.send requires non-empty 'text'".into());
+                }
 
-                conn.execute(
-                    "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
-                     VALUES (?1, ?2, 'chat.send', 'completed', ?3)",
-                    params![operation_id, request_id, now],
-                )
-                .map_err(|e| e.to_string())?;
-
-                self.push_event(json!({
-                    "type": "operation.started",
-                    "operationId": operation_id,
-                    "requestId": request_id,
-                    "label": "正在思考"
-                }));
-                self.push_event(json!({
-                    "type": "model.routed",
-                    "operationId": operation_id,
-                    "provider": provider,
-                    "model": model,
-                    "mode": mode
-                }));
-                self.push_event(json!({
-                    "type": "agent.step",
-                    "operationId": operation_id,
-                    "stepId": "step-route-execute",
-                    "title": step_title,
-                    "detail": step_detail,
-                    "status": "completed"
-                }));
-                let preview_delta: String = reply_text.chars().take(24).collect();
-                if !preview_delta.is_empty() {
+                if text.starts_with('/') {
+                    let slash = hermes::handle_rpc(
+                        conn,
+                        "runSlashCommand",
+                        &json!({ "input": text }),
+                    )?;
+                    let reply_text = slash["summary"]
+                        .as_str()
+                        .unwrap_or("Executed slash command")
+                        .to_string();
+                    conn.execute(
+                        "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
+                         VALUES (?1, ?2, 'chat.send', 'completed', ?3)",
+                        params![operation_id, request_id, now],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    self.push_event(json!({
+                        "type": "operation.started",
+                        "operationId": operation_id,
+                        "requestId": request_id,
+                        "label": "执行斜杠指令"
+                    }));
+                    self.push_event(json!({
+                        "type": "model.routed",
+                        "operationId": operation_id,
+                        "provider": "hermes-slash",
+                        "model": "slash-command",
+                        "mode": mode
+                    }));
+                    self.push_event(json!({
+                        "type": "agent.step",
+                        "operationId": operation_id,
+                        "stepId": "step-slash-command",
+                        "title": slash["command"],
+                        "detail": slash["category"],
+                        "status": "completed"
+                    }));
                     self.push_event(json!({
                         "type": "chat.delta",
                         "operationId": operation_id,
-                        "delta": preview_delta
+                        "delta": reply_text
                     }));
+                    self.push_event(json!({
+                        "type": "chat.message",
+                        "operationId": operation_id,
+                        "role": "assistant",
+                        "text": reply_text
+                    }));
+                    self.push_event(json!({
+                        "type": "operation.completed",
+                        "operationId": operation_id,
+                        "requestId": request_id
+                    }));
+                } else {
+                    let system_prompt = if agent_id.contains("mika") {
+                        "You are Mika, the Fabushi Android on-device accessibility & task assistant."
+                    } else {
+                        "You are the Fabushi Android assistant powered by Magpie & Hermes."
+                    };
+                    let req = magpie::UnifiedRequest {
+                        model: command
+                            .get("model")
+                            .and_then(Value::as_str)
+                            .unwrap_or("auto")
+                            .to_string(),
+                        system_prompt: system_prompt.to_string(),
+                        messages: vec![magpie::UnifiedMessage {
+                            role: magpie::UnifiedRole::User,
+                            content: text.to_string(),
+                            name: None,
+                            tool_call_id: None,
+                            tool_calls: Vec::new(),
+                            reasoning: None,
+                        }],
+                        tools: Vec::new(),
+                        temperature: None,
+                        max_tokens: None,
+                        thinking_budget_tokens: None,
+                        stream: true,
+                    };
+
+                    let mut streamed_deltas = Vec::<String>::new();
+                    match magpie::execute_live_request(
+                        conn,
+                        &req,
+                        None,
+                        command.get("providerId").and_then(Value::as_str),
+                        Some(&request_id),
+                        |delta| {
+                            if !delta.is_empty() {
+                                streamed_deltas.push(delta.to_string());
+                            }
+                        },
+                    ) {
+                        Ok(outcome) => {
+                            conn.execute(
+                                "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
+                                 VALUES (?1, ?2, 'chat.send', 'completed', ?3)",
+                                params![operation_id, request_id, now],
+                            )
+                            .map_err(|e| e.to_string())?;
+
+                            self.push_event(json!({
+                                "type": "operation.started",
+                                "operationId": operation_id,
+                                "requestId": request_id,
+                                "label": "正在流式生成"
+                            }));
+                            self.push_event(json!({
+                                "type": "model.routed",
+                                "operationId": operation_id,
+                                "provider": outcome.provider_id,
+                                "model": outcome.model,
+                                "protocol": outcome.protocol,
+                                "mode": mode
+                            }));
+                            self.push_event(json!({
+                                "type": "agent.step",
+                                "operationId": operation_id,
+                                "stepId": "step-magpie-live",
+                                "title": format!("Magpie live completion via {}", outcome.provider_id),
+                                "detail": format!("{} ({} ms)", outcome.model, outcome.latency_ms),
+                                "status": "completed"
+                            }));
+                            for d in &streamed_deltas {
+                                self.push_event(json!({
+                                    "type": "chat.delta",
+                                    "operationId": operation_id,
+                                    "delta": d
+                                }));
+                            }
+                            self.push_event(json!({
+                                "type": "chat.message",
+                                "operationId": operation_id,
+                                "role": "assistant",
+                                "text": outcome.reply,
+                                "provider": outcome.provider_id,
+                                "model": outcome.model,
+                                "inputTokens": outcome.usage.input_tokens,
+                                "outputTokens": outcome.usage.output_tokens,
+                                "costUsd": outcome.cost_usd
+                            }));
+                            self.push_event(json!({
+                                "type": "operation.completed",
+                                "operationId": operation_id,
+                                "requestId": request_id
+                            }));
+                        }
+                        Err(err) => {
+                            let code = if err.starts_with("PROVIDER_NOT_CONFIGURED") {
+                                "PROVIDER_NOT_CONFIGURED"
+                            } else {
+                                "UPSTREAM_UNAVAILABLE"
+                            };
+                            conn.execute(
+                                "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
+                                 VALUES (?1, ?2, 'chat.send', 'failed', ?3)",
+                                params![operation_id, request_id, now],
+                            )
+                            .map_err(|e| e.to_string())?;
+
+                            self.push_event(json!({
+                                "type": "operation.started",
+                                "operationId": operation_id,
+                                "requestId": request_id,
+                                "label": "模型调用失败"
+                            }));
+                            self.push_event(json!({
+                                "type": "operation.failed",
+                                "operationId": operation_id,
+                                "requestId": request_id,
+                                "code": code,
+                                "error": err
+                            }));
+                            return Err(err);
+                        }
+                    }
                 }
-                self.push_event(json!({
-                    "type": "chat.message",
-                    "operationId": operation_id,
-                    "role": "assistant",
-                    "text": reply_text
-                }));
-                self.push_event(json!({
-                    "type": "operation.completed",
-                    "operationId": operation_id,
-                    "requestId": request_id
-                }));
             }
 
             "bot.list" => {
@@ -2237,70 +2368,3 @@ fn collect_surface_bots(conn: &Connection) -> Result<Vec<Value>, String> {
     Ok(bots)
 }
 
-fn build_agent_chat_reply(
-    conn: &Connection,
-    agent_id: &str,
-    prompt: &str,
-) -> Result<(String, String, String, String, String), String> {
-    if agent_id.contains("mika") {
-        let _ = computer::handle_mika_rpc(
-            conn,
-            "registerTaskEvent",
-            &json!({
-                "taskId": format!("mika_{}", uuid::Uuid::new_v4().simple()),
-                "stepIndex": 1,
-                "phase": "agent_chat_plan",
-                "summary": prompt
-            }),
-        );
-        return Ok((
-            "mika-on-device".into(),
-            "gemini-2.5-flash-cua".into(),
-            "生成端侧无障碍操控计划".into(),
-            "已校验敏感支付/密码护栏策略".into(),
-            format!("🤖 Mika 已就绪：已为指令「{prompt}」生成端侧操控步骤，可在 Mika 面板一键启动无障碍执行。"),
-        ));
-    }
-
-    if agent_id.contains("hermes") || prompt.starts_with('/') {
-        if let Some(parsed) = hermes::parse_slash_command(prompt) {
-            if let Some(def) = hermes::lookup_slash_command(&parsed.command) {
-                return Ok((
-                    "hermes-studio".into(),
-                    "claude-sonnet-4-5".into(),
-                    format!("执行斜杠指令 /{}", def.name),
-                    def.category.to_string(),
-                    format!("⚡ Hermes `/{}` — {}（参数：`{}`）", def.name, def.description, parsed.args),
-                ));
-            }
-        }
-    }
-
-    let route = magpie::handle_rpc(
-        conn,
-        "routePreview",
-        &json!({ "strategy": "Smart" }),
-    )
-    .unwrap_or_else(|_| json!({ "providerId": "anthropic", "model": "claude-sonnet-4-5" }));
-    let provider = route
-        .get("providerId")
-        .and_then(Value::as_str)
-        .unwrap_or("anthropic")
-        .to_string();
-    let model = route
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("claude-sonnet-4-5")
-        .to_string();
-
-    let reply = format!(
-        "Mahayana Rust Native Host 在线（模型路由：{provider}/{model}）：已完成「{prompt}」的本地验证与上下文响应。"
-    );
-    Ok((
-        provider,
-        model,
-        "检索本地 SQLite WAL 上下文与工具契约".into(),
-        "Mahayana Native Engine v2.0.0".into(),
-        reply,
-    ))
-}

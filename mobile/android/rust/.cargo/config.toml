@@ -1,0 +1,4 @@
+[build]
+# Keep workspace build artifacts inside mahayana_android_host/target so existing scripts
+# (`scripts/build_rust_android.sh`) and post-test cleanup (`AGENTS.md`) share one canonical target directory.
+target-dir = "mahayana_android_host/target"

@@ -14,14 +14,106 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
+use std::io::{Read, Write};
+use std::net::TcpListener;
+
 fn temp_test_dir(label: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "mahayana_host_test_{}_{}",
-        label,
-        uuid::Uuid::new_v4().simple()
-    ));
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("test_tmp")
+        .join(format!(
+            "mahayana_host_test_{}_{}",
+            label,
+            uuid::Uuid::new_v4().simple()
+        ));
     std::fs::create_dir_all(&dir).expect("create temp test dir");
     dir
+}
+
+/// Spawns a real loopback HTTP SSE server (`127.0.0.1:0`) that serves `count` OpenAI SSE turns
+/// and returns `(base_url, join_handle)`.
+fn spawn_loopback_openai_sse_server(
+    turns: Vec<Vec<String>>,
+) -> (String, thread::JoinHandle<Vec<String>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback SSE server");
+    let addr = listener.local_addr().expect("local_addr");
+    let handle = thread::spawn(move || {
+        let mut captured_bodies = Vec::new();
+        for chunks in turns {
+            let (mut stream, _) = listener.accept().expect("accept HTTP request");
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .ok();
+            let req_raw = read_full_http_request(&mut stream);
+            let body = req_raw
+                .split_once("\r\n\r\n")
+                .map(|(_, b)| b.to_string())
+                .unwrap_or_default();
+            captured_bodies.push(body);
+
+            let mut sse_body = String::new();
+            for ch in chunks {
+                let payload = json!({
+                    "id": "chatcmpl_live",
+                    "choices": [{ "index": 0, "delta": { "content": ch }, "finish_reason": Value::Null }]
+                });
+                sse_body.push_str(&format!("data: {payload}\n\n"));
+            }
+            let done_chunk = json!({
+                "id": "chatcmpl_live",
+                "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }],
+                "usage": { "prompt_tokens": 18, "completion_tokens": 12, "total_tokens": 30 }
+            });
+            sse_body.push_str(&format!("data: {done_chunk}\n\ndata: [DONE]\n\n"));
+
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                sse_body.len(),
+                sse_body
+            );
+            stream.write_all(resp.as_bytes()).expect("write SSE response");
+            let _ = stream.flush();
+        }
+        captured_bodies
+    });
+    (format!("http://{addr}/v1"), handle)
+}
+
+fn read_full_http_request(stream: &mut std::net::TcpStream) -> String {
+    let mut buf = Vec::new();
+    let mut tmp = [0u8; 4096];
+    let mut header_end: Option<usize> = None;
+    let mut content_len = 0usize;
+
+    loop {
+        match stream.read(&mut tmp) {
+            Ok(0) => break,
+            Ok(n) => {
+                buf.extend_from_slice(&tmp[..n]);
+                if header_end.is_none() {
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let h_end = pos + 4;
+                        header_end = Some(h_end);
+                        let headers_str = String::from_utf8_lossy(&buf[..h_end]);
+                        for line in headers_str.lines() {
+                            if let Some((k, v)) = line.split_once(':') {
+                                if k.trim().eq_ignore_ascii_case("content-length") {
+                                    content_len = v.trim().parse::<usize>().unwrap_or(0);
+                                }
+                            }
+                        }
+                    }
+                }
+                if let Some(h_end) = header_end {
+                    if buf.len() >= h_end + content_len {
+                        break;
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    String::from_utf8_lossy(&buf).into_owned()
 }
 
 fn new_test_host(label: &str) -> (MahayanaAndroidHost, PathBuf) {
@@ -89,7 +181,21 @@ fn test_02_complete_mahayana_feature_host_user_journey() {
         .unwrap();
     assert_eq!(polled["status"], "completed");
 
-    // chat.send
+    // chat.send over live loopback SSE endpoint
+    let (sse_url, sse_join) =
+        spawn_loopback_openai_sse_server(vec![vec!["自动化测试".into(), "运行正常。".into()]]);
+    host.dispatch(
+        "magpie.upsertProvider",
+        &json!({
+            "id": "loopback_sse",
+            "presetId": "openai",
+            "baseUrl": sse_url,
+            "apiKey": "sk-live-journey-test-key",
+            "defaultModel": "gpt-4o-mini",
+            "priority": 1
+        }),
+    )
+    .unwrap();
     let chat = host
         .dispatch(
             "feature.execute",
@@ -97,6 +203,7 @@ fn test_02_complete_mahayana_feature_host_user_journey() {
         )
         .unwrap();
     assert_eq!(chat["requestId"], "android-chat");
+    sse_join.join().expect("join loopback SSE");
 
     // marketplace.install & miniapp.open
     let inst = host
@@ -259,6 +366,21 @@ fn test_04_password_login_and_validation() {
 #[test]
 fn test_05_chat_send_streaming_event_sequence() {
     let (host, dir) = new_test_host("t05_stream");
+    let (sse_url, sse_join) =
+        spawn_loopback_openai_sse_server(vec![vec!["流式增量一，".into(), "流式增量二。".into()]]);
+    host.dispatch(
+        "magpie.upsertProvider",
+        &json!({
+            "id": "sse_primary",
+            "presetId": "openai",
+            "baseUrl": sse_url,
+            "apiKey": "sk-live-stream-key-123456",
+            "defaultModel": "gpt-4o",
+            "priority": 1
+        }),
+    )
+    .unwrap();
+
     let accepted = host
         .dispatch(
             "feature.execute",
@@ -276,13 +398,20 @@ fn test_05_chat_send_streaming_event_sequence() {
     let op_id = accepted["operationId"].as_str().unwrap();
 
     let mut types = Vec::new();
-    for _ in 0..10 {
+    let mut delta_texts = Vec::new();
+    let mut final_msg = String::new();
+    for _ in 0..12 {
         let ev = host.dispatch("feature.receive", &json!({})).unwrap();
         let t = ev["type"].as_str().unwrap_or("");
         if t.is_empty() {
             break;
         }
         assert_eq!(ev["operationId"], op_id);
+        if t == "chat.delta" {
+            delta_texts.push(ev["delta"].as_str().unwrap_or("").to_string());
+        } else if t == "chat.message" {
+            final_msg = ev["text"].as_str().unwrap_or("").to_string();
+        }
         types.push(t.to_string());
     }
     assert_eq!(
@@ -292,10 +421,14 @@ fn test_05_chat_send_streaming_event_sequence() {
             "model.routed",
             "agent.step",
             "chat.delta",
+            "chat.delta",
             "chat.message",
             "operation.completed"
         ]
     );
+    assert_eq!(delta_texts, vec!["流式增量一，", "流式增量二。"]);
+    assert_eq!(final_msg, "流式增量一，流式增量二。");
+    sse_join.join().expect("join SSE server");
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1411,11 +1544,34 @@ fn test_24_hermes_sessions_branching_memory_caps_slash_commands_and_skills() {
         .unwrap();
     let sid = s1["sessionId"].as_str().unwrap().to_string();
 
+    let (sse_url, sse_join) = spawn_loopback_openai_sse_server(vec![vec![
+        "Pratityasamutpada: ".into(),
+        "when this arises, that arises.".into(),
+    ]]);
     host.dispatch(
-        "hermes.sendTurn",
-        &json!({ "sessionId": sid, "text": "Explain dependent origination" }),
+        "magpie.upsertProvider",
+        &json!({
+            "id": "hermes_live",
+            "presetId": "openai",
+            "baseUrl": sse_url,
+            "apiKey": "sk-hermes-live-key",
+            "defaultModel": "claude-sonnet-4-5",
+            "priority": 1
+        }),
     )
     .unwrap();
+
+    let turn = host
+        .dispatch(
+            "hermes.sendTurn",
+            &json!({ "sessionId": sid, "text": "Explain dependent origination" }),
+        )
+        .unwrap();
+    assert_eq!(
+        turn["reply"],
+        "Pratityasamutpada: when this arises, that arises."
+    );
+    sse_join.join().expect("join Hermes SSE server");
 
     let branch = host
         .dispatch(
@@ -1972,3 +2128,646 @@ fn test_33_c_ffi_abi_lifecycle_and_concurrency_stress() {
 
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn test_34_fail_closed_zero_fake_echo_when_provider_unconfigured() {
+    let (host, dir) = new_prod_host("t34_fail_closed");
+
+    // 1. magpie.chatComplete & magpie.chatStream MUST fail with PROVIDER_NOT_CONFIGURED
+    let err_complete = host
+        .dispatch("magpie.chatComplete", &json!({ "prompt": "Hello?" }))
+        .unwrap_err();
+    assert!(
+        err_complete.contains("PROVIDER_NOT_CONFIGURED"),
+        "Expected PROVIDER_NOT_CONFIGURED, got: {err_complete}"
+    );
+
+    let err_stream = host
+        .dispatch("magpie.chatStream", &json!({ "prompt": "Stream?" }))
+        .unwrap_err();
+    assert!(err_stream.contains("PROVIDER_NOT_CONFIGURED"));
+
+    // 2. hermes.sendTurn MUST fail closed without inserting fake assistant messages
+    let err_hermes = host
+        .dispatch(
+            "hermes.sendTurn",
+            &json!({ "sessionId": "hermes_main", "text": "Run unconfigured prompt" }),
+        )
+        .unwrap_err();
+    assert!(err_hermes.contains("PROVIDER_NOT_CONFIGURED"));
+    let msgs = host
+        .dispatch(
+            "hermes.sessionMessages",
+            &json!({ "sessionId": "hermes_main" }),
+        )
+        .unwrap();
+    assert_eq!(msgs["messages"].as_array().unwrap().len(), 0);
+
+    // 3. feature.execute("chat.send") MUST fail closed and emit operation.failed (never chat.message)
+    let err_chat = host
+        .dispatch(
+            "feature.execute",
+            &json!({ "command": { "type": "chat.send", "requestId": "unconf-1", "text": "Hello" } }),
+        )
+        .unwrap_err();
+    assert!(err_chat.contains("PROVIDER_NOT_CONFIGURED"));
+    let ev1 = host.dispatch("feature.receive", &json!({})).unwrap();
+    let ev2 = host.dispatch("feature.receive", &json!({})).unwrap();
+    assert_eq!(ev1["type"], "operation.started");
+    assert_eq!(ev2["type"], "operation.failed");
+    assert_eq!(ev2["code"], "PROVIDER_NOT_CONFIGURED");
+
+    // Usage ledger remains 0 turns
+    let usage = host.dispatch("magpie.usageSummary", &json!({})).unwrap();
+    assert_eq!(usage["totalTurns"], 0);
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_35_magpie_live_sse_all_4_protocols_and_streaming_unmasker() {
+    let (host, dir) = new_test_host("t35_four_proto");
+
+    // Spin up a 4-request loopback server speaking Anthropic, Gemini, CodexResponses, and OpenAI SSE
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let srv = thread::spawn(move || {
+        for idx in 0..4 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let raw_req = read_full_http_request(&mut stream);
+            let body_str = raw_req.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+
+            // Verify raw secret `monk_secret@sangha.org` NEVER leaked onto the wire!
+            assert!(
+                !body_str.contains("monk_secret@sangha.org"),
+                "PII email leaked on wire in request #{idx}: {body_str}"
+            );
+            // Extract placeholder `{{EMAIL_...}}` from outbound request so we can split it across SSE chunks!
+            let start = body_str.find("{{EMAIL_").expect("masked EMAIL placeholder");
+            let end = body_str[start..].find("}}").unwrap() + start + 2;
+            let placeholder = &body_str[start..end];
+            let half = placeholder.len() / 2;
+            let p1 = &placeholder[..half];
+            let p2 = &placeholder[half..];
+
+            let sse = match idx {
+                0 => format!(
+                    "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"usage\":{{\"input_tokens\":14}}}}}}\n\n\
+                     event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"delta\":{{\"type\":\"text_delta\",\"text\":\"Anthropic for {p1}\"}}}}\n\n\
+                     event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"delta\":{{\"type\":\"text_delta\",\"text\":\"{p2}!\"}}}}\n\n\
+                     event: message_delta\ndata: {{\"type\":\"message_delta\",\"delta\":{{\"stop_reason\":\"end_turn\"}},\"usage\":{{\"output_tokens\":9}}}}\n\n"
+                ),
+                1 => format!(
+                    "data: {{\"candidates\":[{{\"content\":{{\"parts\":[{{\"text\":\"Gemini for {p1}\"}}]}}}}]}}\n\n\
+                     data: {{\"candidates\":[{{\"content\":{{\"parts\":[{{\"text\":\"{p2}!\"}}]}},\"finishReason\":\"STOP\"}}],\"usageMetadata\":{{\"promptTokenCount\":11,\"candidatesTokenCount\":7,\"totalTokenCount\":18}}}}\n\n"
+                ),
+                2 => format!(
+                    "event: response.output_text.delta\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"Responses for {p1}\"}}\n\n\
+                     event: response.output_text.delta\ndata: {{\"type\":\"response.output_text.delta\",\"delta\":\"{p2}!\"}}\n\n\
+                     event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"usage\":{{\"input_tokens\":12,\"output_tokens\":8,\"total_tokens\":20}}}}}}\n\n"
+                ),
+                _ => format!(
+                    "data: {{\"choices\":[{{\"delta\":{{\"content\":\"OpenAI for {p1}\"}}}}]}}\n\n\
+                     data: {{\"choices\":[{{\"delta\":{{\"content\":\"{p2}!\"}},\"finish_reason\":\"stop\"}}],\"usage\":{{\"prompt_tokens\":10,\"completion_tokens\":6,\"total_tokens\":16}}}}\n\n\
+                     data: [DONE]\n\n"
+                ),
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                sse.len(),
+                sse
+            );
+            stream.write_all(resp.as_bytes()).unwrap();
+        }
+    });
+
+    let base = format!("http://{addr}");
+    for (id, proto, prefix) in [
+        ("seat_anth", "AnthropicMessages", "Anthropic for monk_secret@sangha.org!"),
+        ("seat_gem", "GeminiGenerateContent", "Gemini for monk_secret@sangha.org!"),
+        ("seat_resp", "CodexResponses", "Responses for monk_secret@sangha.org!"),
+        ("seat_oai", "ChatCompletions", "OpenAI for monk_secret@sangha.org!"),
+    ] {
+        host.dispatch(
+            "magpie.upsertProvider",
+            &json!({
+                "id": id,
+                "presetId": "custom-openai",
+                "protocol": proto,
+                "baseUrl": base,
+                "apiKey": "sk-proto-test-key",
+                "defaultModel": "test-model",
+                "priority": 1
+            }),
+        )
+        .unwrap();
+
+        let res = host
+            .dispatch(
+                "magpie.chatStream",
+                &json!({
+                    "providerId": id,
+                    "prompt": "Contact monk_secret@sangha.org please"
+                }),
+            )
+            .unwrap();
+        assert_eq!(res["reply"], prefix);
+        assert!(res["maskedSecretsCount"].as_u64().unwrap() >= 1);
+    }
+
+    srv.join().unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_36_magpie_live_circuit_breaker_429_seat_failover() {
+    let (host, dir) = new_test_host("t36_failover");
+
+    // Primary seat returns HTTP 429 with Retry-After: 45
+    let l1 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let a1 = l1.local_addr().unwrap();
+    let j1 = thread::spawn(move || {
+        let (mut s, _) = l1.accept().unwrap();
+        let _ = read_full_http_request(&mut s);
+        let body = r#"{"error":{"message":"Rate limit exceeded"}}"#;
+        let resp = format!(
+            "HTTP/1.1 429 Too Many Requests\r\nRetry-After: 45\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        s.write_all(resp.as_bytes()).unwrap();
+    });
+
+    // Secondary backup seat succeeds with SSE
+    let (backup_url, j2) =
+        spawn_loopback_openai_sse_server(vec![vec!["Backup seat ".into(), "succeeded!".into()]]);
+
+    host.dispatch(
+        "magpie.upsertProvider",
+        &json!({
+            "id": "seat_rate_limited",
+            "presetId": "openai",
+            "baseUrl": format!("http://{a1}/v1"),
+            "apiKey": "sk-seat-1",
+            "priority": 1
+        }),
+    )
+    .unwrap();
+    host.dispatch(
+        "magpie.upsertProvider",
+        &json!({
+            "id": "seat_backup_ok",
+            "presetId": "deepseek",
+            "baseUrl": backup_url,
+            "apiKey": "sk-seat-2",
+            "priority": 2
+        }),
+    )
+    .unwrap();
+    host.dispatch("magpie.setStrategy", &json!({ "strategy": "Order" }))
+        .unwrap();
+
+    let out = host
+        .dispatch(
+            "magpie.chatStream",
+            &json!({ "prompt": "Trigger failover" }),
+        )
+        .unwrap();
+    assert_eq!(out["providerId"], "seat_backup_ok");
+    assert_eq!(out["reply"], "Backup seat succeeded!");
+    assert_eq!(out["failedOverFrom"], json!(["seat_rate_limited"]));
+
+    // Next routePreview skips rate-limited seat_rate_limited
+    let preview = host
+        .dispatch("magpie.routePreview", &json!({ "strategy": "Order" }))
+        .unwrap();
+    assert_eq!(preview["providerId"], "seat_backup_ok");
+
+    j1.join().unwrap();
+    j2.join().unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_37_hermes_multi_turn_agentic_tool_loop_and_approval_gate_resume() {
+    let (host, dir) = new_test_host("t37_agent_loop");
+
+    // 4 LLM HTTP responses:
+    // 1) safe tool call `kanban_add_card`
+    // 2) final answer after observing `kanban_add_card` tool output
+    // 3) high-risk tool call `computer_execute_op` (triggers hermes_approvals pause!)
+    // 4) final answer after user approves `hermes.approvalsDecide`!
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let srv = thread::spawn(move || {
+        for step in 0..4 {
+            let (mut s, _) = listener.accept().unwrap();
+            let raw = read_full_http_request(&mut s);
+            let req_body = raw.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
+            let json_resp = match step {
+                0 => json!({
+                    "id": "c1",
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [{
+                                "id": "call_kanban_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "kanban_add_card",
+                                    "arguments": "{\"title\":\"Audit M2 Rust workspace\",\"columnId\":\"in_progress\"}"
+                                }
+                            }]
+                        },
+                        "finish_reason": "tool_calls"
+                    }],
+                    "usage": { "prompt_tokens": 20, "completion_tokens": 15, "total_tokens": 35 }
+                }),
+                1 => {
+                    assert!(
+                        req_body.contains("Audit M2 Rust workspace"),
+                        "Expected tool output in step 1 history: {req_body}"
+                    );
+                    json!({
+                        "id": "c2",
+                        "choices": [{
+                            "index": 0,
+                            "message": { "role": "assistant", "content": "Added Kanban card successfully." },
+                            "finish_reason": "stop"
+                        }],
+                        "usage": { "prompt_tokens": 35, "completion_tokens": 10, "total_tokens": 45 }
+                    })
+                }
+                2 => json!({
+                    "id": "c3",
+                    "choices": [{
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "",
+                            "tool_calls": [{
+                                "id": "call_cua_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "computer_execute_op",
+                                    "arguments": "{\"nodeId\":\"local-android-mika\",\"op\":\"screenshot\"}"
+                                }
+                            }]
+                        },
+                        "finish_reason": "tool_calls"
+                    }],
+                    "usage": { "prompt_tokens": 40, "completion_tokens": 14, "total_tokens": 54 }
+                }),
+                _ => {
+                    assert!(
+                        req_body.contains("screenshot"),
+                        "Expected approved CUA tool result in step 3 history: {req_body}"
+                    );
+                    json!({
+                        "id": "c4",
+                        "choices": [{
+                            "index": 0,
+                            "message": { "role": "assistant", "content": "Approved screenshot captured on Mika node." },
+                            "finish_reason": "stop"
+                        }],
+                        "usage": { "prompt_tokens": 55, "completion_tokens": 12, "total_tokens": 67 }
+                    })
+                }
+            };
+            let body_s = json_resp.to_string();
+            let http = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body_s.len(),
+                body_s
+            );
+            s.write_all(http.as_bytes()).unwrap();
+        }
+    });
+
+    host.dispatch(
+        "magpie.upsertProvider",
+        &json!({
+            "id": "hermes_agent_ep",
+            "presetId": "openai",
+            "baseUrl": format!("http://{addr}/v1"),
+            "apiKey": "sk-agent-loop",
+            "priority": 1
+        }),
+    )
+    .unwrap();
+
+    // Part A: Automatic safe tool execution + multi-turn synthesis
+    let turn1 = host
+        .dispatch(
+            "hermes.sendTurn",
+            &json!({ "sessionId": "hermes_main", "text": "Create a Kanban card for M2 audit" }),
+        )
+        .unwrap();
+    assert_eq!(turn1["status"], "completed");
+    assert_eq!(turn1["reply"], "Added Kanban card successfully.");
+    assert_eq!(turn1["toolSteps"].as_array().unwrap().len(), 1);
+
+    let board = host.dispatch("hermes.kanbanBoard", &json!({})).unwrap();
+    assert!(board["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["title"] == "Audit M2 Rust workspace"));
+
+    // Part B: Dangerous tool call pauses at hermes_approvals gate, then resumes upon approval!
+    let turn2 = host
+        .dispatch(
+            "hermes.sendTurn",
+            &json!({ "sessionId": "hermes_main", "text": "Take a screenshot on Mika node" }),
+        )
+        .unwrap();
+    assert_eq!(turn2["status"], "waiting_approval");
+    let approval_id = turn2["pendingApproval"]["approvalId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(turn2["pendingApproval"]["toolName"], "computer_execute_op");
+
+    let resumed = host
+        .dispatch(
+            "hermes.approvalsDecide",
+            &json!({ "approvalId": approval_id, "decision": "approved" }),
+        )
+        .unwrap();
+    assert_eq!(resumed["status"], "approved");
+    assert_eq!(resumed["resumed"], true);
+    assert_eq!(
+        resumed["turn"]["reply"],
+        "Approved screenshot captured on Mika node."
+    );
+
+    srv.join().unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_38_fabushi_miniapp_shared_crate_scene_math_and_ui_dispatch() {
+    let (host, dir) = new_test_host("t38_scene");
+
+    let boot = host
+        .dispatch("fabushiMiniapp.bootstrap", &json!({ "username": "lotus_monk" }))
+        .unwrap();
+    assert_eq!(boot["profile"]["username"], "lotus_monk");
+
+    // Trigger an offering so an active transfer beam appears on the 3D/2D globe
+    host.dispatch(
+        "fabushiMiniapp.offerDharma",
+        &json!({ "countryCode": "JP", "packageKey": "heart_sutra" }),
+    )
+    .unwrap();
+
+    let home_scene = host
+        .dispatch(
+            "fabushiMiniapp.renderHomeScene",
+            &json!({ "width": 412.0, "height": 820.0, "dtMs": 32.0, "is3d": true }),
+        )
+        .unwrap();
+    assert!(!home_scene["drawCommands"].as_array().unwrap().is_empty());
+    assert!(home_scene["activeBeams"].as_u64().unwrap() >= 1);
+
+    let zen_scene = host
+        .dispatch(
+            "fabushiMiniapp.renderZenScene",
+            &json!({ "width": 412.0, "height": 820.0, "dtMs": 50.0, "is3d": false }),
+        )
+        .unwrap();
+    assert!(!zen_scene["drawCommands"].as_array().unwrap().is_empty());
+
+    // Drive shared FabushiClientState via UiCommand
+    let disp = host
+        .dispatch(
+            "fabushiMiniapp.dispatchUi",
+            &json!({ "command": { "type": "select_tab", "tab": "zen_room" } }),
+        )
+        .unwrap();
+    assert_eq!(disp["snapshot"]["active_tab"], "zen_room");
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_39_wallet_zero_hardcoded_quote_live_ton_rpc_sync_and_broadcast() {
+    let (host, dir) = new_test_host("t39_ton_rpc");
+
+    // 1. Fresh wallet has NO hardcoded 5.42 price and 0 default nanotons
+    let created = host
+        .dispatch("wallet.createWallet", &json!({ "label": "Zero Fake Price Wallet" }))
+        .unwrap();
+    assert_eq!(created["balanceNanotons"], 0);
+    let st0 = host.dispatch("wallet.status", &json!({})).unwrap();
+    assert!(
+        st0["tonUsdPrice"].is_null(),
+        "tonUsdPrice must be null before live quote fetch, got: {st0}"
+    );
+    assert!(st0["balanceUsd"].is_null());
+
+    // 2. Invalid recipient address MUST fail closed (never hash arbitrary strings!)
+    host.dispatch(
+        "wallet.createWallet",
+        &json!({ "initialNanotons": 5_000_000_000i64 }),
+    )
+    .unwrap();
+    assert!(host
+        .dispatch(
+            "wallet.sendTon",
+            &json!({ "recipient": "NOT_A_VALID_TON_ADDRESS", "amountNanotons": 100_000_000u64 })
+        )
+        .is_err());
+
+    // 3. Spin up real local TON JSON-RPC v2 + TonAPI quote server (`127.0.0.1:0`)
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let srv = thread::spawn(move || {
+        // Request 1: GET /quote
+        // Request 2..=4: getAddressInformation, getWalletInformation, getTransactions
+        // Request 5: sendBocReturnHash
+        for idx in 0..5 {
+            let (mut s, _) = listener.accept().unwrap();
+            let raw = read_full_http_request(&mut s);
+            let body_json = match idx {
+                0 => json!({ "rates": { "TON": { "prices": { "USD": 6.18 } } } }),
+                1 => json!({ "ok": true, "result": { "balance": "9500000000", "state": "active" } }),
+                2 => json!({ "ok": true, "result": { "seqno": 7 } }),
+                3 => json!({
+                    "ok": true,
+                    "result": [{
+                        "transaction_id": { "hash": "txhash_onchain_01" },
+                        "utime": 1_760_000_000,
+                        "fee": "5500000",
+                        "in_msg": { "value": "9500000000", "source": "EQ_sender" }
+                    }]
+                }),
+                _ => {
+                    assert!(raw.contains("sendBocReturnHash"));
+                    json!({ "ok": true, "result": { "hash": "bochash_live_broadcast_99" } })
+                }
+            };
+            let bs = body_json.to_string();
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                bs.len(),
+                bs
+            );
+            s.write_all(resp.as_bytes()).unwrap();
+        }
+    });
+
+    let base = format!("http://{addr}");
+    host.dispatch(
+        "wallet.configureRpc",
+        &json!({
+            "rpcEndpoint": format!("{base}/jsonRPC"),
+            "quoteEndpoint": format!("{base}/quote"),
+            "network": "testnet"
+        }),
+    )
+    .unwrap();
+
+    let q = host.dispatch("wallet.refreshQuote", &json!({})).unwrap();
+    assert_eq!(q["tonUsdPrice"], 6.18);
+
+    let synced = host.dispatch("wallet.syncChain", &json!({})).unwrap();
+    assert_eq!(synced["balanceNanotons"], 9_500_000_000i64);
+    assert_eq!(synced["seqno"], 7);
+    assert_eq!(synced["syncedTransactions"], 1);
+
+    let st1 = host.dispatch("wallet.status", &json!({})).unwrap();
+    let dest = st1["addressBounceable"].as_str().unwrap().to_string();
+    assert_eq!(st1["tonUsdPrice"], 6.18);
+    assert!(st1["balanceUsd"].as_f64().unwrap() > 58.0);
+
+    let broadcasted = host
+        .dispatch(
+            "wallet.sendTon",
+            &json!({
+                "recipient": dest,
+                "amountNanotons": 500_000_000u64,
+                "comment": "Live RPC broadcast",
+                "broadcast": true
+            }),
+        )
+        .unwrap();
+    assert_eq!(broadcasted["broadcasted"], true);
+    assert_eq!(broadcasted["chainHash"], "bochash_live_broadcast_99");
+
+    srv.join().unwrap();
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_40_telegram_server_live_auth_outbox_flush_and_sync_difference_fts5() {
+    let (host, dir) = new_prod_host("t40_tg_sync");
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let srv = thread::spawn(move || {
+        // 1: POST /v1/auth/phone/send_code
+        // 2: POST /v1/auth/phone/verify
+        // 3: POST /v1/messages/send (flushOutbox)
+        // 4: GET  /v1/updates/getDifference
+        for step in 0..4 {
+            let (mut s, _) = listener.accept().unwrap();
+            let raw = read_full_http_request(&mut s);
+            let resp_val = match step {
+                0 => json!({ "phoneCodeHash": "pch_server_live_01", "codeLength": 5 }),
+                1 => json!({ "token": "tg_sess_live_token_abc123" }),
+                2 => {
+                    assert!(raw.contains("Bearer tg_sess_live_token_abc123"));
+                    json!({ "messageId": "remote_msg_777" })
+                }
+                _ => {
+                    assert!(raw.contains("Bearer tg_sess_live_token_abc123"));
+                    json!({
+                        "newPts": 42,
+                        "updates": [{
+                            "type": "messageAdded",
+                            "conversationId": "conv_global_dharma_channel",
+                            "id": "srv_msg_lotus_42",
+                            "senderId": "remote:master",
+                            "text": "妙法莲华经观世音菩萨普门品同步验证",
+                            "createdAtMs": 1_760_000_123_000i64
+                        }]
+                    })
+                }
+            };
+            let bs = resp_val.to_string();
+            let http = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                bs.len(),
+                bs
+            );
+            s.write_all(http.as_bytes()).unwrap();
+        }
+    });
+
+    host.dispatch(
+        "telegram.server.configureEndpoint",
+        &json!({ "endpoint": format!("http://{addr}") }),
+    )
+    .unwrap();
+
+    let sent_code = host
+        .dispatch(
+            "telegram.auth.phoneSendCode",
+            &json!({ "phone": "+8613900001111", "liveNetwork": true }),
+        )
+        .unwrap();
+    assert_eq!(sent_code["phoneCodeHash"], "pch_server_live_01");
+
+    let verified = host
+        .dispatch(
+            "telegram.auth.phoneVerify",
+            &json!({
+                "phone": "+8613900001111",
+                "phoneCodeHash": "pch_server_live_01",
+                "code": "88888",
+                "liveNetwork": true
+            }),
+        )
+        .unwrap();
+    assert_eq!(verified["hasSessionToken"], true);
+
+    host.dispatch(
+        "telegram.server.enqueueOutbox",
+        &json!({ "payload": { "conversationId": "conv_global_dharma_channel", "text": "Queued offline" } }),
+    )
+    .unwrap();
+    let flushed = host
+        .dispatch("telegram.server.flushOutbox", &json!({}))
+        .unwrap();
+    assert_eq!(flushed["flushedCount"], 1);
+    assert_eq!(flushed["pendingCount"], 0);
+
+    let diff = host
+        .dispatch("telegram.server.syncDifference", &json!({ "liveNetwork": true }))
+        .unwrap();
+    assert_eq!(diff["newPts"], 42);
+    assert_eq!(diff["ingestedMessages"], 1);
+
+    // Synced message MUST be immediately searchable in SQLite FTS5!
+    let search = host
+        .dispatch(
+            "telegram.messaging.searchMessages",
+            &json!({ "query": "观世音菩萨普门品同步验证" }),
+        )
+        .unwrap();
+    assert!(search["total"].as_u64().unwrap() >= 1);
+
+    srv.join().unwrap();
+
+    // Now server is closed -> syncDifference(liveNetwork: true) MUST fail closed!
+    let closed_err = host
+        .dispatch("telegram.server.syncDifference", &json!({ "liveNetwork": true }))
+        .unwrap_err();
+    assert!(closed_err.contains("SERVER_UNREACHABLE"));
+
+    let _ = std::fs::remove_dir_all(dir);
+}
+

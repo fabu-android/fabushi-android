@@ -16,6 +16,7 @@ use rand::rngs::OsRng;
 use rand::RngCore;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 
 /// Hashes a passcode or 2FA secret with Argon2id + 16-byte random salt.
@@ -135,10 +136,24 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             seq INTEGER PRIMARY KEY AUTOINCREMENT,
             payload_json TEXT NOT NULL,
             flushed INTEGER NOT NULL DEFAULT 0,
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            remote_id TEXT,
+            flushed_at_ms INTEGER,
             created_at_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS tg_auth_challenges (
+            phone_code_hash TEXT PRIMARY KEY,
+            phone TEXT NOT NULL,
+            code_sha256_hex TEXT NOT NULL,
+            expires_at_ms INTEGER NOT NULL
         );",
     )
     .map_err(|e| format!("Failed to initialize telegram_ext schema: {e}"))?;
+
+    let _ = conn.execute("ALTER TABLE tg_fence ADD COLUMN auth_token TEXT", []);
+    let _ = conn.execute("ALTER TABLE tg_server_outbox ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE tg_server_outbox ADD COLUMN remote_id TEXT", []);
+    let _ = conn.execute("ALTER TABLE tg_server_outbox ADD COLUMN flushed_at_ms INTEGER", []);
 
     let acc_count: i64 = conn
         .query_row("SELECT COUNT(*) FROM tg_accounts", [], |r| r.get(0))
@@ -179,7 +194,56 @@ pub fn handle_auth_rpc(conn: &Connection, submethod: &str, params: &Value) -> Re
                 .and_then(Value::as_str)
                 .filter(|s| !s.trim().is_empty())
                 .ok_or_else(|| "phoneSendCode requires 'phone'".to_string())?;
+            let live = params
+                .get("liveNetwork")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            if live {
+                let ep: String = conn
+                    .query_row(
+                        "SELECT server_endpoint FROM tg_fence WHERE singleton_id = 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or_else(|_| "https://telegram.fabushi.ombhrum.com".into());
+                let agent = ureq::AgentBuilder::new()
+                    .timeout_connect(std::time::Duration::from_secs(6))
+                    .timeout_read(std::time::Duration::from_secs(12))
+                    .build();
+                let resp = agent
+                    .post(&format!("{}/v1/auth/phone/send_code", ep.trim_end_matches('/')))
+                    .set("Content-Type", "application/json")
+                    .send_json(json!({ "phone": phone }))
+                    .map_err(|e| format!("SERVER_UNREACHABLE: phoneSendCode failed: {e}"))?;
+                let val: Value = resp
+                    .into_json()
+                    .map_err(|e| format!("SERVER_UNREACHABLE: invalid phoneSendCode JSON: {e}"))?;
+                let pch = val
+                    .get("phoneCodeHash")
+                    .or_else(|| val.get("phone_code_hash"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "SERVER_UNREACHABLE: missing phoneCodeHash in server response".to_string())?;
+                return Ok(json!({
+                    "phone": phone,
+                    "phoneCodeHash": pch,
+                    "codeLength": val.get("codeLength").and_then(Value::as_u64).unwrap_or(5),
+                    "deliveryType": val.get("deliveryType").and_then(Value::as_str).unwrap_or("server_sms"),
+                    "liveNetwork": true,
+                }));
+            }
+
             let phone_code_hash = format!("pch_{}", uuid::Uuid::new_v4().simple());
+            let expected_code = params
+                .get("expectedCode")
+                .and_then(Value::as_str)
+                .unwrap_or("10808");
+            let code_digest = hex_encode(&Sha256::digest(expected_code.as_bytes()));
+            conn.execute(
+                "INSERT OR REPLACE INTO tg_auth_challenges (phone_code_hash, phone, code_sha256_hex, expires_at_ms)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![phone_code_hash, phone, code_digest, now + 300_000],
+            )
+            .map_err(|e| e.to_string())?;
             Ok(json!({
                 "phone": phone,
                 "phoneCodeHash": phone_code_hash,
@@ -196,10 +260,74 @@ pub fn handle_auth_rpc(conn: &Connection, submethod: &str, params: &Value) -> Re
             let code = params
                 .get("code")
                 .and_then(Value::as_str)
-                .unwrap_or("");
-            if code.trim().len() < 4 {
+                .unwrap_or("")
+                .trim();
+            if code.len() < 4 {
                 return Err("Invalid verification code length".into());
             }
+            let live = params
+                .get("liveNetwork")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let mut issued_token: Option<String> = None;
+
+            if live {
+                let pch = params
+                    .get("phoneCodeHash")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "Live phoneVerify requires 'phoneCodeHash'".to_string())?;
+                let ep: String = conn
+                    .query_row(
+                        "SELECT server_endpoint FROM tg_fence WHERE singleton_id = 1",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or_else(|_| "https://telegram.fabushi.ombhrum.com".into());
+                let agent = ureq::AgentBuilder::new()
+                    .timeout_connect(std::time::Duration::from_secs(6))
+                    .timeout_read(std::time::Duration::from_secs(12))
+                    .build();
+                let resp = agent
+                    .post(&format!("{}/v1/auth/phone/verify", ep.trim_end_matches('/')))
+                    .set("Content-Type", "application/json")
+                    .send_json(json!({
+                        "phone": phone,
+                        "phoneCodeHash": pch,
+                        "code": code,
+                    }))
+                    .map_err(|e| format!("SERVER_UNREACHABLE: phoneVerify failed: {e}"))?;
+                let val: Value = resp
+                    .into_json()
+                    .map_err(|e| format!("SERVER_UNREACHABLE: invalid phoneVerify JSON: {e}"))?;
+                issued_token = val
+                    .get("token")
+                    .or_else(|| val.get("accessToken"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string);
+            } else if let Some(pch) = params.get("phoneCodeHash").and_then(Value::as_str) {
+                if let Some((stored_digest, exp_ms)) = conn
+                    .query_row(
+                        "SELECT code_sha256_hex, expires_at_ms FROM tg_auth_challenges WHERE phone_code_hash = ?1",
+                        params![pch],
+                        |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)),
+                    )
+                    .optional()
+                    .map_err(|e| e.to_string())?
+                {
+                    if now > exp_ms {
+                        return Err("Verification challenge expired".into());
+                    }
+                    let actual_digest = hex_encode(&Sha256::digest(code.as_bytes()));
+                    if actual_digest != stored_digest {
+                        return Err("INVALID_CODE: verification code mismatch".into());
+                    }
+                    let _ = conn.execute(
+                        "DELETE FROM tg_auth_challenges WHERE phone_code_hash = ?1",
+                        params![pch],
+                    );
+                }
+            }
+
             let acc_id = format!("acc_{}", &uuid::Uuid::new_v4().simple().to_string()[..10]);
             let username = params
                 .get("username")
@@ -214,8 +342,8 @@ pub fn handle_auth_rpc(conn: &Connection, submethod: &str, params: &Value) -> Re
             )
             .map_err(|e| e.to_string())?;
             conn.execute(
-                "UPDATE tg_fence SET generation = generation + 1 WHERE singleton_id = 1",
-                [],
+                "UPDATE tg_fence SET generation = generation + 1, auth_token = COALESCE(?1, auth_token) WHERE singleton_id = 1",
+                params![issued_token],
             )
             .map_err(|e| e.to_string())?;
             let gen: i64 = conn
@@ -226,6 +354,7 @@ pub fn handle_auth_rpc(conn: &Connection, submethod: &str, params: &Value) -> Re
                 "accountId": acc_id,
                 "phone": phone,
                 "generation": gen,
+                "hasSessionToken": issued_token.is_some(),
             }))
         }
 
@@ -688,14 +817,39 @@ pub fn handle_messaging_ext_rpc(conn: &Connection, submethod: &str, params: &Val
                     params![conv_id],
                     |r| r.get(0),
                 )
-                .unwrap_or(1);
+                .unwrap_or(0);
+            let pinned_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM msg_messages WHERE conversation_id = ?1 AND pinned = 1",
+                    params![conv_id],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            let topic_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM tg_topics WHERE conversation_id = ?1",
+                    params![conv_id],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            let participants_count: usize = conn
+                .query_row(
+                    "SELECT data_json FROM msg_conversations WHERE id = ?1",
+                    params![conv_id],
+                    |r| r.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                .and_then(|v| v.get("participants").and_then(Value::as_array).map(Vec::len))
+                .unwrap_or(0);
             Ok(json!({
                 "conversationId": conv_id,
-                "subscribers": 10_800,
+                "subscribers": participants_count,
                 "totalMessages": msg_count,
-                "viewsPerPost": 4_320,
-                "sharesPerPost": 108,
-                "enabledNotificationsPct": 78.4,
+                "pinnedMessages": pinned_count,
+                "topicsCount": topic_count,
+                "source": "sqlite_local",
             }))
         }
 
@@ -902,22 +1056,31 @@ pub fn handle_server_rpc(conn: &Connection, submethod: &str, params: &Value) -> 
                 .or_else(|| params.get("url"))
                 .and_then(Value::as_str)
                 .ok_or_else(|| "configureEndpoint requires 'endpoint'".to_string())?;
+            let token = params
+                .get("authToken")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty());
             conn.execute(
-                "UPDATE tg_fence SET server_endpoint = ?1 WHERE singleton_id = 1",
-                params![url.trim_end_matches('/')],
+                "UPDATE tg_fence SET server_endpoint = ?1, auth_token = COALESCE(?2, auth_token) WHERE singleton_id = 1",
+                params![url.trim_end_matches('/'), token],
             )
             .map_err(|e| e.to_string())?;
-            Ok(json!({ "endpoint": url.trim_end_matches('/'), "saved": true }))
+            Ok(json!({
+                "endpoint": url.trim_end_matches('/'),
+                "hasAuthToken": token.is_some(),
+                "saved": true,
+            }))
         }
 
         "status" => {
-            let (ep, pts): (String, i64) = conn
+            let (ep, pts, tok): (String, i64, Option<String>) = conn
                 .query_row(
-                    "SELECT server_endpoint, sync_pts FROM tg_fence WHERE singleton_id = 1",
+                    "SELECT server_endpoint, sync_pts, auth_token FROM tg_fence WHERE singleton_id = 1",
                     [],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
-                .unwrap_or_else(|_| ("https://telegram.fabushi.ombhrum.com".into(), 1));
+                .unwrap_or_else(|_| ("https://telegram.fabushi.ombhrum.com".into(), 1, None));
             let pending_outbox: i64 = conn
                 .query_row(
                     "SELECT COUNT(*) FROM tg_server_outbox WHERE flushed = 0",
@@ -928,6 +1091,7 @@ pub fn handle_server_rpc(conn: &Connection, submethod: &str, params: &Value) -> 
             Ok(json!({
                 "endpoint": ep,
                 "pts": pts,
+                "hasAuthToken": tok.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
                 "pendingOutboxCount": pending_outbox,
                 "transport": "ureq-rustls-https",
             }))
@@ -936,7 +1100,7 @@ pub fn handle_server_rpc(conn: &Connection, submethod: &str, params: &Value) -> 
         "enqueueOutbox" => {
             let payload = params.get("payload").cloned().unwrap_or_else(|| json!({}));
             conn.execute(
-                "INSERT INTO tg_server_outbox (payload_json, flushed, created_at_ms) VALUES (?1, 0, ?2)",
+                "INSERT INTO tg_server_outbox (payload_json, flushed, retry_count, created_at_ms) VALUES (?1, 0, 0, ?2)",
                 params![payload.to_string(), now],
             )
             .map_err(|e| e.to_string())?;
@@ -944,34 +1108,190 @@ pub fn handle_server_rpc(conn: &Connection, submethod: &str, params: &Value) -> 
             Ok(json!({ "outboxSeq": id, "queued": true }))
         }
 
-        "syncDifference" => {
-            let (ep, pts): (String, i64) = conn
+        "flushOutbox" => {
+            let (ep, tok): (String, Option<String>) = conn
                 .query_row(
-                    "SELECT server_endpoint, sync_pts FROM tg_fence WHERE singleton_id = 1",
+                    "SELECT server_endpoint, auth_token FROM tg_fence WHERE singleton_id = 1",
                     [],
                     |r| Ok((r.get(0)?, r.get(1)?)),
                 )
-                .unwrap_or_else(|_| ("https://telegram.fabushi.ombhrum.com".into(), 1));
-            let live = params
-                .get("liveNetwork")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let mut remote_updates = Vec::<Value>::new();
-            let mut online_reachable = false;
+                .unwrap_or_else(|_| ("https://telegram.fabushi.ombhrum.com".into(), None));
 
-            if live {
-                let url = format!("{ep}/v1/updates/getDifference?pts={pts}");
-                if let Ok(resp) = ureq::get(&url).call() {
-                    online_reachable = true;
-                    if let Ok(val) = resp.into_json::<Value>() {
-                        if let Some(arr) = val.get("updates").and_then(Value::as_array) {
-                            remote_updates = arr.clone();
-                        }
+            let mut stmt = conn
+                .prepare(
+                    "SELECT seq, payload_json FROM tg_server_outbox WHERE flushed = 0 ORDER BY seq ASC LIMIT 100",
+                )
+                .map_err(|e| e.to_string())?;
+            let pending: Vec<(i64, String)> = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+
+            if pending.is_empty() {
+                return Ok(json!({ "flushedCount": 0, "failedCount": 0, "pendingCount": 0 }));
+            }
+
+            let agent = ureq::AgentBuilder::new()
+                .timeout_connect(std::time::Duration::from_secs(6))
+                .timeout_read(std::time::Duration::from_secs(15))
+                .build();
+
+            let mut flushed_count = 0usize;
+            let mut failed_count = 0usize;
+            let mut last_err = String::new();
+            let post_url = format!("{}/v1/messages/send", ep.trim_end_matches('/'));
+
+            for (seq, raw_payload) in &pending {
+                let payload_val: Value =
+                    serde_json::from_str(raw_payload).unwrap_or_else(|_| json!({ "raw": raw_payload }));
+                let mut req = agent.post(&post_url).set("Content-Type", "application/json");
+                if let Some(ref t) = tok.as_deref().filter(|s| !s.is_empty()) {
+                    req = req.set("Authorization", &format!("Bearer {t}"));
+                }
+                match req.send_json(json!({ "seq": seq, "payload": payload_val })) {
+                    Ok(resp) => {
+                        let ack: Value = resp.into_json().unwrap_or_else(|_| json!({}));
+                        let remote_id = ack
+                            .get("messageId")
+                            .or_else(|| ack.get("id"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("ack_ok")
+                            .to_string();
+                        conn.execute(
+                            "UPDATE tg_server_outbox SET flushed = 1, remote_id = ?1, flushed_at_ms = ?2 WHERE seq = ?3",
+                            params![remote_id, chrono::Utc::now().timestamp_millis(), seq],
+                        )
+                        .map_err(|e| e.to_string())?;
+                        flushed_count += 1;
+                    }
+                    Err(e) => {
+                        last_err = e.to_string();
+                        let _ = conn.execute(
+                            "UPDATE tg_server_outbox SET retry_count = retry_count + 1 WHERE seq = ?1",
+                            params![seq],
+                        );
+                        failed_count += 1;
                     }
                 }
             }
 
-            let next_pts = pts + (remote_updates.len() as i64).max(1);
+            if flushed_count == 0 && failed_count > 0 {
+                return Err(format!(
+                    "SERVER_UNREACHABLE: Outbox flush to {post_url} failed ({last_err})"
+                ));
+            }
+
+            let remaining: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM tg_server_outbox WHERE flushed = 0",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap_or(0);
+            Ok(json!({
+                "flushedCount": flushed_count,
+                "failedCount": failed_count,
+                "pendingCount": remaining,
+            }))
+        }
+
+        "syncDifference" => {
+            let (ep, pts, tok): (String, i64, Option<String>) = conn
+                .query_row(
+                    "SELECT server_endpoint, sync_pts, auth_token FROM tg_fence WHERE singleton_id = 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap_or_else(|_| ("https://telegram.fabushi.ombhrum.com".into(), 1, None));
+            let live = params
+                .get("liveNetwork")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+
+            if !live {
+                return Ok(json!({
+                    "endpoint": ep,
+                    "previousPts": pts,
+                    "newPts": pts,
+                    "onlineReachable": false,
+                    "ingestedMessages": 0,
+                    "updates": [],
+                }));
+            }
+
+            let url = format!("{}/v1/updates/getDifference?pts={pts}", ep.trim_end_matches('/'));
+            let agent = ureq::AgentBuilder::new()
+                .timeout_connect(std::time::Duration::from_secs(6))
+                .timeout_read(std::time::Duration::from_secs(15))
+                .build();
+            let mut req = agent.get(&url);
+            if let Some(ref t) = tok.as_deref().filter(|s| !s.is_empty()) {
+                req = req.set("Authorization", &format!("Bearer {t}"));
+            }
+            let resp = match req.call() {
+                Ok(r) => r,
+                Err(ureq::Error::Status(code, r)) => {
+                    let body = r.into_string().unwrap_or_default();
+                    return Err(format!("SERVER_UNREACHABLE: syncDifference HTTP {code}: {body}"));
+                }
+                Err(ureq::Error::Transport(tr)) => {
+                    return Err(format!("SERVER_UNREACHABLE: syncDifference transport error: {tr}"));
+                }
+            };
+            let val: Value = resp
+                .into_json()
+                .map_err(|e| format!("SERVER_UNREACHABLE: invalid syncDifference JSON: {e}"))?;
+            let remote_updates = val
+                .get("updates")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let mut ingested_messages = 0usize;
+
+            for upd in &remote_updates {
+                let utype = upd.get("type").and_then(Value::as_str).unwrap_or("messageAdded");
+                if utype == "messageAdded" || upd.get("text").is_some() || upd.get("message").is_some() {
+                    let m_obj = upd.get("message").unwrap_or(upd);
+                    let conv_id = m_obj
+                        .get("conversationId")
+                        .or_else(|| m_obj.get("chatId"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("conv_global_dharma_channel");
+                    let msg_id = m_obj
+                        .get("id")
+                        .or_else(|| m_obj.get("messageId"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| format!("sync_msg_{}", uuid::Uuid::new_v4().simple()));
+                    let sender_id = m_obj
+                        .get("senderId")
+                        .or_else(|| m_obj.get("fromId"))
+                        .and_then(Value::as_str)
+                        .unwrap_or("remote:peer");
+                    let text = m_obj
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .or_else(|| m_obj.pointer("/content/data/text/text").and_then(Value::as_str))
+                        .unwrap_or("");
+                    let ts = m_obj
+                        .get("createdAtMs")
+                        .and_then(Value::as_i64)
+                        .unwrap_or(now);
+                    if !text.is_empty() {
+                        crate::messaging::ingest_synced_message(
+                            conn, conv_id, &msg_id, sender_id, text, ts,
+                        )?;
+                        ingested_messages += 1;
+                    }
+                }
+            }
+
+            let next_pts = val
+                .get("newPts")
+                .or_else(|| val.get("pts"))
+                .and_then(Value::as_i64)
+                .unwrap_or(pts + remote_updates.len() as i64);
             conn.execute(
                 "UPDATE tg_fence SET sync_pts = ?1 WHERE singleton_id = 1",
                 params![next_pts],
@@ -982,7 +1302,8 @@ pub fn handle_server_rpc(conn: &Connection, submethod: &str, params: &Value) -> 
                 "endpoint": ep,
                 "previousPts": pts,
                 "newPts": next_pts,
-                "onlineReachable": online_reachable,
+                "onlineReachable": true,
+                "ingestedMessages": ingested_messages,
                 "updates": remote_updates,
             }))
         }

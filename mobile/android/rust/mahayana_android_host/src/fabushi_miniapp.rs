@@ -1,526 +1,467 @@
-//! 全球法布施 (Global Dharma Offering) Mini-App Domain Engine:
-//! - 8 Canonical Buddhist Sutras & 12 Dharma Ritual Packages (`r2-files-list.json`)
-//! - 249+ Global Country Nodes & Coordinates (`concap.csv`)
-//! - Zen Room Spinning Prayer Wheel Merit & Mantra Counter
-//! - Practice Sessions, Streak & 21-Badge Achievement System
-//! - Global Merit Leaderboard & AI Dharma Counselor
+//! Fabushi Global Dharma Offering (`全球法布施`) & Zen Room (`禅修室`) Host Bridge.
+//!
+//! Directly backed by the shared pure-Rust `::fabushi_miniapp` crate (`sutras`, `countries`,
+//! `achievements`, `scene_math`, `state`, `storage`) vendored from `bhrum/gpui-telegram`.
 
+use crate::magpie::{UnifiedMessage, UnifiedRequest, UnifiedRole};
+use ::fabushi_miniapp::achievements::AchievementSystem;
+use ::fabushi_miniapp::countries::{all_countries, country_by_code, search_countries};
+use ::fabushi_miniapp::scene_math::{render_home_scene, render_zen_scene};
+use ::fabushi_miniapp::state::{
+    dharma_ai_fallback_reply, FabushiClientState, HttpActionEffect, HttpResponsePayload,
+    LockedPractice, UiCommand,
+};
+use ::fabushi_miniapp::storage::{
+    activate_membership, create_manual_practice_record, delete_practice_record,
+    get_bootstrap_bundle, get_global_leaderboard, get_locked_practice, get_practice_leaderboard,
+    get_profile, get_unlocked_achievements, init_fabushi_tables, list_practice_records,
+    record_practice_session, record_transfer, toggle_follow, update_practice_record,
+    update_profile, upsert_online_heartbeat,
+};
+use ::fabushi_miniapp::sutras::{
+    all_dharma_packages, all_sutras, dharma_package_by_key, sutra_by_title,
+};
+use parking_lot::Mutex;
 use rusqlite::{params, Connection};
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
-const CONCAP_CSV: &str = include_str!("../assets/concap.csv");
-const R2_FILES_LIST_JSON: &str = include_str!("../assets/r2-files-list.json");
+const DEFAULT_USER_ID: i64 = 100_001;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Sutra {
-    pub id: String,
-    pub title: String,
-    pub category: String,
-    pub content: String,
+static CLIENT_STATE: OnceLock<Mutex<FabushiClientState>> = OnceLock::new();
+
+fn shared_client_state() -> &'static Mutex<FabushiClientState> {
+    CLIENT_STATE.get_or_init(|| {
+        let now_ms = chrono::Utc::now().timestamp_millis() as f64;
+        Mutex::new(FabushiClientState::new(now_ms))
+    })
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DharmaPackage {
-    pub key: String,
-    pub display_name: String,
-    pub size_bytes: u64,
-    pub uploaded: String,
+pub fn init_schema(conn: &Connection) -> Result<(), String> {
+    init_fabushi_tables(conn).map_err(|e| format!("Failed to initialize fabushi_miniapp tables: {e}"))?;
+
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS dharma_android_aux (
+            user_id INTEGER PRIMARY KEY,
+            merit_points INTEGER NOT NULL DEFAULT 0,
+            wheel_rotations INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL
+        );",
+    )
+    .map_err(|e| format!("Failed to initialize dharma_android_aux table: {e}"))?;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    conn.execute(
+        "INSERT OR IGNORE INTO dharma_android_aux (user_id, merit_points, wheel_rotations, updated_at_ms)
+         VALUES (?1, 0, 0, ?2)",
+        params![DEFAULT_USER_ID, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
-#[derive(Deserialize)]
-struct R2FilesList {
-    #[serde(default)]
-    objects: Vec<R2FileEntry>,
-    #[serde(default)]
-    files: Vec<R2FileEntry>,
+fn resolve_user_id(params: &Value) -> i64 {
+    params
+        .get("userId")
+        .and_then(Value::as_i64)
+        .filter(|&id| id > 0)
+        .unwrap_or(DEFAULT_USER_ID)
 }
 
-#[derive(Deserialize)]
-struct R2FileEntry {
-    key: String,
-    size: u64,
-    #[serde(default)]
-    uploaded: String,
+fn hydrate_client_state_from_db(
+    conn: &Connection,
+    st: &mut FabushiClientState,
+    user_id: i64,
+) -> Result<(), String> {
+    let bundle = get_bootstrap_bundle(conn, user_id, "practitioner_local", "本机行者", "", false)
+        .map_err(|e| e.to_string())?;
+    let _ = st.apply_http_effect(HttpResponsePayload::Bootstrap {
+        profile: bundle.profile,
+        locked_practice: bundle.locked_practice,
+        leaderboard: bundle.leaderboard,
+        practice_leaderboard: bundle.practice_leaderboard,
+        practice_records: bundle.practice_records,
+        practice_stats: bundle.practice_stats,
+        unlocked_achievement_ids: bundle.unlocked_achievement_ids,
+        online_global_sending_count: bundle.online_global_sending_count,
+        online_zen_room_count: bundle.online_zen_room_count,
+    });
+    Ok(())
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CountryNode {
-    pub code: String,
-    pub name_zh: String,
-    pub name_en: String,
-    pub capital: String,
-    pub continent: String,
-    pub latitude: f64,
-    pub longitude: f64,
-    pub server_count: usize,
-}
-
-pub const COUNTRY_NAMES: &[(&str, &str)] = &[
-    ("AF", "阿富汗"), ("AX", "奥兰群岛"), ("AL", "阿尔巴尼亚"), ("DZ", "阿尔及利亚"),
-    ("AS", "美属萨摩亚"), ("AD", "安道尔"), ("AO", "安哥拉"), ("AI", "安圭拉"),
-    ("AQ", "南极洲"), ("AG", "安提瓜和巴布达"), ("AR", "阿根廷"), ("AM", "亚美尼亚"),
-    ("AW", "阿鲁巴"), ("AU", "澳大利亚"), ("AT", "奥地利"), ("AZ", "阿塞拜疆"),
-    ("BS", "巴哈马"), ("BH", "巴林"), ("BD", "孟加拉国"), ("BB", "巴巴多斯"),
-    ("BY", "白俄罗斯"), ("BE", "比利时"), ("BZ", "伯利兹"), ("BJ", "贝宁"),
-    ("BM", "百慕大"), ("BT", "不丹"), ("BO", "玻利维亚"), ("BQ", "博内尔、圣尤斯特歇斯和萨巴"),
-    ("BA", "波斯尼亚和黑塞哥维那"), ("BW", "博茨瓦纳"), ("BV", "布维岛"), ("BR", "巴西"),
-    ("IO", "英属印度洋领地"), ("BN", "文莱达鲁萨兰国"), ("BG", "保加利亚"), ("BF", "布基纳法索"),
-    ("BI", "布隆迪"), ("CV", "佛得角"), ("KH", "柬埔寨"), ("CM", "喀麦隆"),
-    ("CA", "加拿大"), ("KY", "开曼群岛"), ("CF", "中非共和国"), ("TD", "乍得"),
-    ("CL", "智利"), ("CN", "中国"), ("CX", "圣诞岛"), ("CC", "科科斯（基林）群岛"),
-    ("CO", "哥伦比亚"), ("KM", "科摩罗"), ("CD", "刚果民主共和国"), ("CG", "刚果"),
-    ("CK", "库克群岛"), ("CR", "哥斯达黎加"), ("CI", "科特迪瓦"), ("HR", "克罗地亚"),
-    ("CU", "古巴"), ("CW", "库拉索"), ("CY", "塞浦路斯"), ("CZ", "捷克共和国"),
-    ("DK", "丹麦"), ("DJ", "吉布提"), ("DM", "多米尼克"), ("DO", "多米尼加共和国"),
-    ("EC", "厄瓜多尔"), ("EG", "埃及"), ("SV", "萨尔瓦多"), ("GQ", "赤道几内亚"),
-    ("ER", "厄立特里亚"), ("EE", "爱沙尼亚"), ("SZ", "斯威士兰"), ("ET", "埃塞俄比亚"),
-    ("FK", "福克兰群岛（马尔维纳斯）"), ("FO", "法罗群岛"), ("FJ", "斐济"), ("FI", "芬兰"),
-    ("FR", "法国"), ("GF", "法属圭亚那"), ("PF", "法属波利尼西亚"), ("TF", "法属南部领地"),
-    ("GA", "加蓬"), ("GM", "冈比亚"), ("GE", "格鲁吉亚"), ("DE", "德国"),
-    ("GH", "加纳"), ("GI", "直布罗陀"), ("GR", "希腊"), ("GL", "格陵兰"),
-    ("GD", "格林纳达"), ("GP", "瓜德罗普"), ("GU", "关岛"), ("GT", "危地马拉"),
-    ("GG", "根西"), ("GN", "几内亚"), ("GW", "几内亚比绍"), ("GY", "圭亚那"),
-    ("HT", "海地"), ("HM", "赫德岛和麦克唐纳群岛"), ("VA", "梵蒂冈"), ("HN", "洪都拉斯"),
-    ("HK", "香港"), ("HU", "匈牙利"), ("IS", "冰岛"), ("IN", "印度"),
-    ("ID", "印度尼西亚"), ("IR", "伊朗"), ("IQ", "伊拉克"), ("IE", "爱尔兰"),
-    ("IM", "马恩岛"), ("IL", "以色列"), ("IT", "意大利"), ("JM", "牙买加"),
-    ("JP", "日本"), ("JE", "泽西"), ("JO", "约旦"), ("KZ", "哈萨克斯坦"),
-    ("KE", "肯尼亚"), ("KI", "基里巴斯"), ("KP", "朝鲜"), ("KR", "韩国"),
-    ("KW", "科威特"), ("KG", "吉尔吉斯斯坦"), ("LA", "老挝人民民主共和国"), ("LV", "拉脱维亚"),
-    ("LB", "黎巴嫩"), ("LS", "莱索托"), ("LR", "利比里亚"), ("LY", "利比亚"),
-    ("LI", "列支敦士登"), ("LT", "立陶宛"), ("LU", "卢森堡"), ("MO", "澳门"),
-    ("MG", "马达加斯加"), ("MW", "马拉维"), ("MY", "马来西亚"), ("MV", "马尔代夫"),
-    ("ML", "马里"), ("MT", "马耳他"), ("MH", "马绍尔群岛"), ("MQ", "马提尼克"),
-    ("MR", "毛里塔尼亚"), ("MU", "毛里求斯"), ("YT", "马约特"), ("MX", "墨西哥"),
-    ("FM", "密克罗尼西亚联邦"), ("MD", "摩尔多瓦"), ("MC", "摩纳哥"), ("MN", "蒙古"),
-    ("ME", "黑山"), ("MS", "蒙特塞拉特"), ("MA", "摩洛哥"), ("MZ", "莫桑比克"),
-    ("MM", "缅甸"), ("NA", "纳米比亚"), ("NR", "瑙鲁"), ("NP", "尼泊尔"),
-    ("NL", "荷兰"), ("NC", "新喀里多尼亚"), ("NZ", "新西兰"), ("NI", "尼加拉瓜"),
-    ("NE", "尼日尔"), ("NG", "尼日利亚"), ("NU", "纽埃"), ("NF", "诺福克岛"),
-    ("MK", "北马其顿"), ("MP", "北马里亚纳群岛"), ("NO", "挪威"), ("OM", "阿曼"),
-    ("PK", "巴基斯坦"), ("PW", "帕劳"), ("PS", "巴勒斯坦"), ("PA", "巴拿马"),
-    ("PG", "巴布亚新几内亚"), ("PY", "巴拉圭"), ("PE", "秘鲁"), ("PH", "菲律宾"),
-    ("PN", "皮特凯恩"), ("PL", "波兰"), ("PT", "葡萄牙"), ("PR", "波多黎各"),
-    ("QA", "卡塔尔"), ("RE", "留尼汪"), ("RO", "罗马尼亚"), ("RU", "俄罗斯"),
-    ("RW", "卢旺达"), ("BL", "圣巴泰勒米"), ("SH", "圣赫勒拿、阿森松和特里斯坦-达库尼亚"),
-    ("KN", "圣基茨和尼维斯"), ("LC", "圣卢西亚"), ("MF", "法属圣马丁"), ("PM", "圣皮埃尔和密克隆"),
-    ("VC", "圣文森特和格林纳丁斯"), ("WS", "萨摩亚"), ("SM", "圣马力诺"), ("ST", "圣多美和普林西比"),
-    ("SA", "沙特阿拉伯"), ("SN", "塞内加尔"), ("RS", "塞尔维亚"), ("SC", "塞舌尔"),
-    ("SL", "塞拉利昂"), ("SG", "新加坡"), ("SX", "荷属圣马丁"), ("SK", "斯洛伐克"),
-    ("SI", "斯洛文尼亚"), ("SB", "所罗门群岛"), ("SO", "索马里"), ("ZA", "南非"),
-    ("GS", "南乔治亚和南桑威奇群岛"), ("SS", "南苏丹"), ("ES", "西班牙"), ("LK", "斯里兰卡"),
-    ("SD", "苏丹"), ("SR", "苏里南"), ("SJ", "斯瓦尔巴和扬马延"), ("SE", "瑞典"),
-    ("CH", "瑞士"), ("SY", "叙利亚"), ("TW", "台湾"), ("TJ", "塔吉克斯坦"),
-    ("TZ", "坦桑尼亚"), ("TH", "泰国"), ("TL", "东帝汶"), ("TG", "多哥"),
-    ("TK", "托克劳"), ("TO", "汤加"), ("TT", "特立尼达和多巴哥"), ("TN", "突尼斯"),
-    ("TR", "土耳其"), ("TM", "土库曼斯坦"), ("TC", "特克斯和凯科斯群岛"), ("TV", "图瓦卢"),
-    ("UG", "乌干达"), ("UA", "乌克兰"), ("AE", "阿拉伯联合酋长国"), ("GB", "英国"),
-    ("UM", "美国本土外小岛屿"), ("US", "美国"), ("UY", "乌拉圭"), ("UZ", "乌兹别克斯坦"),
-    ("VU", "瓦努阿图"), ("VE", "委内瑞拉"), ("VN", "越南"), ("VG", "英属维尔京群岛"),
-    ("VI", "美属维尔京群岛"), ("WF", "瓦利斯和富图纳"), ("EH", "西撒哈拉"), ("YE", "也门"),
-    ("ZM", "赞比亚"), ("ZW", "津巴布韦"),
-];
-
-static SUTRAS_CACHE: OnceLock<Vec<Sutra>> = OnceLock::new();
-static PACKAGES_CACHE: OnceLock<Vec<DharmaPackage>> = OnceLock::new();
-static COUNTRIES_CACHE: OnceLock<Vec<CountryNode>> = OnceLock::new();
-
-pub fn all_sutras() -> &'static [Sutra] {
-    SUTRAS_CACHE
-        .get_or_init(|| {
-            vec![
-                Sutra {
-                    id: "diamond_sutra".into(),
-                    title: "金刚经".into(),
-                    category: "般若部".into(),
-                    content: "如是我闻。一时，佛在舍卫国祇树给孤独园，与大比丘众千二百五十人俱。佛告须菩提：诸菩萨摩诃萨应如是降伏其心！所有一切众生之类，我皆令入无余涅盘而灭度之。若菩萨有我相、人相、众生相、寿者相，即非菩萨。应无所住而生其心。一切有为法，如梦幻泡影，如露亦如电，应作如是观。".into(),
-                },
-                Sutra {
-                    id: "heart_sutra".into(),
-                    title: "心经".into(),
-                    category: "般若部".into(),
-                    content: "观自在菩萨，行深般若波罗蜜多时，照见五蕴皆空，度一切苦厄。舍利子，色不异空，空不异色，色即是空，空即是色，受想行识，亦复如是。无挂碍故，无有恐怖，远离颠倒梦想，究竟涅盘。揭谛揭谛，波罗揭谛，波罗僧揭谛，菩提萨婆诃。".into(),
-                },
-                Sutra {
-                    id: "lotus_sutra".into(),
-                    title: "法华经".into(),
-                    category: "法华部".into(),
-                    content: "如是我闻。一时，佛住王舍城耆阇崛山中，与大比丘众万二千人俱。诸佛世尊唯以一大事因缘故出现于世：欲令众生开佛知见使得清净故，欲示众生佛之知见故，欲令众生悟佛知见故，欲令众生入佛知见道故。".into(),
-                },
-                Sutra {
-                    id: "avatamsaka_sutra".into(),
-                    title: "华严经".into(),
-                    category: "华严部".into(),
-                    content: "如是我闻。一时，佛在摩竭提国阿兰若法菩提场中，始成正觉。智入三世悉皆平等，其身充满一切世间，其音普顺十方国土。心如工画师，能画诸世间，五蕴悉从生，无法而不造。不忘初心，方得始终。".into(),
-                },
-                Sutra {
-                    id: "surangama_sutra".into(),
-                    title: "楞严经".into(),
-                    category: "密教部".into(),
-                    content: "如是我闻。一时，佛在室罗筏城祇桓精舍，与大比丘众千二百五十人俱。狂心顿歇，歇即菩提。胜净明心，本周法界，不从人得。摄心为戒，因戒生定，因定发慧，是则名为三无漏学。".into(),
-                },
-                Sutra {
-                    id: "yuanjue_sutra".into(),
-                    title: "圆觉经".into(),
-                    category: "经集部".into(),
-                    content: "如是我闻。一时，婆伽婆入于神通大光明藏，三昧正受，一切如来光严住持，是诸众生清净觉地。知幻即离，不作方便；离幻即觉，亦无渐次。一切菩萨及末世众生，应当远离一切幻化虚妄境界。".into(),
-                },
-                Sutra {
-                    id: "vimalakirti_sutra".into(),
-                    title: "维摩诘经".into(),
-                    category: "经集部".into(),
-                    content: "如是我闻。一时，佛在毗耶离庵罗树园，与大比丘众八千人俱。若菩萨欲得净土，当净其心；随其心净，则佛土净。直心是道场，无虚假故。布施、持戒、忍辱、精进、禅定、智慧及方便力，无不具足。".into(),
-                },
-                Sutra {
-                    id: "ksitigarbha_sutra".into(),
-                    title: "地藏经".into(),
-                    category: "地藏部".into(),
-                    content: "如是我闻。一时，佛在忉利天，为母说法。地狱未空，誓不成佛；众生度尽，方证菩提。如来含笑，放百千万亿大光明云，所谓大圆满光明云、大慈悲光明云、大智慧光明云、大般若光明云。".into(),
-                },
-            ]
-        })
-        .as_slice()
-}
-
-pub fn all_dharma_packages() -> &'static [DharmaPackage] {
-    PACKAGES_CACHE
-        .get_or_init(|| {
-            let parsed: R2FilesList = serde_json::from_str(R2_FILES_LIST_JSON).unwrap_or(R2FilesList {
-                objects: Vec::new(),
-                files: Vec::new(),
-            });
-            let items = if !parsed.objects.is_empty() {
-                parsed.objects
-            } else {
-                parsed.files
-            };
-            items
-                .into_iter()
-                .map(|e| DharmaPackage {
-                    display_name: e
-                        .key
-                        .trim()
-                        .strip_suffix(".amitabha")
-                        .unwrap_or(e.key.trim())
-                        .trim()
-                        .to_string(),
-                    key: e.key,
-                    size_bytes: e.size,
-                    uploaded: e.uploaded,
-                })
-                .collect()
-        })
-        .as_slice()
-}
-
-fn fallback_geo(code: &str) -> Option<(&'static str, &'static str, f64, f64, &'static str)> {
-    match code {
-        "AQ" => Some(("Antarctica", "McMurdo", -75.250973, -0.071389, "Antarctica")),
-        "BQ" => Some(("Caribbean Netherlands", "Kralendijk", 12.1784, -68.2385, "North America")),
-        "BV" => Some(("Bouvet Island", "Bouvet", -54.4208, 3.3464, "Antarctica")),
-        "GF" => Some(("French Guiana", "Cayenne", 4.9224, -52.3135, "South America")),
-        "GP" => Some(("Guadeloupe", "Basse-Terre", 16.2650, -61.5510, "North America")),
-        "HK" => Some(("Hong Kong", "Hong Kong", 22.3193, 114.1694, "Asia")),
-        "HM" => Some(("Heard Island", "Atlas Cove", -53.0818, 73.5042, "Antarctica")),
-        "MO" => Some(("Macau", "Macau", 22.1987, 113.5439, "Asia")),
-        "MQ" => Some(("Martinique", "Fort-de-France", 14.6415, -61.0242, "North America")),
-        "RE" => Some(("Reunion", "Saint-Denis", -21.1151, 55.5364, "Africa")),
-        "YT" => Some(("Mayotte", "Mamoudzou", -12.8275, 45.1662, "Africa")),
-        _ => None,
-    }
-}
-
-pub fn all_countries() -> &'static [CountryNode] {
-    COUNTRIES_CACHE
-        .get_or_init(|| {
-            let mut csv_map: HashMap<String, (String, String, f64, f64, String)> = HashMap::new();
-            for line in CONCAP_CSV.lines().skip(1) {
-                let parts: Vec<&str> = line.trim().split(',').collect();
-                if parts.len() < 6 {
-                    continue;
-                }
-                let code = parts[4].trim().to_ascii_uppercase();
-                if code.is_empty() || code == "NULL" {
-                    continue;
-                }
-                let lat = parts[2].trim().parse::<f64>().unwrap_or(0.0);
-                let lng = parts[3].trim().parse::<f64>().unwrap_or(0.0);
-                csv_map.insert(
-                    code,
-                    (
-                        parts[0].trim().to_string(),
-                        parts[1].trim().to_string(),
-                        lat,
-                        lng,
-                        parts[5].trim().to_string(),
-                    ),
-                );
+fn execute_effects_against_sqlite(
+    conn: &Connection,
+    st: &mut FabushiClientState,
+    user_id: i64,
+    effects: Vec<HttpActionEffect>,
+) -> Result<usize, String> {
+    let mut applied = 0usize;
+    for effect in effects {
+        applied += 1;
+        match effect {
+            HttpActionEffect::Bootstrap => {
+                hydrate_client_state_from_db(conn, st, user_id)?;
             }
-
-            let mut nodes = Vec::with_capacity(COUNTRY_NAMES.len() + 1);
-            let mut seen = HashSet::new();
-            for &(code, name_zh) in COUNTRY_NAMES {
-                seen.insert(code);
-                let (name_en, capital, lat, lng, continent) =
-                    match (csv_map.get(code), fallback_geo(code)) {
-                        (Some(r), Some(fb)) if r.2 == 0.0 && r.3 == 0.0 => (
-                            r.0.clone(),
-                            fb.1.to_string(),
-                            fb.2,
-                            fb.3,
-                            r.4.clone(),
-                        ),
-                        (Some(r), _) => (r.0.clone(), r.1.clone(), r.2, r.3, r.4.clone()),
-                        (None, Some(fb)) => (
-                            fb.0.to_string(),
-                            fb.1.to_string(),
-                            fb.2,
-                            fb.3,
-                            fb.4.to_string(),
-                        ),
-                        (None, None) => (code.to_string(), String::new(), 0.0, 0.0, String::new()),
-                    };
-                let server_count = match code {
-                    "AR" | "AU" | "BR" | "CA" | "CN" | "DE" | "DK" | "ES" | "FR" | "GB" | "IN"
-                    | "IT" | "KR" | "MX" | "NL" | "RU" | "US" => 3,
-                    _ => 2,
-                };
-                nodes.push(CountryNode {
-                    code: code.to_string(),
-                    name_zh: name_zh.to_string(),
-                    name_en,
-                    capital,
-                    continent,
-                    latitude: lat,
-                    longitude: lng,
-                    server_count,
+            HttpActionEffect::RecordTransfer {
+                content_title,
+                content_kind,
+                target_countries,
+                bytes_sent,
+                beam_count,
+            } => {
+                let res = record_transfer(
+                    conn,
+                    user_id,
+                    &content_title,
+                    &content_kind,
+                    &target_countries,
+                    bytes_sent,
+                    beam_count,
+                )
+                .map_err(|e| e.to_string())?;
+                let merit = (beam_count as i64).max(1) * 18;
+                conn.execute(
+                    "UPDATE dharma_android_aux SET merit_points = merit_points + ?1, updated_at_ms = ?2 WHERE user_id = ?3",
+                    params![merit, chrono::Utc::now().timestamp_millis(), user_id],
+                )
+                .map_err(|e| e.to_string())?;
+                let _ = st.apply_http_effect(HttpResponsePayload::TransferRecorded {
+                    total_transfer_bytes: res.total_transfer_bytes,
+                    total_transfer_count: res.total_transfer_count,
+                    leaderboard: Some(res.leaderboard),
                 });
             }
-            if let Some(ko) = csv_map.get("KO") {
-                if !seen.contains("KO") {
-                    nodes.push(CountryNode {
-                        code: "KO".into(),
-                        name_zh: "科索沃".into(),
-                        name_en: ko.0.clone(),
-                        capital: ko.1.clone(),
-                        continent: ko.4.clone(),
-                        latitude: ko.2,
-                        longitude: ko.3,
-                        server_count: 2,
+            HttpActionEffect::SavePracticeSession {
+                sutra,
+                duration_minutes,
+                chant_count,
+                start_time_ms,
+                end_time_ms,
+                notes,
+            } => {
+                let res = record_practice_session(
+                    conn,
+                    user_id,
+                    &sutra,
+                    duration_minutes.max(1),
+                    chant_count,
+                    Some(start_time_ms),
+                    Some(end_time_ms),
+                    notes.as_deref(),
+                )
+                .map_err(|e| e.to_string())?;
+                let _ = st.apply_http_effect(HttpResponsePayload::PracticeSessionSaved {
+                    record: res.record,
+                    practice_stats: res.practice_stats,
+                    profile: res.profile,
+                });
+            }
+            HttpActionEffect::CreatePracticeRecord {
+                sutra_name,
+                chant_count,
+                duration_minutes,
+                record_date,
+                local_time,
+                notes,
+            } => {
+                let (_rec, stats) = create_manual_practice_record(
+                    conn,
+                    user_id,
+                    &sutra_name,
+                    chant_count,
+                    duration_minutes,
+                    &record_date,
+                    &local_time,
+                    notes.as_deref(),
+                )
+                .map_err(|e| e.to_string())?;
+                let records = list_practice_records(conn, user_id, 50, 0).map_err(|e| e.to_string())?;
+                let _ = st.apply_http_effect(HttpResponsePayload::PracticeRecordsRefreshed {
+                    practice_records: records,
+                    practice_stats: stats,
+                });
+            }
+            HttpActionEffect::UpdatePracticeRecord {
+                id,
+                sutra_name,
+                chant_count,
+                duration_minutes,
+                record_date,
+                local_time,
+                notes,
+            } => {
+                if let Some((_rec, stats)) = update_practice_record(
+                    conn,
+                    user_id,
+                    id,
+                    &sutra_name,
+                    chant_count,
+                    duration_minutes,
+                    &record_date,
+                    &local_time,
+                    notes.as_deref(),
+                )
+                .map_err(|e| e.to_string())?
+                {
+                    let records =
+                        list_practice_records(conn, user_id, 50, 0).map_err(|e| e.to_string())?;
+                    let _ = st.apply_http_effect(HttpResponsePayload::PracticeRecordsRefreshed {
+                        practice_records: records,
+                        practice_stats: stats,
                     });
                 }
             }
-            nodes.sort_by(|a, b| a.name_zh.cmp(&b.name_zh).then_with(|| a.code.cmp(&b.code)));
-            nodes
-        })
-        .as_slice()
-}
-
-pub fn format_leaderboard_bytes(bytes: u64) -> String {
-    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB", "PB"];
-    let mut value = bytes as f64;
-    let mut idx = 0usize;
-    while value >= 1000.0 && idx < UNITS.len() - 1 {
-        value /= 1000.0;
-        idx += 1;
+            HttpActionEffect::DeletePracticeRecord { id } => {
+                let (_deleted, stats) =
+                    delete_practice_record(conn, user_id, id).map_err(|e| e.to_string())?;
+                let records = list_practice_records(conn, user_id, 50, 0).map_err(|e| e.to_string())?;
+                let _ = st.apply_http_effect(HttpResponsePayload::PracticeRecordsRefreshed {
+                    practice_records: records,
+                    practice_stats: stats,
+                });
+            }
+            HttpActionEffect::UpdateProfile {
+                display_name,
+                bio,
+                locked_practice,
+                locale,
+            } => {
+                let (profile, locked) = update_profile(
+                    conn,
+                    user_id,
+                    display_name.as_deref(),
+                    bio.as_deref(),
+                    locked_practice.as_ref(),
+                    locale.as_deref(),
+                )
+                .map_err(|e| e.to_string())?;
+                let _ = st.apply_http_effect(HttpResponsePayload::ProfileUpdated {
+                    profile,
+                    locked_practice: locked,
+                });
+            }
+            HttpActionEffect::ActivateMembership { plan } => {
+                let profile = activate_membership(conn, user_id, &plan).map_err(|e| e.to_string())?;
+                let _ = st.apply_http_effect(HttpResponsePayload::MembershipActivated { profile });
+            }
+            HttpActionEffect::ToggleFollow { target_username } => {
+                let res = toggle_follow(conn, user_id, &target_username).map_err(|e| e.to_string())?;
+                let _ = st.apply_http_effect(HttpResponsePayload::FollowToggled {
+                    target_username: res.target_username,
+                    is_following: res.is_following,
+                    follower_count: res.follower_count,
+                });
+            }
+            HttpActionEffect::FetchLeaderboard { kind } => {
+                let entries = if kind == "practice" {
+                    get_practice_leaderboard(conn, user_id, 50).map_err(|e| e.to_string())?
+                } else {
+                    get_global_leaderboard(conn, user_id, 50).map_err(|e| e.to_string())?
+                };
+                let _ = st.apply_http_effect(HttpResponsePayload::LeaderboardFetched {
+                    kind,
+                    entries,
+                });
+            }
+            HttpActionEffect::Heartbeat { activity_type } => {
+                let online_count =
+                    upsert_online_heartbeat(conn, user_id, &activity_type).map_err(|e| e.to_string())?;
+                let _ = st.apply_http_effect(HttpResponsePayload::HeartbeatAck {
+                    activity_type,
+                    online_count,
+                });
+            }
+            HttpActionEffect::SendAiChat { message, .. } => {
+                let reply = run_dharma_ai_query(
+                    conn,
+                    &message,
+                    st.locked_practice.as_ref().map(|lp| lp.title.as_str()),
+                    st.locale.as_str(),
+                )
+                .0;
+                let _ = st.apply_http_effect(HttpResponsePayload::AiChatReply { reply });
+            }
+            HttpActionEffect::SyncCloudStorage { .. } | HttpActionEffect::EmitWebAppData { .. } => {}
+        }
     }
-    let mut s = if value >= 100.0 {
-        format!("{value:.0}")
-    } else {
-        format!("{value:.1}")
-    };
-    if let Some(stripped) = s.strip_suffix(".0") {
-        s = stripped.to_string();
-    }
-    format!("{s} {}", UNITS[idx])
+    Ok(applied)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AchievementBadge {
-    pub id: String,
-    pub title: String,
-    pub title_en: String,
-    pub description: String,
-    pub icon: String,
-    pub tier: String,
-    pub unlocked: bool,
-    pub unlocked_at_ms: Option<i64>,
-}
-
-const ACHIEVEMENT_DEFS: &[(&str, &str, &str, &str, &str, &str)] = &[
-    ("daily_start", "今日已开启修行", "Daily Practice Begun", "迈出修行的第一步", "🌅", "bronze"),
-    ("first_session", "初心不改", "Beginner's Mind", "完成首次修行", "✨", "gold"),
-    ("streak_3", "三日精进", "3-Day Diligence", "连续修行3天", "🔥", "bronze"),
-    ("streak_7", "七日不辍", "7-Day Steadfastness", "连续修行7天", "🌟", "silver"),
-    ("streak_21", "习惯养成", "21-Day Habit", "连续修行21天", "💎", "gold"),
-    ("streak_30", "一月精修", "30-Day Mastery", "连续修行30天", "🏆", "platinum"),
-    ("streak_100", "百日筑基", "100-Day Foundation", "连续修行100天", "👑", "legendary"),
-    ("midnight_practice", "子时修行", "Midnight Vigil", "在子时开始修行", "🌙", "silver"),
-    ("morning_practice", "清晨早课", "Dawn Chanting", "在清晨开始修行", "🌄", "silver"),
-    ("duration_5", "五分精进", "5-Minute Focus", "单次修行5分钟", "⏱️", "bronze"),
-    ("duration_30", "半时功德", "Half-Hour Merit", "单次修行30分钟", "⏳", "silver"),
-    ("duration_60", "一时圆满", "Full-Hour Perfection", "单次修行60分钟", "🕐", "gold"),
-    ("chant_108", "一百零八遍", "108 Mala Chants", "单次念诵108遍", "📿", "gold"),
-    ("chant_1000", "千遍精进", "1,000 Chants", "累计念诵1000遍", "🙏", "platinum"),
-    ("chant_10000", "万遍圆满", "10,000 Chants", "累计念诵10000遍", "🪷", "legendary"),
-    ("sessions_10", "十次精进", "10 Sessions", "累计修行10次", "🎯", "bronze"),
-    ("sessions_50", "五十功德", "50 Sessions", "累计修行50次", "🎖️", "silver"),
-    ("sessions_100", "百次圆满", "100 Sessions", "累计修行100次", "🏅", "gold"),
-    ("total_60min", "累计一小时", "1 Cumulative Hour", "累计修行60分钟", "⌛", "bronze"),
-    ("total_10hr", "累计十小时", "10 Cumulative Hours", "累计修行10小时", "🌟", "silver"),
-    ("total_100hr", "累计百时", "100 Cumulative Hours", "累计修行100小时", "💫", "platinum"),
-];
-
-pub fn init_schema(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS fabushi_offerings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            country_code TEXT NOT NULL,
-            package_key TEXT NOT NULL,
-            bytes_offered INTEGER NOT NULL,
-            merit_earned INTEGER NOT NULL,
-            dedication TEXT NOT NULL,
-            created_at_ms INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS fabushi_zen_state (
-            singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
-            wheel_rotations INTEGER NOT NULL DEFAULT 0,
-            total_merit INTEGER NOT NULL DEFAULT 0,
-            total_sessions INTEGER NOT NULL DEFAULT 0,
-            total_minutes INTEGER NOT NULL DEFAULT 0,
-            total_chants INTEGER NOT NULL DEFAULT 0,
-            consecutive_days INTEGER NOT NULL DEFAULT 0,
-            last_session_day INTEGER,
-            unlocked_json TEXT NOT NULL DEFAULT '{}'
-        );
-        INSERT OR IGNORE INTO fabushi_zen_state (singleton_id) VALUES (1);
-        CREATE TABLE IF NOT EXISTS fabushi_practice_sessions (
-            session_id TEXT PRIMARY KEY,
-            sutra_id TEXT NOT NULL,
-            duration_seconds INTEGER NOT NULL,
-            chant_count INTEGER NOT NULL,
-            dedication TEXT NOT NULL,
-            created_at_ms INTEGER NOT NULL
-        );",
-    )
-    .map_err(|e| format!("Failed to initialize fabushi_miniapp schema: {e}"))
-}
-
-fn load_zen_state(
+fn run_dharma_ai_query(
     conn: &Connection,
-) -> Result<(u64, u64, u64, u64, u64, u64, Option<i64>, BTreeMap<String, i64>), String> {
-    conn.query_row(
-        "SELECT wheel_rotations, total_merit, total_sessions, total_minutes, total_chants, consecutive_days, last_session_day, unlocked_json
-         FROM fabushi_zen_state WHERE singleton_id = 1",
-        [],
-        |r| {
-            let raw: String = r.get(7)?;
-            let map: BTreeMap<String, i64> = serde_json::from_str(&raw).unwrap_or_default();
-            Ok((
-                r.get::<_, i64>(0)? as u64,
-                r.get::<_, i64>(1)? as u64,
-                r.get::<_, i64>(2)? as u64,
-                r.get::<_, i64>(3)? as u64,
-                r.get::<_, i64>(4)? as u64,
-                r.get::<_, i64>(5)? as u64,
-                r.get::<_, Option<i64>>(6)?,
-                map,
-            ))
-        },
+    prompt: &str,
+    locked_practice: Option<&str>,
+    locale: &str,
+) -> (String, &'static str) {
+    if crate::magpie::has_configured_live_seat(conn) {
+        let sys = format!(
+            "你是全球法布施与禅修室的佛学参学顾问。请以温和、恭敬、契合大乘般若经典的语言解答问题。{}",
+            locked_practice
+                .map(|s| format!("修行者当前一门深入的主修功课为《{s}》。"))
+                .unwrap_or_default()
+        );
+        let req = UnifiedRequest {
+            model: "auto".into(),
+            system_prompt: sys,
+            messages: vec![UnifiedMessage {
+                role: UnifiedRole::User,
+                content: prompt.to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+                reasoning: None,
+            }],
+            tools: Vec::new(),
+            temperature: Some(0.5),
+            max_tokens: Some(512),
+            thinking_budget_tokens: None,
+            stream: true,
+        };
+        if let Ok(live) = crate::magpie::execute_live_request(conn, &req, None, None, None, |_| {}) {
+            if !live.reply.trim().is_empty() {
+                return (live.reply, "magpie_live");
+            }
+        }
+    }
+    (
+        dharma_ai_fallback_reply(prompt, locked_practice, locale),
+        "sutra_canon",
     )
-    .map_err(|e| e.to_string())
 }
 
 pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
     init_schema(conn)?;
+    let user_id = resolve_user_id(params);
+
     match submethod {
-        "bootstrap" => {
-            let (rotations, merit, sessions, minutes, chants, streak, _, unlocked) =
-                load_zen_state(conn)?;
-            let offered_countries: i64 = conn
+        "status" => {
+            let bundle =
+                get_bootstrap_bundle(conn, user_id, "practitioner_local", "本机行者", "", false)
+                    .map_err(|e| e.to_string())?;
+            let (merit, wheel_rot): (i64, i64) = conn
                 .query_row(
-                    "SELECT COUNT(DISTINCT country_code) FROM fabushi_offerings",
-                    [],
-                    |r| r.get(0),
+                    "SELECT merit_points, wheel_rotations FROM dharma_android_aux WHERE user_id = ?1",
+                    params![user_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
                 )
-                .unwrap_or(0);
-            let total_bytes: i64 = conn
-                .query_row(
-                    "SELECT COALESCE(SUM(bytes_offered), 0) FROM fabushi_offerings",
-                    [],
-                    |r| r.get(0),
-                )
-                .unwrap_or(0);
+                .unwrap_or((0, 0));
+
             Ok(json!({
-                "miniAppId": "global-dharma",
-                "title": "全球法布施",
-                "sutrasCount": all_sutras().len(),
-                "packagesCount": all_dharma_packages().len(),
-                "countriesCount": all_countries().len(),
-                "offeredCountriesCount": offered_countries,
-                "totalBytesOffered": total_bytes,
-                "totalBytesFormatted": format_leaderboard_bytes(total_bytes.max(0) as u64),
-                "zenRoom": {
-                    "wheelRotations": rotations,
-                    "totalMerit": merit,
-                    "totalSessions": sessions,
-                    "totalMinutes": minutes,
-                    "totalChants": chants,
-                    "consecutiveDays": streak,
-                    "unlockedAchievements": unlocked.len(),
+                "dharmaState": {
+                    "meritPoints": merit,
+                    "wheelRotations": wheel_rot,
+                    "totalOfferings": bundle.profile.total_transfer_count,
+                    "totalTransferBytes": bundle.profile.total_transfer_bytes,
+                    "totalPracticeSeconds": bundle.profile.total_practice_minutes * 60,
+                    "totalPracticeMinutes": bundle.profile.total_practice_minutes,
+                    "totalPracticeSessions": bundle.profile.total_practice_sessions,
+                    "totalChantCount": bundle.profile.total_practice_chants,
+                    "streakDays": bundle.profile.consecutive_days,
+                    "lockedPracticeSutra": bundle.profile.locked_practice_title,
+                    "vipActive": bundle.profile.is_vip,
+                    "vipPlan": bundle.profile.vip_plan,
+                    "onlineGlobalSendingCount": bundle.online_global_sending_count,
+                    "onlineZenRoomCount": bundle.online_zen_room_count,
+                    "sutraCatalogCount": all_sutras().len(),
+                    "packageCatalogCount": all_dharma_packages().len(),
+                    "countryNodeCount": all_countries().len(),
+                    "achievementCatalogCount": AchievementSystem::new().catalog_snapshot().len(),
                 }
             }))
         }
 
-        "sutras" => Ok(json!({
-            "sutras": all_sutras(),
-            "packages": all_dharma_packages(),
-        })),
+        "bootstrap" => {
+            let username = params
+                .get("username")
+                .and_then(Value::as_str)
+                .unwrap_or("practitioner_local");
+            let display_name = params
+                .get("displayName")
+                .and_then(Value::as_str)
+                .unwrap_or("本机行者");
+            let bundle = get_bootstrap_bundle(conn, user_id, username, display_name, "", false)
+                .map_err(|e| e.to_string())?;
+            {
+                let mut st = shared_client_state().lock();
+                let _ = st.apply_http_effect(HttpResponsePayload::Bootstrap {
+                    profile: bundle.profile.clone(),
+                    locked_practice: bundle.locked_practice.clone(),
+                    leaderboard: bundle.leaderboard.clone(),
+                    practice_leaderboard: bundle.practice_leaderboard.clone(),
+                    practice_records: bundle.practice_records.clone(),
+                    practice_stats: bundle.practice_stats.clone(),
+                    unlocked_achievement_ids: bundle.unlocked_achievement_ids.clone(),
+                    online_global_sending_count: bundle.online_global_sending_count,
+                    online_zen_room_count: bundle.online_zen_room_count,
+                });
+            }
+            serde_json::to_value(bundle).map_err(|e| e.to_string())
+        }
+
+        "sutras" => {
+            let sutras_json: Vec<Value> = all_sutras()
+                .iter()
+                .map(|s| {
+                    json!({
+                        "id": s.id,
+                        "title": s.title,
+                        "category": s.category,
+                        "content": s.content,
+                        "bytes": s.content.len(),
+                    })
+                })
+                .collect();
+            let packages_json: Vec<Value> = all_dharma_packages()
+                .iter()
+                .map(|p| {
+                    json!({
+                        "key": p.key,
+                        "title": p.display_name,
+                        "displayName": p.display_name,
+                        "sizeBytes": p.size_bytes,
+                        "uploaded": p.uploaded,
+                        "meritBase": 18,
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "sutras": sutras_json,
+                "packages": packages_json,
+            }))
+        }
 
         "countries" => {
             let query = params
                 .get("query")
                 .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim()
-                .to_ascii_lowercase();
-            let mut offered_set = BTreeSet::new();
-            if let Ok(mut stmt) = conn.prepare("SELECT DISTINCT country_code FROM fabushi_offerings") {
-                if let Ok(rows) = stmt.query_map([], |r| r.get::<_, String>(0)) {
-                    for c in rows.flatten() {
-                        offered_set.insert(c);
-                    }
-                }
-            }
-            let list: Vec<Value> = all_countries()
-                .iter()
-                .filter(|c| {
-                    query.is_empty()
-                        || c.code.to_ascii_lowercase().contains(&query)
-                        || c.name_zh.contains(&query)
-                        || c.name_en.to_ascii_lowercase().contains(&query)
-                        || c.capital.to_ascii_lowercase().contains(&query)
-                })
+                .unwrap_or_default()
+                .trim();
+            let region = params
+                .get("region")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let matched = search_countries(query);
+            let nodes: Vec<Value> = matched
+                .into_iter()
+                .filter(|c| region.is_empty() || c.continent.eq_ignore_ascii_case(region))
                 .map(|c| {
                     json!({
                         "code": c.code,
-                        "nameZh": c.name_zh,
-                        "nameEn": c.name_en,
+                        "name_zh": c.name_zh,
+                        "name_en": c.name_en,
                         "capital": c.capital,
+                        "region": c.continent,
                         "continent": c.continent,
-                        "latitude": c.latitude,
-                        "longitude": c.longitude,
-                        "serverCount": c.server_count,
-                        "illuminated": offered_set.contains(&c.code),
+                        "lat": c.latitude,
+                        "lng": c.longitude,
+                        "lon": c.longitude,
                     })
                 })
                 .collect();
             Ok(json!({
-                "total": list.len(),
-                "countries": list,
+                "countries": nodes,
+                "total": all_countries().len(),
             }))
         }
 
@@ -529,309 +470,352 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .get("countryCode")
                 .and_then(Value::as_str)
                 .unwrap_or("CN")
-                .trim()
                 .to_ascii_uppercase();
-            let country = all_countries()
-                .iter()
-                .find(|c| c.code == country_code)
-                .ok_or_else(|| format!("Unknown country code '{country_code}'"))?;
             let package_key = params
                 .get("packageKey")
                 .and_then(Value::as_str)
-                .unwrap_or("ritual_file.zip");
-            let pkg = all_dharma_packages()
-                .iter()
-                .find(|p| p.key == package_key || p.display_name == package_key)
-                .or_else(|| all_dharma_packages().first());
-            let bytes = pkg.map(|p| p.size_bytes).unwrap_or(108_000_000);
-            let merit_delta = 108i64 * (country.server_count as i64);
-            let dedication = params
-                .get("dedication")
-                .and_then(Value::as_str)
-                .unwrap_or("愿以此功德，普及于一切，我等与众生，皆共成佛道。");
-            let now = chrono::Utc::now().timestamp_millis();
+                .unwrap_or("heart_sutra");
 
-            conn.execute(
-                "INSERT INTO fabushi_offerings (country_code, package_key, bytes_offered, merit_earned, dedication, created_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![country.code, package_key, bytes as i64, merit_delta, dedication, now],
+            let node = country_by_code(&country_code)
+                .or_else(|| all_countries().first())
+                .ok_or_else(|| "Country catalog empty".to_string())?;
+
+            let (content_title, content_kind, size_bytes) =
+                if let Some(s) = sutra_by_title(package_key).or_else(|| {
+                    all_sutras().iter().find(|s| s.id == package_key)
+                }) {
+                    (s.title.clone(), "sutra".to_string(), s.content.len().max(4096) as u64)
+                } else if let Some(pkg) = dharma_package_by_key(package_key) {
+                    (pkg.display_name.clone(), "package".to_string(), pkg.size_bytes)
+                } else {
+                    (package_key.to_string(), "sutra".to_string(), 8_192_u64)
+                };
+
+            let count = params
+                .get("count")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 108) as u32;
+            let merit_earned = (count as i64) * 18;
+            let now_ms = chrono::Utc::now().timestamp_millis();
+
+            let tr = record_transfer(
+                conn,
+                user_id,
+                &content_title,
+                &content_kind,
+                std::slice::from_ref(&node.code),
+                size_bytes.saturating_mul(count as u64),
+                count,
             )
             .map_err(|e| e.to_string())?;
+
             conn.execute(
-                "UPDATE fabushi_zen_state SET total_merit = total_merit + ?1 WHERE singleton_id = 1",
-                params![merit_delta],
+                "UPDATE dharma_android_aux SET merit_points = merit_points + ?1, updated_at_ms = ?2 WHERE user_id = ?3",
+                params![merit_earned, now_ms, user_id],
             )
             .map_err(|e| e.to_string())?;
 
-            let (_, total_merit, ..) = load_zen_state(conn)?;
+            {
+                let mut st = shared_client_state().lock();
+                let (ulat, ulng) = (st.user_lat, st.user_lng);
+                st.globe_scene.add_beam(
+                    ulat,
+                    ulng,
+                    node.latitude,
+                    node.longitude,
+                    Some(node.name_zh.clone()),
+                    now_ms as f64,
+                    2200.0,
+                );
+            }
+
+            let new_merit: i64 = conn
+                .query_row(
+                    "SELECT merit_points FROM dharma_android_aux WHERE user_id = ?1",
+                    params![user_id],
+                    |r| r.get(0),
+                )
+                .unwrap_or(merit_earned);
+
             Ok(json!({
-                "country": country,
+                "offeringId": format!("offer_{}", uuid::Uuid::new_v4().simple()),
+                "country": {
+                    "code": node.code,
+                    "name_zh": node.name_zh,
+                    "name_en": node.name_en,
+                    "continent": node.continent,
+                    "lat": node.latitude,
+                    "lng": node.longitude,
+                },
                 "packageKey": package_key,
-                "bytesOffered": bytes,
-                "bytesFormatted": format_leaderboard_bytes(bytes),
-                "meritEarned": merit_delta,
-                "totalMerit": total_merit,
-                "dedication": dedication,
+                "contentTitle": content_title,
+                "count": count,
+                "meritEarned": merit_earned,
+                "totalMeritPoints": new_merit,
+                "totalOfferings": tr.total_transfer_count,
+                "totalTransferBytes": tr.total_transfer_bytes,
+                "beamArc": {
+                    "originLat": 34.0,
+                    "originLon": 108.0,
+                    "destLat": node.latitude,
+                    "destLon": node.longitude,
+                }
             }))
         }
 
         "spinPrayerWheel" => {
-            let spins = params
+            let rotations = params
                 .get("rotations")
-                .or_else(|| params.get("spins"))
-                .and_then(Value::as_u64)
+                .and_then(Value::as_i64)
                 .unwrap_or(1)
-                .clamp(1, 10_800);
-            let merit_delta = spins * 9;
+                .clamp(1, 1080);
+            let merit_delta = rotations * 3;
+            let now = chrono::Utc::now().timestamp_millis();
             conn.execute(
-                "UPDATE fabushi_zen_state
+                "UPDATE dharma_android_aux
                  SET wheel_rotations = wheel_rotations + ?1,
-                     total_merit = total_merit + ?2,
-                     total_chants = total_chants + ?1
-                 WHERE singleton_id = 1",
-                params![spins as i64, merit_delta as i64],
+                     merit_points = merit_points + ?2,
+                     updated_at_ms = ?3
+                 WHERE user_id = ?4",
+                params![rotations, merit_delta, now, user_id],
             )
             .map_err(|e| e.to_string())?;
-            let (rotations, total_merit, _, _, total_chants, ..) = load_zen_state(conn)?;
+            let (wheel, merit): (i64, i64) = conn
+                .query_row(
+                    "SELECT wheel_rotations, merit_points FROM dharma_android_aux WHERE user_id = ?1",
+                    params![user_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .map_err(|e| e.to_string())?;
             Ok(json!({
-                "spinsAdded": spins,
-                "wheelRotations": rotations,
-                "meritAdded": merit_delta,
-                "totalMerit": total_merit,
-                "totalChants": total_chants,
-                "mantra": "嗡嘛呢呗美吽 (Om Mani Padme Hum)",
+                "rotationsAdded": rotations,
+                "wheelRotations": wheel,
+                "meritEarned": merit_delta,
+                "totalMeritPoints": merit,
             }))
         }
 
         "recordPractice" => {
-            let sutra_id = params
+            let raw_sutra = params
                 .get("sutraId")
                 .or_else(|| params.get("sutra"))
                 .and_then(Value::as_str)
                 .unwrap_or("heart_sutra");
-            let duration_seconds = params
+            let sutra_title = all_sutras()
+                .iter()
+                .find(|s| s.id == raw_sutra || s.title == raw_sutra)
+                .map(|s| s.title.clone())
+                .unwrap_or_else(|| raw_sutra.to_string());
+            let duration_sec = params
                 .get("durationSeconds")
                 .and_then(Value::as_u64)
-                .unwrap_or(300);
+                .unwrap_or(600);
+            let duration_mins = ((duration_sec + 59) / 60).max(1) as u32;
             let chant_count = params
                 .get("chantCount")
                 .and_then(Value::as_u64)
-                .unwrap_or(108);
-            let dedication = params
-                .get("dedication")
-                .and_then(Value::as_str)
-                .unwrap_or("愿消三障诸烦恼，愿得智慧真明了。");
-            let now = params
-                .get("timestampMs")
-                .and_then(Value::as_i64)
-                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis());
-            let tz_offset_min = params
-                .get("tzOffsetMinutes")
-                .and_then(Value::as_i64)
-                .unwrap_or(480);
+                .unwrap_or(21) as u32;
+            let lock_sutra = params
+                .get("lockPractice")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let notes = params.get("notes").and_then(Value::as_str);
 
-            let (rotations, mut merit, mut sessions, mut minutes, mut chants, mut streak, last_day, mut unlocked) =
-                load_zen_state(conn)?;
-
-            let local_secs = (now / 1000) + tz_offset_min * 60;
-            let today = local_secs.div_euclid(86_400);
-            let hour = (local_secs.rem_euclid(86_400) / 3600) as u32;
-
-            let mut newly_unlocked = Vec::new();
-            let mut try_unlock = |id: &str| {
-                if !unlocked.contains_key(id) {
-                    unlocked.insert(id.to_string(), now);
-                    newly_unlocked.push(id.to_string());
-                }
-            };
-
-            if last_day != Some(today) {
-                try_unlock("daily_start");
-                streak = match last_day {
-                    Some(prev) if prev == today - 1 => streak + 1,
-                    _ => 1,
+            if lock_sutra {
+                let lp = LockedPractice {
+                    title: sutra_title.clone(),
+                    category: "一门深入".to_string(),
+                    file_path: format!("sutra:{sutra_title}"),
+                    selected_at_ms: chrono::Utc::now().timestamp_millis(),
+                    is_locked: true,
                 };
-            }
-            if hour >= 23 || hour < 1 {
-                try_unlock("midnight_practice");
-            }
-            if (5..7).contains(&hour) {
-                try_unlock("morning_practice");
+                let _ = update_profile(conn, user_id, None, None, Some(&lp), None);
             }
 
-            sessions += 1;
-            let dur_min = duration_seconds / 60;
-            minutes += dur_min;
-            chants += chant_count;
-            merit += 36 + chant_count + dur_min * 6;
-
-            if sessions >= 1 {
-                try_unlock("first_session");
-            }
-            for &(d, id) in &[(3, "streak_3"), (7, "streak_7"), (21, "streak_21"), (30, "streak_30"), (100, "streak_100")] {
-                if streak >= d {
-                    try_unlock(id);
-                }
-            }
-            for &(m, id) in &[(5, "duration_5"), (30, "duration_30"), (60, "duration_60")] {
-                if dur_min >= m {
-                    try_unlock(id);
-                }
-            }
-            if chant_count >= 108 {
-                try_unlock("chant_108");
-            }
-            if chants >= 1000 {
-                try_unlock("chant_1000");
-            }
-            if chants >= 10000 {
-                try_unlock("chant_10000");
-            }
-            for &(s, id) in &[(10, "sessions_10"), (50, "sessions_50"), (100, "sessions_100")] {
-                if sessions >= s {
-                    try_unlock(id);
-                }
-            }
-            for &(tm, id) in &[(60, "total_60min"), (600, "total_10hr"), (6000, "total_100hr")] {
-                if minutes >= tm {
-                    try_unlock(id);
-                }
-            }
-
-            let session_id = format!("zen_{}", uuid::Uuid::new_v4().simple());
-            conn.execute(
-                "INSERT INTO fabushi_practice_sessions (session_id, sutra_id, duration_seconds, chant_count, dedication, created_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![session_id, sutra_id, duration_seconds as i64, chant_count as i64, dedication, now],
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let saved = record_practice_session(
+                conn,
+                user_id,
+                &sutra_title,
+                duration_mins,
+                chant_count,
+                Some(now_ms - (duration_sec as i64) * 1000),
+                Some(now_ms),
+                notes,
             )
             .map_err(|e| e.to_string())?;
 
-            let unlocked_json = serde_json::to_string(&unlocked).map_err(|e| e.to_string())?;
+            let merit_delta = ((duration_sec / 60) as i64) * 5 + (chant_count as i64) / 3;
             conn.execute(
-                "UPDATE fabushi_zen_state
-                 SET total_merit = ?1, total_sessions = ?2, total_minutes = ?3, total_chants = ?4,
-                     consecutive_days = ?5, last_session_day = ?6, unlocked_json = ?7
-                 WHERE singleton_id = 1",
-                params![
-                    merit as i64,
-                    sessions as i64,
-                    minutes as i64,
-                    chants as i64,
-                    streak as i64,
-                    today,
-                    unlocked_json,
-                ],
+                "UPDATE dharma_android_aux SET merit_points = merit_points + ?1, updated_at_ms = ?2 WHERE user_id = ?3",
+                params![merit_delta, now_ms, user_id],
             )
             .map_err(|e| e.to_string())?;
+            let merit: i64 = conn
+                .query_row(
+                    "SELECT merit_points FROM dharma_android_aux WHERE user_id = ?1",
+                    params![user_id],
+                    |r| r.get(0),
+                )
+                .unwrap_or(merit_delta);
 
             Ok(json!({
-                "sessionId": session_id,
-                "wheelRotations": rotations,
-                "totalMerit": merit,
-                "totalSessions": sessions,
-                "totalMinutes": minutes,
-                "totalChants": chants,
-                "consecutiveDays": streak,
-                "newlyUnlocked": newly_unlocked,
+                "sessionId": format!("zen_{}", saved.record.id),
+                "record": saved.record,
+                "sutraId": raw_sutra,
+                "sutraTitle": sutra_title,
+                "durationSeconds": duration_sec,
+                "chantCount": chant_count,
+                "totalSessions": saved.profile.total_practice_sessions,
+                "streakDays": saved.profile.consecutive_days,
+                "totalMeritPoints": merit,
+                "practiceStats": saved.practice_stats,
+                "unlockedAchievementIds": saved.unlocked_achievement_ids,
             }))
         }
 
         "achievements" => {
-            let (_, _, sessions, minutes, chants, streak, _, unlocked) = load_zen_state(conn)?;
-            let catalog: Vec<AchievementBadge> = ACHIEVEMENT_DEFS
-                .iter()
-                .map(|&(id, title, title_en, desc, icon, tier)| AchievementBadge {
-                    id: id.into(),
-                    title: title.into(),
-                    title_en: title_en.into(),
-                    description: desc.into(),
-                    icon: icon.into(),
-                    tier: tier.into(),
-                    unlocked: unlocked.contains_key(id),
-                    unlocked_at_ms: unlocked.get(id).copied(),
-                })
-                .collect();
+            let profile = get_profile(conn, user_id).map_err(|e| e.to_string())?;
+            let unlocked_ids = get_unlocked_achievements(conn, user_id).map_err(|e| e.to_string())?;
+            let sys = AchievementSystem::from_persisted(
+                profile.total_practice_sessions,
+                profile.total_practice_minutes,
+                profile.total_practice_chants,
+                profile.consecutive_days,
+                None,
+                unlocked_ids,
+            );
+            let catalog = sys.catalog_snapshot();
+            let unlocked_count = catalog.iter().filter(|a| a.unlocked).count();
             Ok(json!({
-                "totalSessions": sessions,
-                "totalMinutes": minutes,
-                "totalChants": chants,
-                "consecutiveDays": streak,
-                "unlockedCount": unlocked.len(),
-                "totalBadges": catalog.len(),
                 "achievements": catalog,
+                "unlockedCount": unlocked_count,
+                "totalCount": catalog.len(),
             }))
         }
 
         "leaderboard" => {
-            let (_, my_merit, ..) = load_zen_state(conn)?;
-            let my_bytes: u64 = conn
-                .query_row(
-                    "SELECT COALESCE(SUM(bytes_offered), 0) FROM fabushi_offerings",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-                .unwrap_or(0)
-                .max(0) as u64;
-            let my_countries: u64 = conn
-                .query_row(
-                    "SELECT COUNT(DISTINCT country_code) FROM fabushi_offerings",
-                    [],
-                    |r| r.get::<_, i64>(0),
-                )
-                .unwrap_or(0)
-                .max(0) as u64;
+            let kind = params
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or("global");
+            let list = if kind == "practice" {
+                get_practice_leaderboard(conn, user_id, 50).map_err(|e| e.to_string())?
+            } else {
+                get_global_leaderboard(conn, user_id, 50).map_err(|e| e.to_string())?
+            };
+            Ok(json!({
+                "kind": kind,
+                "leaderboard": list,
+            }))
+        }
 
-            let mut entries = vec![
-                ("莲池海会·智观", 189u64, 128_500_000_000u64, 108_900u64),
-                ("般若行者·明心", 142u64, 84_200_000_000u64, 76_400u64),
-                ("普贤愿海·净行", 96u64, 42_800_000_000u64, 48_200u64),
-                ("本机行者 (You)", my_countries.max(1), my_bytes, my_merit),
-            ];
-            entries.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| b.3.cmp(&a.3)));
+        "renderHomeScene" => {
+            let width = params.get("width").and_then(Value::as_f64).unwrap_or(420.0);
+            let height = params.get("height").and_then(Value::as_f64).unwrap_or(780.0);
+            let dt_ms = params.get("dtMs").and_then(Value::as_f64).unwrap_or(16.0);
+            let is_3d = params.get("is3d").and_then(Value::as_bool).unwrap_or(false);
+            let now_ms = chrono::Utc::now().timestamp_millis() as f64;
+            let mut st = shared_client_state().lock();
+            if let Some(dx) = params.get("dragDx").and_then(Value::as_f64) {
+                let dy = params.get("dragDy").and_then(Value::as_f64).unwrap_or(0.0);
+                st.globe_scene.drag(dx, dy, is_3d);
+            } else {
+                st.globe_scene.advance(dt_ms, now_ms);
+            }
+            let cmds = render_home_scene(&st.globe_scene, width, height, now_ms, is_3d);
+            Ok(json!({
+                "rotationLonDeg": st.globe_scene.rotation_lon_deg,
+                "tiltLatDeg": st.globe_scene.tilt_lat_deg,
+                "activeBeams": st.globe_scene.beams.len(),
+                "drawCommands": cmds,
+            }))
+        }
 
-            let ranked: Vec<Value> = entries
-                .into_iter()
-                .enumerate()
-                .map(|(idx, (name, countries, bytes, merit))| {
-                    json!({
-                        "rank": idx + 1,
-                        "practitioner": name,
-                        "countriesIlluminated": countries,
-                        "bytesOffered": bytes,
-                        "bytesFormatted": format_leaderboard_bytes(bytes),
-                        "merit": merit,
-                    })
-                })
-                .collect();
-            Ok(json!({ "leaderboard": ranked }))
+        "renderZenScene" => {
+            let width = params.get("width").and_then(Value::as_f64).unwrap_or(420.0);
+            let height = params.get("height").and_then(Value::as_f64).unwrap_or(780.0);
+            let dt_ms = params.get("dtMs").and_then(Value::as_f64).unwrap_or(16.0);
+            let is_3d = params.get("is3d").and_then(Value::as_bool).unwrap_or(false);
+            let locked = get_locked_practice(conn, user_id)
+                .ok()
+                .flatten()
+                .map(|lp| lp.title);
+            let mut st = shared_client_state().lock();
+            st.zen_scene.advance(dt_ms);
+            let cmds = render_zen_scene(
+                &st.zen_scene,
+                width,
+                height,
+                is_3d,
+                !st.zen_scene.is_burning,
+                locked.as_deref(),
+            );
+            Ok(json!({
+                "incenseProgress": st.zen_scene.incense_progress,
+                "isBurning": st.zen_scene.is_burning,
+                "drawCommands": cmds,
+            }))
+        }
+
+        "dispatchUi" => {
+            let cmd_val = params
+                .get("command")
+                .cloned()
+                .unwrap_or_else(|| params.clone());
+            let cmd: UiCommand = serde_json::from_value(cmd_val)
+                .map_err(|e| format!("Invalid fabushiMiniapp UiCommand JSON: {e}"))?;
+            let mut st = shared_client_state().lock();
+            if st.profile.user_id == 0 {
+                let _ = hydrate_client_state_from_db(conn, &mut st, user_id);
+            }
+            let dispatched = st.dispatch(cmd);
+            let applied =
+                execute_effects_against_sqlite(conn, &mut st, user_id, dispatched.effects)?;
+            let snapshot = st.snapshot();
+            let draw_commands = st.render_scene(st.last_viewport_w, st.last_viewport_h);
+            Ok(json!({
+                "effectsApplied": applied,
+                "snapshot": snapshot,
+                "drawCommands": draw_commands,
+            }))
+        }
+
+        "tickScene" => {
+            let dt_ms = params.get("dtMs").and_then(Value::as_f64).unwrap_or(16.0);
+            let width = params.get("width").and_then(Value::as_f64).unwrap_or(420.0);
+            let height = params.get("height").and_then(Value::as_f64).unwrap_or(780.0);
+            let now_ms = chrono::Utc::now().timestamp_millis() as f64;
+            let mut st = shared_client_state().lock();
+            let res = st.tick(dt_ms, now_ms, width, height);
+            let applied = execute_effects_against_sqlite(conn, &mut st, user_id, res.effects)?;
+            Ok(json!({
+                "effectsApplied": applied,
+                "snapshot": st.snapshot(),
+                "drawCommands": st.render_scene(width, height),
+            }))
         }
 
         "aiDharmaChat" => {
             let prompt = params
                 .get("prompt")
-                .or_else(|| params.get("text"))
+                .or_else(|| params.get("message"))
                 .and_then(Value::as_str)
                 .unwrap_or("如何安住当下？");
-            let (sutra_title, reply) = if prompt.contains("空") || prompt.contains("心经") {
-                (
-                    "心经",
-                    "《心经》云：「照见五蕴皆空，度一切苦厄。」观照念头来去而不执取，心无挂碍，当下即是清净安稳处。",
-                )
-            } else if prompt.contains("地藏") || prompt.contains("愿") {
-                (
-                    "地藏经",
-                    "《地藏经》以大孝大愿为根本：「众生度尽，方证菩提。」于日用细行中常怀慈悲利他之心，便是广大回向。",
-                )
-            } else {
-                (
-                    "金刚经",
-                    "《金刚经》示导：「应无所住而生其心。」在尘劳事务中尽心尽力，而内心不留挂碍痕迹，便是最踏实的修行。",
-                )
-            };
+            let locale = params
+                .get("locale")
+                .and_then(Value::as_str)
+                .unwrap_or("zh-CN");
+            let locked = get_locked_practice(conn, user_id)
+                .ok()
+                .flatten()
+                .map(|lp| lp.title);
+            let (reply, source) = run_dharma_ai_query(conn, prompt, locked.as_deref(), locale);
             Ok(json!({
                 "prompt": prompt,
-                "citedSutra": sutra_title,
                 "reply": reply,
+                "source": source,
             }))
         }
 

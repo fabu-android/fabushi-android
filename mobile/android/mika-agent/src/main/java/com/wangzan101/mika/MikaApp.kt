@@ -159,6 +159,9 @@ open class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owne
         com.wangzan101.mika.plugin.PluginRegistry(filesDir, scope,
             log = { msg, e -> Log.w("MikaPlugin", msg, e) })
     }
+
+    /** 人格:命名的自定义提示词层,存在 settings 目录;不加密,不含密钥。 */
+    val personas by lazy { com.wangzan101.mika.settings.PersonaStore(java.io.File(filesDir, "settings")) }
     override val tabBudget get() = resources.tabBudget
 
     /** 任务结束后留在后台接着运行的那一页;关掉时在来源对话那一轮记下原因(对话页那一轮下面显示「后台网页已关闭」)。 */
@@ -227,7 +230,7 @@ open class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owne
         }
         val local = localChannel(scheduled = false)
         val labels = com.wangzan101.mika.ui.ToolLabels(com.wangzan101.mika.core.assembly.knownTools())
-        RunRecovery(runStore, outbox, { id -> if (id == LocalChannel.ID) local else wechat.channelFor(id) }, object : TriggerOutcomes {
+        RunRecovery(runStore, outbox, { id -> if (id == LocalChannel.ID) local else resolveChannel(id) }, object : TriggerOutcomes {
             override fun interrupted(key: String, reason: String) = TriggerRuntime.interrupted(app, key, reason)
             override fun delivered(key: String) = TriggerRuntime.delivered(app, key)
             override fun actionFailed(key: String, reason: String) = TriggerRuntime.actionFailed(app, key, reason)
@@ -349,6 +352,45 @@ open class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owne
     /** 浮在别的 App 上的悬浮胶囊。 */
     val capsule: CapsuleController by lazy { CapsuleController(this, taskState, foreground, resources.takeoverQueue) }
 
+    /** Mika 自己的朗读播放器:全进程一个,聊天里的「朗读」和设置页的测试共用。 */
+    val voicePlayer by lazy { com.wangzan101.mika.voice.VoicePlayer(this) }
+    private val voiceSettings by lazy { com.wangzan101.mika.settings.VoiceSettings.get(this) }
+
+    /** 播放工作区里的一段音频(生成结果);读不到时什么都不做。 */
+    private suspend fun playWorkspaceAudio(conversationId: String, path: String) {
+        val prefix = com.wangzan101.mika.core.workspace.SandboxPaths.WORKSPACE + "/"
+        if (!path.startsWith(prefix)) return
+        val rel = path.removePrefix(prefix)
+        if (rel.isEmpty() || rel.split('/').any { it.isEmpty() || it == "." || it == ".." }) return
+        val dirs = com.wangzan101.mika.cap.sandbox.SandboxDirs(this)
+        val bytes = dirs.tree.shared {
+            dirs.gate.openRead(dirs.workspace(conversationId), rel).use { g ->
+                if (g.size > 20L * 1024 * 1024) null else g.read(0, g.size.toInt())
+            }
+        } ?: return
+        val mime = android.webkit.MimeTypeMap.getSingleton()
+            .getMimeTypeFromExtension(path.substringAfterLast('.', "").lowercase())
+            ?.takeIf { it.startsWith("audio/") } ?: "audio/wav"
+        voicePlayer.play(bytes, mime)
+    }
+
+    /** 合成一句话并在本机播放;没配置声音模型或合成失败时什么都不做。 */
+    private suspend fun speak(text: String) {
+        val state = voiceSettings.state.value
+        val choice = state.choice ?: return
+        val caps = voiceSettings.capabilities() ?: return
+        val tts = ProviderStore.get(this).ttsModel(choice, caps) ?: return
+        val response = tts.synthesize(
+            com.wangzan101.mika.core.model.TtsRequest(
+                text.take(state.maxCharsPerSpeak),
+                choice.voice.ifBlank { null },
+                choice.speed,
+                "wav",
+            ),
+        )
+        voicePlayer.play(response.bytes, response.mime)
+    }
+
     /** 人工示范。onCreate 里建好；在那之前的无障碍事件不采集。 */
     lateinit var teach: TeachRuntime
         private set
@@ -417,6 +459,8 @@ open class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owne
             sandboxReady = SandboxState.get(app).status.map { it !is SandboxStatus.Unsupported }
                 .stateIn(scope, SharingStarted.Eagerly, SandboxState.get(app).status.value !is SandboxStatus.Unsupported),
             sharedFiles = taskState.sharedFiles,
+            generatedAudios = taskState.audios,
+            playAudio = { id, path -> playWorkspaceAudio(id, path) },
             activities = taskState.activities,
             steers = taskState.steers,
             summarizing = taskState.summarizing,
@@ -443,6 +487,14 @@ open class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owne
             onTeachingBlocked = {
                 android.widget.Toast.makeText(app, tr(R.string.teach_blocked_task), android.widget.Toast.LENGTH_LONG).show()
             },
+            voiceReady = voiceSettings.state.map { it.enabled && it.choice != null }
+                .stateIn(scope, SharingStarted.Eagerly, voiceSettings.state.value.enabled && voiceSettings.state.value.choice != null),
+            autoRead = voiceSettings.state.map { it.autoRead }
+                .stateIn(scope, SharingStarted.Eagerly, voiceSettings.state.value.autoRead),
+            voicePlayback = voicePlayer.state,
+            speakText = { text -> speak(text) },
+            stopVoice = { voicePlayer.stop() },
+            personaStore = if (FeatureFlags.get(this).persona()) personas else null,
         )
     }
 
@@ -495,6 +547,9 @@ open class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owne
         scope.launch(Dispatchers.IO) { runCatching { mcp.writeUsbScript() }.onFailure { Log.w("MikaMcp", "cannot write USB script", it) } }
         // 上次导出写到一半被杀留下的空壳条目
         scope.launch { runCatching { ShareExporter(this@MikaApp).cleanPending() } }
+        // 上次存音乐库写到一半被杀留下的空壳条目
+        scope.launch { runCatching { com.wangzan101.mika.cap.audio.AudioExporter(this@MikaApp).cleanPending() } }
+        scope.launch { runCatching { com.wangzan101.mika.media.AudioShareExporter(this@MikaApp).cleanPending() } }
         // 上次进程留下的网页上传副本
         scope.launch { runCatching { WebFiles.clearStale(this@MikaApp, SandboxDirs(this@MikaApp).gate) } }
         // 更新已经装上后,关于页下好的安装包
@@ -541,6 +596,68 @@ open class MikaApp : Application(), WebOwner, SandboxOwner, TaskEnvironment.Owne
                 TriggerRuntime.syncTimeZone(this@MikaApp)
                 TriggerRuntime.rearm(this@MikaApp)
             }.onFailure { Log.w("MikaTrigger", "could not restore schedules after quit", it) }
+        }
+    }
+
+    private val channelRegistry by lazy {
+        HostChannelRegistry(
+            activeAsk = { threadId -> taskState.run(threadId)?.activeAsk },
+            route = object : com.wangzan101.mika.core.run.ChannelGateway.Route {
+                override suspend fun newTask(peer: com.wangzan101.mika.core.run.ChannelPeer, messageId: String, text: String) =
+                    TaskService.startChannel(this@MikaApp, peer, messageId, text)
+                override suspend fun answer(threadId: String, askId: String, text: String): Boolean =
+                    taskState.run(threadId)?.answerFromChannel(text, askId) == true
+                override suspend fun confirm(threadId: String, askId: String, choice: com.wangzan101.mika.core.action.ConfirmChoice): Boolean =
+                    taskState.run(threadId)?.confirmFromChannel(choice, askId) == true
+                override suspend fun stop(runId: com.wangzan101.mika.core.run.RunId) =
+                    TaskService.cancel(this@MikaApp, runId.value)
+                override suspend fun cancelAsk(threadId: String) {
+                    val run = taskState.run(threadId) ?: return
+                    run.activeAsk?.askId?.let(run::cancelAsk)
+                }
+            },
+            fallbackChannel = { id ->
+                if (id == com.wangzan101.mika.wechat.WechatChannel.ID) wechat.channelFor(id) else null
+            },
+        )
+    }
+
+    /** 解析已注册的宿主渠道(如 TelegramMikaChannel)或内置微信渠道。 */
+    open fun resolveChannel(channelId: String): com.wangzan101.mika.core.run.Channel? =
+        channelRegistry.resolve(channelId)
+
+    /** 注册宿主进程内渠道并启动通用 [com.wangzan101.mika.core.run.ChannelGateway] 路由。 */
+    fun registerHostChannel(
+        channel: com.wangzan101.mika.core.run.Channel,
+        owners: com.wangzan101.mika.core.run.OwnerIdentity,
+    ): AutoCloseable = channelRegistry.register(channel, owners)
+
+    /** 读取系统分身/工作资料用户中的已安装应用副本(供宿主应用搜索索引合并使用)。 */
+    fun readAppCopies(apps: List<Pair<String, String>>): List<com.wangzan101.mika.core.uistate.AppCopy> =
+        phone.hub.shell.value?.let {
+            runCatching { com.wangzan101.mika.cap.phone.a11y.AppCopyReader.read(it, apps) }.getOrNull()
+        }.orEmpty()
+}
+
+internal class HostChannelRegistry(
+    private val activeAsk: (String) -> com.wangzan101.mika.core.run.Delivery.Ask?,
+    private val route: com.wangzan101.mika.core.run.ChannelGateway.Route,
+    private val fallbackChannel: (String) -> com.wangzan101.mika.core.run.Channel? = { null },
+) {
+    private val hostChannels = java.util.concurrent.ConcurrentHashMap<String, com.wangzan101.mika.core.run.Channel>()
+
+    fun resolve(channelId: String): com.wangzan101.mika.core.run.Channel? =
+        hostChannels[channelId] ?: fallbackChannel(channelId)
+
+    fun register(
+        channel: com.wangzan101.mika.core.run.Channel,
+        owners: com.wangzan101.mika.core.run.OwnerIdentity,
+    ): AutoCloseable {
+        hostChannels[channel.id] = channel
+        val sub = com.wangzan101.mika.core.run.ChannelGateway(owners, activeAsk, route).start(channel)
+        return AutoCloseable {
+            sub.close()
+            hostChannels.remove(channel.id, channel)
         }
     }
 }

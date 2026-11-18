@@ -207,6 +207,7 @@ echo "==> Using Android NDK: ${NDK_HOME} (API ${ANDROID_API_LEVEL})"
 
 # Configure C/C++ compilers, archivers, linkers, bounded jobs, and 16KB ELF page-size flags for Android targets
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${CRATE_DIR}/target}"
 export CC_aarch64_linux_android="${TOOLCHAIN_BIN}/aarch64-linux-android${ANDROID_API_LEVEL}-clang"
 export CXX_aarch64_linux_android="${TOOLCHAIN_BIN}/aarch64-linux-android${ANDROID_API_LEVEL}-clang++"
 export AR_aarch64_linux_android="${TOOLCHAIN_BIN}/llvm-ar"
@@ -264,7 +265,8 @@ rm -rf \
   "${CRATE_DIR}/target/x86_64-linux-android/release/incremental" \
   "${CRATE_DIR}/target/x86_64-unknown-linux-gnu/release/deps" \
   "${CRATE_DIR}/target/x86_64-unknown-linux-gnu/release/build" \
-  "${CRATE_DIR}/target/x86_64-unknown-linux-gnu/release/incremental"
+  "${CRATE_DIR}/target/x86_64-unknown-linux-gnu/release/incremental" \
+  "${REPO_ROOT}/mobile/android/rust/target"
 
 echo "==> Built native libraries:"
 ls -lh \

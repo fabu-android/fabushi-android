@@ -1,0 +1,70 @@
+[workspace]
+resolver = "2"
+members = [
+    "mahayana_android_host",
+    "gpui_telegram_vendor/crates/fabushi_miniapp",
+    "gpui_telegram_vendor/crates/magpie_gateway",
+    "gpui_telegram_vendor/crates/gpui_telegram_core",
+    "gpui_telegram_vendor/crates/gpui_telegram_proto",
+]
+
+# Desktop GPUI/Metal/Vulkan, Axum/Tantivy server, and WASM targets from bhrum/gpui-telegram
+# are strictly excluded from the Android workspace closure:
+# - crates/gpui_telegram_desktop
+# - crates/gpui_telegram_server
+# - crates/gpui_telegram_test_harness
+# - crates/fabushi_miniapp_wasm
+
+[workspace.package]
+version = "1.2.0"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["Fabushi Android & GPUI Telegram Contributors"]
+
+[workspace.dependencies]
+fabushi_miniapp = { path = "gpui_telegram_vendor/crates/fabushi_miniapp", features = ["sqlite"] }
+magpie_gateway = { path = "gpui_telegram_vendor/crates/magpie_gateway", default-features = false }
+gpui_telegram_core = { path = "gpui_telegram_vendor/crates/gpui_telegram_core", default-features = false }
+gpui_telegram_proto = { path = "gpui_telegram_vendor/crates/gpui_telegram_proto", default-features = false }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
+sha2 = "0.10"
+sha1 = "0.10"
+hmac = "0.12"
+hkdf = "0.12"
+pbkdf2 = "0.12"
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+chacha20poly1305 = "0.10"
+zeroize = { version = "1.8", features = ["derive"] }
+rand = "0.8"
+uuid = { version = "1.11", features = ["v4", "serde"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
+thiserror = "2.0"
+parking_lot = "0.12"
+futures = "0.3"
+ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
+
+[profile.dev]
+opt-level = 0
+debug = 0
+strip = "debuginfo"
+incremental = false
+
+[profile.test]
+opt-level = 0
+debug = 0
+strip = "debuginfo"
+incremental = false
+
+[profile.release]
+opt-level = "z"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+debug = 0
+strip = "debuginfo"
+incremental = false

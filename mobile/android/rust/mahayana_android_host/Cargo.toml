@@ -2,42 +2,36 @@
 name = "mahayana_android_host"
 version = "2.0.0"
 edition = "2021"
-description = "Unified Native Rust Host & GPUI-Telegram Engine for Fabushi Android"
-publish = false
+license = "Proprietary"
+description = "Unified Mahayana + GPUI-Telegram Native Rust Host Bridge for Fabushi Android"
 
 [lib]
 name = "mahayana_app_host"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
+fabushi_miniapp = { workspace = true }
+magpie_gateway = { workspace = true }
+gpui_telegram_core = { workspace = true }
+gpui_telegram_proto = { workspace = true }
+
 jni = "0.21"
-rusqlite = { version = "0.39", features = ["bundled"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-x25519-dalek = { version = "2", features = ["static_secrets"] }
-chacha20poly1305 = "0.10"
-sha2 = "0.10"
-hmac = "0.12"
-hkdf = "0.12"
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 argon2 = "0.5"
-rand = "0.8"
-zeroize = { version = "1", features = ["derive"] }
-base64 = "0.22"
-uuid = { version = "1", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde", "clock"] }
-regex = "1"
-ureq = { version = "2.10", default-features = false, features = ["tls", "json"] }
-
-[profile.dev]
-debug = 0
-strip = "debuginfo"
-incremental = false
-
-[profile.release]
-opt-level = 3
-debug = 0
-strip = "debuginfo"
-incremental = false
-codegen-units = 16
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+ed25519-dalek = { workspace = true }
+x25519-dalek = { workspace = true }
+chacha20poly1305 = { workspace = true }
+sha2 = { workspace = true }
+hmac = { workspace = true }
+hkdf = { workspace = true }
+pbkdf2 = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+zeroize = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+ureq = { workspace = true }

@@ -230,4 +230,27 @@ class ManifestProvidersTest {
         val c = Class.forName(com.wangzan101.mika.core.shell.HelperHandoff.HELPER_CLASS, false, javaClass.classLoader)
         assertTrue(c.methods.any { it.name == "main" && java.lang.reflect.Modifier.isStatic(it.modifiers) })
     }
+
+    @Test
+    fun reportFilesProviderAndViewerSoftInputAreConfigured() {
+        val doc = DocumentBuilderFactory.newInstance().apply { isNamespaceAware = true }
+            .newDocumentBuilder().parse(File("src/main/AndroidManifest.xml"))
+        val providers = doc.getElementsByTagName("provider")
+        val reportProvider = (0 until providers.length).map { providers.item(it) as Element }
+            .single { fullComponentName(it.getAttributeNS(androidNs, "name")) == "com.wangzan101.mika.ui.ReportFilesProvider" }
+        assertEquals("com.wangzan101.mika.ui.ReportFilesProvider", reportProvider.getAttributeNS(androidNs, "name"))
+        assertEquals("\${applicationId}.reportfiles", reportProvider.getAttributeNS(androidNs, "authorities"))
+        assertEquals("false", reportProvider.getAttributeNS(androidNs, "exported"))
+        assertEquals("true", reportProvider.getAttributeNS(androidNs, "grantUriPermissions"))
+        val metas = reportProvider.getElementsByTagName("meta-data")
+        val pathMeta = (0 until metas.length).map { metas.item(it) as Element }
+            .single { it.getAttributeNS(androidNs, "name") == "android.support.FILE_PROVIDER_PATHS" }
+        assertEquals("@xml/report_files", pathMeta.getAttributeNS(androidNs, "resource"))
+        assertTrue("res/xml/report_files.xml must exist", File("src/main/res/xml/report_files.xml").isFile)
+
+        val activities = doc.getElementsByTagName("activity")
+        val viewer = (0 until activities.length).map { activities.item(it) as Element }
+            .single { fullComponentName(it.getAttributeNS(androidNs, "name")) == "com.wangzan101.mika.ui.viewer.FileViewerActivity" }
+        assertEquals("adjustResize", viewer.getAttributeNS(androidNs, "windowSoftInputMode"))
+    }
 }

@@ -1,0 +1,20 @@
+[package]
+name = "gpui_telegram_proto"
+version = "1.2.0"
+edition = "2021"
+description = "Wire DTOs, MTProto framing, payments, and API contracts from bhrum/gpui-telegram"
+
+[features]
+default = []
+inherited-coordinator = []
+
+[dependencies]
+gpui_telegram_core = { path = "../gpui_telegram_core" }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+uuid = { version = "1", features = ["v4", "serde"] }
+zeroize = { version = "1", features = ["derive"] }

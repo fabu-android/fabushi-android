@@ -1695,19 +1695,105 @@ fn maybe_generate_bot_reply(
         );
         events.extend(append_bot_message(conn, conv_id, "bot:mika", &reply_text, now)?);
     } else if conv_id == "conv_hermes_ai" {
-        let reply_text = if let Some(parsed) = crate::hermes::parse_slash_command(trimmed) {
-            if let Some(def) = crate::hermes::lookup_slash_command(&parsed.command) {
-                format!("⚡ Hermes `/{}` ({}) — {}", def.name, def.category, def.description)
-            } else {
-                format!("Hermes Studio 已解析指令 `/{}`：{}", parsed.command, parsed.args)
+        if trimmed.starts_with('/') {
+            match crate::hermes::handle_rpc(
+                conn,
+                "runSlashCommand",
+                &json!({ "sessionId": "hermes_main", "input": trimmed }),
+            ) {
+                Ok(slash) => {
+                    let summary = slash["summary"]
+                        .as_str()
+                        .unwrap_or("Executed Hermes slash command");
+                    events.extend(append_bot_message(conn, conv_id, "bot:hermes", summary, now)?);
+                }
+                Err(err) => {
+                    events.push(json!({
+                        "type": "botError",
+                        "conversationId": conv_id,
+                        "botId": "bot:hermes",
+                        "error": err
+                    }));
+                }
             }
         } else {
-            format!("✨ Hermes Studio 回复：已针对「{trimmed}」完成上下文检索与推理。")
-        };
-        events.extend(append_bot_message(conn, conv_id, "bot:hermes", &reply_text, now)?);
+            match crate::hermes::handle_rpc(
+                conn,
+                "sendTurn",
+                &json!({ "sessionId": "hermes_main", "text": trimmed }),
+            ) {
+                Ok(turn) => {
+                    if let Some(reply) = turn
+                        .get("reply")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.trim().is_empty())
+                    {
+                        events.extend(append_bot_message(conn, conv_id, "bot:hermes", reply, now)?);
+                    } else if turn.get("status").and_then(Value::as_str) == Some("waiting_approval") {
+                        events.push(json!({
+                            "type": "hermesApprovalRequired",
+                            "conversationId": conv_id,
+                            "pendingApproval": turn.get("pendingApproval").cloned().unwrap_or(Value::Null),
+                        }));
+                    }
+                }
+                Err(err) => {
+                    events.push(json!({
+                        "type": "botError",
+                        "conversationId": conv_id,
+                        "botId": "bot:hermes",
+                        "error": err
+                    }));
+                }
+            }
+        }
     }
 
     Ok(events)
+}
+
+/// Persists an inbound message synced from `gpui_telegram_server` into SQLite + FTS5.
+pub fn ingest_synced_message(
+    conn: &Connection,
+    conv_id: &str,
+    msg_id: &str,
+    sender_id: &str,
+    text: &str,
+    created_at_ms: i64,
+) -> Result<Value, String> {
+    init_schema(conn, false)?;
+    if load_conversation(conn, conv_id)?.is_none() {
+        let mut conv = json!({
+            "id": conv_id,
+            "kind": "direct",
+            "title": conv_id,
+        });
+        normalize_conversation_defaults(&mut conv, sender_id, created_at_ms);
+        upsert_conversation_row(conn, &conv, created_at_ms)?;
+    }
+    let msg = build_message_json(
+        msg_id,
+        conv_id,
+        sender_id,
+        &json!({
+            "type": "text",
+            "data": { "text": { "text": text, "entities": [] } }
+        }),
+        None,
+        None,
+        false,
+        "delivered",
+        created_at_ms,
+    );
+    insert_message_row(conn, &msg)?;
+    if let Some(mut conv) = load_conversation(conn, conv_id)? {
+        if let Some(obj) = conv.as_object_mut() {
+            obj.insert("lastMessageId".into(), json!(msg_id));
+            obj.insert("updatedAtMs".into(), json!(created_at_ms));
+        }
+        upsert_conversation_row(conn, &conv, created_at_ms)?;
+    }
+    Ok(msg)
 }
 
 fn append_bot_message(

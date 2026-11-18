@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="persona_title">شخصیت</string>
+    <string name="persona_sub">انتخاب کنید میکا چگونه با شما صحبت کند</string>
+    <string name="persona_default">پیش‌فرض</string>
+    <string name="persona_default_sub">لحن همیشگی میکا</string>
+    <string name="persona_empty">هنوز شخصیتی ساخته نشده است</string>
+    <string name="persona_empty_sub">شخصیت نحوهٔ صحبت کردن میکا را تغییر می‌دهد، نه کارهایی را که مجاز به انجامشان است.</string>
+    <string name="persona_new">شخصیت جدید</string>
+    <string name="persona_edit">ویرایش شخصیت</string>
+    <string name="persona_name">نام</string>
+    <string name="persona_description">توضیح کوتاه</string>
+    <string name="persona_prompt">دستورالعمل‌ها</string>
+    <string name="persona_prompt_hint">لحن، طول پاسخ، عبارت‌بندی، قالب‌بندی…</string>
+    <string name="persona_empty_prompt">بدون دستورالعمل، این شخصیت چیزی را تغییر نمی‌دهد.</string>
+    <string name="persona_counter">%1$d نویسه · حدود %2$d توکن</string>
+    <string name="persona_preview">پیش‌نمایش اعلان کامل</string>
+    <string name="persona_preview_hide">پنهان کردن پیش‌نمایش</string>
+    <string name="persona_preview_note">قوانین خاکستری ثابت هستند. شخصیت می‌تواند لحن و عبارت‌بندی را تغییر دهد، اما هرگز ایمنی، مجوزها یا گزارش‌های میکا را تغییر نمی‌دهد.</string>
+    <string name="persona_chip">شخصیت: %1$s</string>
+    <string name="persona_manage">مدیریت شخصیت‌ها</string>
+    <string name="persona_switch_note">تغییر شخصیت فقط بر پیام‌های بعدی در همین گفتگو اثر می‌گذارد.</string>
+    <string name="persona_delete_title">حذف «%1$s»؟</string>
+    <string name="persona_delete_body">گفتگوهایی که از آن استفاده می‌کنند به شخصیت پیش‌فرض بازمی‌گردند. این کار قابل بازگشت نیست.</string>
+    <string name="persona_copy">کپی کردن</string>
+    <string name="persona_missing">شخصیت حذف‌شده</string>
+    <string name="persona_name_required">نامی وارد کنید.</string>
+    <string name="persona_name_too_long">نام بیش از حد طولانی است.</string>
+    <string name="persona_description_too_long">توضیح بیش از حد طولانی است (حداکثر %1$d نویسه).</string>
+    <string name="persona_prompt_too_long">دستورالعمل‌ها بیش از حد طولانی هستند (حداکثر %1$d نویسه).</string>
+    <string name="persona_save_failed">ذخیرهٔ شخصیت ممکن نشد.</string>
+</resources>
