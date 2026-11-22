@@ -56,7 +56,17 @@ import com.ombhrum.fabushi.ClothGhostAvatarAndroid
 @Composable
 fun BotFatherWorkspaceScreen(
     existingBots: List<TelegramChatItem>,
+    codingBots: List<CodingAgentBotItem> = emptyList(),
     onCreateBot: (name: String, description: String, handleHint: String) -> Unit,
+    onCreateCodingBot: (
+        provider: CodingProviderKindUi,
+        name: String,
+        handle: String,
+        workspacePath: String,
+        permissionMode: CodingPermissionModeUi,
+        useWorktree: Boolean,
+    ) -> Unit = { _, _, _, _, _, _ -> },
+    onCycleCodingPermission: (botId: String, nextMode: CodingPermissionModeUi) -> Unit = { _, _ -> },
     onOpenBotChat: (String) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -66,6 +76,10 @@ fun BotFatherWorkspaceScreen(
     var botName by remember { mutableStateOf("法布施随身禅心官") }
     var botHandle by remember { mutableStateOf("@dharma_companion_bot") }
     var botDescription by remember { mutableStateOf("支持每日早晚课提醒、经典导读、WebMCP 小程序联动与 Mika 本机自动化。") }
+    var selectedCodingProvider by remember { mutableStateOf(CodingProviderKindUi.CLAUDE_CODE) }
+    var selectedCodingPermission by remember { mutableStateOf(CodingPermissionModeUi.ASK) }
+    var codingWorkspacePath by remember { mutableStateOf("~/workspace") }
+    var codingUseWorktree by remember { mutableStateOf(true) }
 
     val templates = listOf(
         Triple("Mika 跨应用生活助理", "@mika_life_bot", "自动帮你比价、设闹钟、汇总通知并回传结果卡片"),
@@ -81,7 +95,7 @@ fun BotFatherWorkspaceScreen(
     ) {
         WorkspaceTopBar(
             title = "@BotFather 智能机器人中心",
-            subtitle = "自然语言创建 Telegram Bot 与伴侣幽灵智能体",
+            subtitle = "自然语言创建 Telegram Bot · 原生 Coding Agent (Claude Code / Codex / ACP)",
             glyph = TelegramGlyph.BOT_ROBOT,
             onBack = onBack,
         )
@@ -133,6 +147,95 @@ fun BotFatherWorkspaceScreen(
                             modifier = Modifier.fillMaxWidth().testTag("botfather-create-button"),
                         ) {
                             Text("🤖 立即创建并加入对话列表", fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+
+            // Desktop v1.5/v1.6 parity: Native Third-Party Coding Agent Bots (Claude Code, Codex, OpenCode, Cursor CLI, Antigravity, ACP)
+            item {
+                Surface(shape = RoundedCornerShape(18.dp), color = palette.surfaceColor, modifier = Modifier.fillMaxWidth().testTag("botfather-coding-agent-card")) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("💻 第三方编程智能体原生 Bot (Desktop v1.6 对齐)", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = palette.primaryText)
+                        Text("直接将 Claude Code、Codex、OpenCode、Cursor CLI、Antigravity 或自定义 ACP 接入为原生 Telegram Bot，支持 Git Worktree 隔离与检查点回滚。", fontSize = 12.sp, color = palette.secondaryText)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(CodingProviderKindUi.entries) { prov ->
+                                val sel = selectedCodingProvider == prov
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = if (sel) palette.primaryAccent else palette.elevatedSurface,
+                                    modifier = Modifier.clickable { selectedCodingProvider = prov },
+                                ) {
+                                    Text(
+                                        text = if (prov.supportsAcp) "${prov.label} (ACP)" else prov.label,
+                                        color = if (sel) Color.White else palette.primaryText,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    )
+                                }
+                            }
+                        }
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(CodingPermissionModeUi.entries) { mode ->
+                                val sel = selectedCodingPermission == mode
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (sel) palette.primaryAccent.copy(alpha = 0.20f) else palette.elevatedSurface,
+                                    modifier = Modifier.clickable { selectedCodingPermission = mode },
+                                ) {
+                                    Text(
+                                        text = "权限：${mode.label}",
+                                        color = if (sel) palette.primaryAccent else palette.secondaryText,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    )
+                                }
+                            }
+                        }
+                        OutlinedTextField(
+                            value = codingWorkspacePath,
+                            onValueChange = { codingWorkspacePath = it },
+                            label = { Text("绑定宿主机工作区路径") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                            Text("自动创建隔离 Git Worktree 分支", fontSize = 13.sp, color = palette.primaryText)
+                            Switch(checked = codingUseWorktree, onCheckedChange = { codingUseWorktree = it })
+                        }
+                        Button(
+                            onClick = {
+                                onCreateCodingBot(
+                                    selectedCodingProvider,
+                                    "${selectedCodingProvider.label} Coding Bot",
+                                    selectedCodingProvider.recommendedHandle,
+                                    codingWorkspacePath,
+                                    selectedCodingPermission,
+                                    codingUseWorktree,
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth().testTag("botfather-create-coding-bot"),
+                        ) {
+                            Text("⚡ 创建 ${selectedCodingProvider.label} 原生编程 Bot", fontWeight = FontWeight.Bold)
+                        }
+
+                        if (codingBots.isNotEmpty()) {
+                            codingBots.forEach { cb ->
+                                Surface(shape = RoundedCornerShape(12.dp), color = palette.elevatedSurface, modifier = Modifier.fillMaxWidth()) {
+                                    Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("${cb.displayName} (@${cb.username})", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = palette.primaryText)
+                                            Text("${cb.provider.label} · ${cb.workspacePath} · 分支 ${cb.activeBranch} · ${cb.totalTurns} 轮", fontSize = 11.sp, color = palette.secondaryText)
+                                        }
+                                        val nextMode = CodingPermissionModeUi.entries[(cb.permissionMode.ordinal + 1) % CodingPermissionModeUi.entries.size]
+                                        TextButton(onClick = { onCycleCodingPermission(cb.botId, nextMode) }) {
+                                            Text(cb.permissionMode.label, fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -455,6 +558,8 @@ fun MagpieGatewayScreen(
     onConfigureProvider: (presetId: String, apiKey: String) -> Unit,
     onImportEnvOrUri: (String) -> Unit,
     onTestPiiMask: (String) -> Unit,
+    onSyncModelsDev: () -> Unit = {},
+    onScanLocalSubscriptions: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     val palette = LocalTelegramPalette.current
@@ -485,7 +590,7 @@ fun MagpieGatewayScreen(
     ) {
         WorkspaceTopBar(
             title = "Magpie 免订阅 AI 网关 (${gatewayState.presets.size} 通道)",
-            subtitle = "Rosetta 协议互转 · 6 种智能路由 · PII 与密钥脱敏",
+            subtitle = "Rosetta 协议互转 · models.dev 实时目录 · Vertex/Gemini 并行工具对齐",
             glyph = TelegramGlyph.MAGPIE_GATEWAY,
             onBack = onBack,
         )
@@ -513,6 +618,34 @@ fun MagpieGatewayScreen(
                         }
                         Surface(shape = RoundedCornerShape(10.dp), color = palette.elevatedSurface, modifier = Modifier.fillMaxWidth()) {
                             Text(gatewayState.lastRouteExplanation, fontSize = 12.sp, color = palette.primaryAccent, modifier = Modifier.padding(8.dp))
+                        }
+                    }
+                }
+            }
+
+            // Desktop v1.3.2-v1.6.2 parity: Live models.dev catalog & Local Subscription Sync
+            item {
+                Surface(shape = RoundedCornerShape(18.dp), color = palette.surfaceColor, modifier = Modifier.fillMaxWidth().testTag("magpie-models-dev-sync-card")) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("🌐 实时模型目录 (models.dev) & 本地订阅同步", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = palette.primaryText)
+                        Text(gatewayState.modelsDevStatusLabel, fontSize = 12.sp, color = palette.secondaryText)
+                        Text(gatewayState.localSubscriptionsSummary, fontSize = 11.sp, color = palette.hintText)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            Button(onClick = onSyncModelsDev, modifier = Modifier.weight(1f)) {
+                                Text("刷新 models.dev", fontSize = 12.sp)
+                            }
+                            Button(onClick = onScanLocalSubscriptions, modifier = Modifier.weight(1f)) {
+                                Text("同步本地订阅", fontSize = 12.sp)
+                            }
+                        }
+                        if (gatewayState.discoveredModels.isNotEmpty()) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(gatewayState.discoveredModels.take(12)) { modelId ->
+                                    Surface(shape = RoundedCornerShape(8.dp), color = palette.elevatedSurface) {
+                                        Text(modelId, fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = palette.primaryAccent, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -681,6 +814,11 @@ fun CloudComputerWorkbenchScreen(
     onEmergencyTakeover: (String) -> Unit,
     onExecuteOp: (String) -> Unit,
     onAdvanceTaskFsm: (String) -> Unit,
+    onToggleRemoteAssist: (Boolean) -> Unit = {},
+    onUpdateAssistCode: (String) -> Unit = {},
+    onUpdateStreamSettings: (RemoteStreamSettingsUi) -> Unit = {},
+    onIssueMcpGrant: (String) -> Unit = {},
+    onRevokeMcpGrant: (String) -> Unit = {},
     onOpenMikaWorkspace: () -> Unit,
     onBack: () -> Unit,
 ) {
@@ -688,6 +826,8 @@ fun CloudComputerWorkbenchScreen(
     BackHandler(onBack = onBack)
 
     var opCommand by remember { mutableStateOf("df -h && uptime") }
+    var assistCodeDraft by remember(computerState.assistConfig.currentCode) { mutableStateOf(computerState.assistConfig.currentCode) }
+    var mcpClientNameDraft by remember { mutableStateOf("Claude Desktop MCP") }
     val selectedNode = computerState.nodes.firstOrNull { it.id == computerState.selectedNodeId } ?: computerState.nodes.firstOrNull()
 
     Column(
@@ -697,8 +837,8 @@ fun CloudComputerWorkbenchScreen(
             .testTag("telegram-cloud-computer-screen"),
     ) {
         WorkspaceTopBar(
-            title = "Cloud Computer 云电脑与本机智控",
-            subtitle = "CUA 排他租约 · 紧急人工接管 · Action Bus R0-R4 总线",
+            title = "Cloud Computer 云电脑与 UU-Remote 智控",
+            subtitle = "9 位远程协助 · 4K/120fps 串流 · OAuth 2.1 MCP · Action Bus (${computerState.actionBusCategoryCount} 域)",
             glyph = TelegramGlyph.CLOUD_COMPUTER,
             onBack = onBack,
         )
@@ -708,6 +848,98 @@ fun CloudComputerWorkbenchScreen(
             contentPadding = PaddingValues(14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Desktop v1.5.0 parity: UU-Remote 9-Digit Remote Assist & Stream Settings
+            item {
+                Surface(shape = RoundedCornerShape(18.dp), color = palette.surfaceColor, modifier = Modifier.fillMaxWidth().testTag("cloud-computer-uu-remote-card")) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("🛰 UU-Remote 远程协助与高清串流 (v1.5+)", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = palette.primaryText)
+                                Text("9 位永久设备协助 ID：${computerState.assistConfig.assistId}", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = palette.primaryAccent)
+                            }
+                            Switch(
+                                checked = computerState.assistConfig.allowAssist,
+                                onCheckedChange = onToggleRemoteAssist,
+                            )
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = assistCodeDraft,
+                                onValueChange = { assistCodeDraft = it.take(16) },
+                                label = { Text("远程协助验证码 (${computerState.assistConfig.codeMode})") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Button(onClick = { onUpdateAssistCode(assistCodeDraft) }) { Text("更新") }
+                        }
+                        val ss = computerState.streamSettings
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(listOf("auto", "h264", "h265", "vp8")) { codec ->
+                                val sel = ss.codec == codec
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (sel) palette.primaryAccent else palette.elevatedSurface,
+                                    modifier = Modifier.clickable { onUpdateStreamSettings(ss.copy(codec = codec)) },
+                                ) {
+                                    Text(codec.uppercase(), color = if (sel) Color.White else palette.primaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                                }
+                            }
+                            items(listOf(30, 60, 120)) { fps ->
+                                val sel = ss.targetFps == fps
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (sel) palette.primaryAccent else palette.elevatedSurface,
+                                    modifier = Modifier.clickable { onUpdateStreamSettings(ss.copy(targetFps = fps)) },
+                                ) {
+                                    Text("${fps}fps", color = if (sel) Color.White else palette.primaryText, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                                }
+                            }
+                        }
+                        Row(horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                            Text("隐私黑屏保护 (Privacy Screen) · 音频/麦克风透传", fontSize = 12.sp, color = palette.secondaryText, modifier = Modifier.weight(1f))
+                            Switch(
+                                checked = ss.privacyScreen,
+                                onCheckedChange = { onUpdateStreamSettings(ss.copy(privacyScreen = it)) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Desktop v1.5.0 parity: Official OAuth 2.1 Remote MCP Grants
+            item {
+                Surface(shape = RoundedCornerShape(18.dp), color = palette.surfaceColor, modifier = Modifier.fillMaxWidth().testTag("cloud-computer-mcp-grants-card")) {
+                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("🔑 Official OAuth 2.1 Remote MCP 授权 (${computerState.mcpGrants.size})", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = palette.primaryText)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            OutlinedTextField(
+                                value = mcpClientNameDraft,
+                                onValueChange = { mcpClientNameDraft = it },
+                                label = { Text("MCP 客户端名称") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Button(onClick = { onIssueMcpGrant(mcpClientNameDraft) }) { Text("签发") }
+                        }
+                        computerState.mcpGrants.forEach { g ->
+                            Surface(shape = RoundedCornerShape(10.dp), color = palette.elevatedSurface, modifier = Modifier.fillMaxWidth()) {
+                                Row(modifier = Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(g.clientName, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = palette.primaryText)
+                                        Text("Scopes: ${g.scopes.joinToString(", ")}", fontSize = 11.sp, color = palette.secondaryText)
+                                    }
+                                    TextButton(onClick = { onRevokeMcpGrant(g.familyId) }) {
+                                        Text("撤销", color = palette.destructiveRed, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // Node Selector Cards
             item {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

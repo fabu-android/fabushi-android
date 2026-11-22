@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -192,6 +193,7 @@ fun TelegramChatScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(palette.surfaceColor)
+            .imePadding()
             .testTag("telegram-chat-screen"),
     ) {
         // ====================================================================
@@ -1300,11 +1302,18 @@ private fun TelegramMessageBubbleRow(
                     else -> {
                         Surface(
                             shape = bubbleShape,
-                            color = bubbleBg,
-                            tonalElevation = 1.dp,
-                            shadowElevation = 0.8.dp,
+                            color = if (message.outgoing && palette.isAppleStyle) Color.Transparent else bubbleBg,
+                            tonalElevation = if (palette.isAppleStyle) 0.dp else 1.dp,
+                            shadowElevation = if (palette.isAppleStyle) 0.dp else 0.8.dp,
                             modifier = Modifier
                                 .widthIn(min = 84.dp, max = 312.dp)
+                                .then(
+                                    if (message.outgoing && palette.isAppleStyle) {
+                                        Modifier.background(palette.outgoingBubbleBrush, bubbleShape)
+                                    } else {
+                                        Modifier
+                                    },
+                                )
                                 .combinedClickable(
                                     onClick = {},
                                     onDoubleClick = onDoubleTapReact,

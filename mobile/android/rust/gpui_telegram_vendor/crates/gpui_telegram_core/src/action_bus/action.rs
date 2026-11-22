@@ -17,10 +17,19 @@ pub enum ActionCategory {
     MiniApp,
     Admin,
     System,
+    Device,
+    Remote,
+    Terminal,
+    Assist,
+    CloudPc,
+    Bot,
+    Task,
+    Vault,
+    Mcp,
 }
 
 impl ActionCategory {
-    pub const ALL: [ActionCategory; 10] = [
+    pub const ALL: [ActionCategory; 19] = [
         Self::Messaging,
         Self::Dialogs,
         Self::Chat,
@@ -31,6 +40,15 @@ impl ActionCategory {
         Self::MiniApp,
         Self::Admin,
         Self::System,
+        Self::Device,
+        Self::Remote,
+        Self::Terminal,
+        Self::Assist,
+        Self::CloudPc,
+        Self::Bot,
+        Self::Task,
+        Self::Vault,
+        Self::Mcp,
     ];
 
     pub fn as_str(&self) -> &'static str {
@@ -45,6 +63,15 @@ impl ActionCategory {
             Self::MiniApp => "miniapp",
             Self::Admin => "admin",
             Self::System => "system",
+            Self::Device => "device",
+            Self::Remote => "remote",
+            Self::Terminal => "terminal",
+            Self::Assist => "assist",
+            Self::CloudPc => "cloud_pc",
+            Self::Bot => "bot",
+            Self::Task => "task",
+            Self::Vault => "vault",
+            Self::Mcp => "mcp",
         }
     }
 }

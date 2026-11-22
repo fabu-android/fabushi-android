@@ -88,6 +88,7 @@ fun GlobalDharmaMiniAppScreen(
     onTapWoodenFish: () -> Unit,
     onCompletePractice: (Int) -> Unit,
     onAskDharmaAi: (String) -> Unit,
+    onMinimizeToPip: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     var showWebMcpHost by remember { mutableStateOf(false) }
@@ -173,6 +174,22 @@ fun GlobalDharmaMiniAppScreen(
                     fontSize = 11.sp,
                 )
             }
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xFF409CFF).copy(alpha = 0.18f),
+                modifier = Modifier
+                    .clickable(onClick = onMinimizeToPip)
+                    .testTag("global-dharma-minimize-pip"),
+            ) {
+                Text(
+                    text = "悬浮 PiP",
+                    color = Color(0xFF9CD1FF),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                )
+            }
+            Spacer(Modifier.width(6.dp))
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = Color(0xFFF7D070).copy(alpha = 0.16f),

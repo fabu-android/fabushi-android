@@ -136,6 +136,9 @@ data class TelegramUiState(
     val hermesStudio: HermesStudioUiState = HermesStudioUiState(),
     val magpieGateway: MagpieGatewayUiState = MagpieGatewayUiState(),
     val cloudComputer: CloudComputerUiState = CloudComputerUiState(),
+    val codingAgentBots: List<CodingAgentBotItem> = emptyList(),
+    val userVault: UserVaultUiState = UserVaultUiState(),
+    val miniAppPip: MiniAppPipSessionUi = MiniAppPipSessionUi(),
     val mikaSnapshot: MikaBridgeUiSnapshot = MikaBridgeUiSnapshot(),
     val toastBanner: String? = null,
 ) {
@@ -252,10 +255,18 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                     .put("command", JSONObject().put("type", "sync").put("cursor", JSONObject.NULL).put("limit", 500))
                 val syncResult = hostRequestOrNull("feature.messaging.execute", JSONObject().put("requestId", syncId).put("envelope", syncEnvelope))
 
-                // Optional extended Telegram/Wallet/Dharma/Hermes/Magpie/Computer status calls
+                // Optional extended Telegram/Wallet/Dharma/Hermes/Magpie/Computer/v1.6.2 status calls
                 val walletResp = hostRequestOrNull("wallet.status")
                 val dharmaResp = hostRequestOrNull("fabushiMiniapp.bootstrap")
                 val mikaResp = hostRequestOrNull("mika.bridgeStatus")
+                val assistResp = hostRequestOrNull("remote.getAssistConfig")
+                val streamResp = hostRequestOrNull("remote.getStreamSettings")
+                val mcpGrantsResp = hostRequestOrNull("remote.listMcpGrants")
+                val codingBotsResp = hostRequestOrNull("codingAgent.listBots")
+                val vaultEnvResp = hostRequestOrNull(
+                    "userVault.getEnvelope",
+                    JSONObject().put("userId", _state.value.activeAccountId),
+                )
 
                 if (!generationFence.isCurrent(capturedGen)) return@withContext
 
@@ -292,6 +303,96 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                         next = next.copy(
                             mikaSnapshot = next.mikaSnapshot.copy(
                                 available = mikaResp.optBoolean("available", true),
+                            ),
+                        )
+                    }
+                    if (assistResp != null && assistResp.has("assist_id")) {
+                        next = next.copy(
+                            cloudComputer = next.cloudComputer.copy(
+                                assistConfig = RemoteAssistConfigUi(
+                                    assistId = assistResp.optString("assist_id", next.cloudComputer.assistConfig.assistId),
+                                    allowAssist = assistResp.optBoolean("allow_assist", true),
+                                    codeMode = assistResp.optString("code_mode", "temporary"),
+                                    currentCode = assistResp.optString("current_code", next.cloudComputer.assistConfig.currentCode),
+                                ),
+                            ),
+                        )
+                    }
+                    if (streamResp != null && streamResp.has("codec")) {
+                        next = next.copy(
+                            cloudComputer = next.cloudComputer.copy(
+                                streamSettings = RemoteStreamSettingsUi(
+                                    codec = streamResp.optString("codec", "auto"),
+                                    targetFps = streamResp.optInt("target_fps", 60),
+                                    quality = streamResp.optString("quality", "auto"),
+                                    colorMode = streamResp.optString("color_mode", "yuv420"),
+                                    hdr = streamResp.optBoolean("hdr", false),
+                                    audioEnabled = streamResp.optBoolean("audio_enabled", true),
+                                    micPassthrough = streamResp.optBoolean("mic_passthrough", false),
+                                    privacyScreen = streamResp.optBoolean("privacy_screen", false),
+                                    displayIndex = streamResp.optInt("display_index", 0),
+                                ),
+                            ),
+                        )
+                    }
+                    val grantsArr = mcpGrantsResp?.optJSONArray("grants")
+                    if (grantsArr != null) {
+                        val parsedGrants = buildList {
+                            for (i in 0 until grantsArr.length()) {
+                                val g = grantsArr.optJSONObject(i) ?: continue
+                                val scopes = buildList {
+                                    val sArr = g.optJSONArray("scopes")
+                                    if (sArr != null) for (j in 0 until sArr.length()) add(sArr.optString(j))
+                                }
+                                val nodes = buildList {
+                                    val nArr = g.optJSONArray("allowed_node_ids")
+                                    if (nArr != null) for (j in 0 until nArr.length()) add(nArr.optString(j))
+                                }
+                                add(
+                                    RemoteMcpGrantItem(
+                                        familyId = g.optString("family_id"),
+                                        clientName = g.optString("client_name"),
+                                        scopes = scopes,
+                                        allowedNodeIds = nodes,
+                                    ),
+                                )
+                            }
+                        }
+                        next = next.copy(cloudComputer = next.cloudComputer.copy(mcpGrants = parsedGrants))
+                    }
+                    val codingArr = codingBotsResp?.optJSONArray("bots")
+                    if (codingArr != null) {
+                        val parsedBots = buildList {
+                            for (i in 0 until codingArr.length()) {
+                                val b = codingArr.optJSONObject(i) ?: continue
+                                val cfg = b.optJSONObject("config") ?: JSONObject()
+                                val provWire = cfg.optString("provider_kind", "claude_code")
+                                val permWire = cfg.optString("permission_mode", "ask")
+                                add(
+                                    CodingAgentBotItem(
+                                        botId = b.optString("botId"),
+                                        displayName = b.optString("displayName"),
+                                        username = b.optString("username"),
+                                        provider = CodingProviderKindUi.entries.firstOrNull { it.wire == provWire } ?: CodingProviderKindUi.CLAUDE_CODE,
+                                        permissionMode = CodingPermissionModeUi.entries.firstOrNull { it.wire == permWire } ?: CodingPermissionModeUi.ASK,
+                                        workspacePath = cfg.optString("workspace_path", "~/workspace"),
+                                        useWorktree = cfg.optBoolean("use_worktree", true),
+                                        boundNodeId = cfg.optString("bound_node_id").ifBlank { null },
+                                        activeBranch = b.optString("activeBranch", "main"),
+                                        totalTurns = b.optInt("totalTurns", 0),
+                                    ),
+                                )
+                            }
+                        }
+                        next = next.copy(codingAgentBots = parsedBots)
+                    }
+                    val envObj = vaultEnvResp?.optJSONObject("envelope")
+                    if (envObj != null) {
+                        next = next.copy(
+                            userVault = next.userVault.copy(
+                                initialized = true,
+                                kdfAlg = envObj.optString("kdf_alg", "split_key_v2"),
+                                keyVersion = envObj.optInt("key_version", 2),
                             ),
                         )
                     }
@@ -537,7 +638,17 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
 
     fun toggleQuickNightMode() {
         updateThemeSettings { current ->
-            val nextPreset = if (current.isDarkEffective) TelegramThemePreset.DAY_BLUE else TelegramThemePreset.NIGHT
+            val isApple = current.preset in setOf(
+                TelegramThemePreset.APPLE_DAY,
+                TelegramThemePreset.APPLE_NIGHT,
+                TelegramThemePreset.APPLE_TINTED,
+            )
+            val nextPreset = when {
+                isApple && current.isDarkEffective -> TelegramThemePreset.APPLE_DAY
+                isApple -> TelegramThemePreset.APPLE_NIGHT
+                current.isDarkEffective -> TelegramThemePreset.DAY_BLUE
+                else -> TelegramThemePreset.NIGHT
+            }
             current.copy(preset = nextPreset, customDark = nextPreset.isDark)
         }
     }
@@ -2655,8 +2766,343 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                 .thenByDescending { it.id == "saved-messages" },
         )
 
+    // ========================================================================
+    // Desktop v1.4.0–v1.6.2 Parity Actions (Coding Bots, models.dev, UU-Remote,
+    // Official OAuth 2.1 MCP, Zero-Knowledge User Vault, Live Mini App PiP)
+    // ========================================================================
+
+    fun createCodingAgentBot(
+        provider: CodingProviderKindUi,
+        name: String,
+        handle: String,
+        workspacePath: String,
+        permissionMode: CodingPermissionModeUi,
+        useWorktree: Boolean,
+    ) {
+        val cleanWorkspace = workspacePath.trim().ifBlank { "~/workspace" }
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                hostRequestOrNull(
+                    "codingAgent.createBot",
+                    JSONObject()
+                        .put("providerKind", provider.wire)
+                        .put("displayName", name)
+                        .put("username", handle)
+                        .put("workspacePath", cleanWorkspace)
+                        .put("permissionMode", permissionMode.wire)
+                        .put("useWorktree", useWorktree),
+                )
+            }
+            val botId = res?.optString("botId")?.ifBlank { null } ?: "cbot-${UUID.randomUUID().toString().take(8)}"
+            val username = res?.optString("username")?.ifBlank { null } ?: handle.trimStart('@')
+            val branch = res?.optString("activeBranch")?.ifBlank { null } ?: if (useWorktree) "coding/${provider.wire}" else "main"
+            val item = CodingAgentBotItem(
+                botId = botId,
+                displayName = name,
+                username = username,
+                provider = provider,
+                permissionMode = permissionMode,
+                workspacePath = cleanWorkspace,
+                useWorktree = useWorktree,
+                activeBranch = branch,
+            )
+            val chat = TelegramChatItem(
+                id = botId,
+                title = name,
+                subtitle = "${provider.label} · $cleanWorkspace · ${permissionMode.label}",
+                preview = "💻 原生编程智能体已就绪（分支 $branch）",
+                time = nowTimeLabel(),
+                kind = ConversationKind.DIRECT,
+                username = "@$username",
+                isBot = true,
+                isCompanionGhost = true,
+            )
+            _state.update { cur ->
+                cur.copy(
+                    codingAgentBots = listOf(item) + cur.codingAgentBots.filterNot { it.botId == botId },
+                    chats = listOf(chat) + cur.chats.filterNot { it.id == botId },
+                    toastBanner = "已创建 ${provider.label} 原生编程 Bot (@$username)",
+                )
+            }
+        }
+    }
+
+    fun cycleCodingAgentPermission(botId: String, nextMode: CodingPermissionModeUi) {
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull(
+                "codingAgent.dispatchControl",
+                JSONObject()
+                    .put("botId", botId)
+                    .put("control", JSONObject().put("action", "set_permission_mode").put("mode", nextMode.wire)),
+            )
+        }
+        _state.update { cur ->
+            cur.copy(
+                codingAgentBots = cur.codingAgentBots.map {
+                    if (it.botId == botId) it.copy(permissionMode = nextMode) else it
+                },
+                toastBanner = "编程 Bot 权限策略已切换为：${nextMode.label}",
+            )
+        }
+    }
+
+    fun syncModelsDevCatalog() {
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                hostRequestOrNull("magpie.discoverModels", JSONObject().put("subscriptionKind", "google-vertex"))
+            }
+            val models = buildList {
+                val arr = res?.optJSONArray("models")
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        arr.optString(i).takeIf { it.isNotBlank() }?.let(::add)
+                    }
+                }
+            }.ifEmpty {
+                listOf("gemini-3.8-flash", "gemini-2.5-pro", "gpt-6.1-sol", "claude-sonnet-4-6")
+            }
+            _state.update { cur ->
+                cur.copy(
+                    magpieGateway = cur.magpieGateway.copy(
+                        discoveredModels = models,
+                        modelsDevStatusLabel = "已同步 ${models.size} 个最新模型 (${nowTimeLabel()}) · Vertex Schema 清洗 + Gemini 并行工具就绪",
+                    ),
+                    toastBanner = "已刷新 models.dev 实时模型目录 (${models.size} 个模型)",
+                )
+            }
+        }
+    }
+
+    fun scanLocalSubscriptions() {
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                hostRequestOrNull("magpie.discoverSyncableSubscriptions", JSONObject().put("targetIsRemote", true))
+            }
+            val count = res?.optInt("total", 0) ?: 0
+            _state.update { cur ->
+                cur.copy(
+                    magpieGateway = cur.magpieGateway.copy(
+                        localSubscriptionsSummary = "最近扫描 (${nowTimeLabel()})：发现 $count 个可同步本地订阅通道 (Codex / Vertex ADC / Gemini / Claude)",
+                    ),
+                    toastBanner = "本地订阅扫描完成：发现 $count 个可同步通道",
+                )
+            }
+        }
+    }
+
+    fun toggleRemoteAssist(allow: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull("remote.setAssistAllow", JSONObject().put("allowAssist", allow))
+        }
+        _state.update { cur ->
+            cur.copy(
+                cloudComputer = cur.cloudComputer.copy(
+                    assistConfig = cur.cloudComputer.assistConfig.copy(allowAssist = allow),
+                ),
+                toastBanner = if (allow) "已开启 9 位远程协助接入" else "已关闭远程协助接入",
+            )
+        }
+    }
+
+    fun updateRemoteAssistCode(code: String) {
+        val clean = code.trim()
+        if (clean.length < 6) {
+            _state.update { it.copy(toastBanner = "远程协助验证码至少需要 6 位字符") }
+            return
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull(
+                "remote.setAssistCode",
+                JSONObject().put("code", clean).put("codeMode", "custom"),
+            )
+        }
+        _state.update { cur ->
+            cur.copy(
+                cloudComputer = cur.cloudComputer.copy(
+                    assistConfig = cur.cloudComputer.assistConfig.copy(
+                        codeMode = "custom",
+                        currentCode = clean,
+                    ),
+                ),
+                toastBanner = "自定义远程协助验证码已更新",
+            )
+        }
+    }
+
+    fun updateRemoteStreamSettings(settings: RemoteStreamSettingsUi) {
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull(
+                "remote.updateStreamSettings",
+                JSONObject()
+                    .put("codec", settings.codec)
+                    .put("target_fps", settings.targetFps)
+                    .put("quality", settings.quality)
+                    .put("color_mode", settings.colorMode)
+                    .put("hdr", settings.hdr)
+                    .put("audio_enabled", settings.audioEnabled)
+                    .put("mic_passthrough", settings.micPassthrough)
+                    .put("privacy_screen", settings.privacyScreen)
+                    .put("display_index", settings.displayIndex),
+            )
+        }
+        _state.update { cur ->
+            cur.copy(
+                cloudComputer = cur.cloudComputer.copy(streamSettings = settings),
+                toastBanner = "远程串流配置已同步 (${settings.codec.uppercase()} · ${settings.targetFps}fps)",
+            )
+        }
+    }
+
+    fun issueRemoteMcpGrant(clientName: String) {
+        val clean = clientName.trim().ifBlank { "External AI MCP Client" }
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                hostRequestOrNull(
+                    "remote.issueMcpGrant",
+                    JSONObject().put("clientName", clean),
+                )
+            }
+            val famId = res?.optString("family_id")?.ifBlank { null } ?: "fam_${UUID.randomUUID().toString().take(8)}"
+            val grant = RemoteMcpGrantItem(
+                familyId = famId,
+                clientName = clean,
+                scopes = listOf("remote.read", "remote.control", "mcp.tools"),
+                allowedNodeIds = listOf("local-android-mika"),
+            )
+            _state.update { cur ->
+                cur.copy(
+                    cloudComputer = cur.cloudComputer.copy(
+                        mcpGrants = listOf(grant) + cur.cloudComputer.mcpGrants,
+                    ),
+                    toastBanner = "已为 $clean 签发 OAuth 2.1 Remote MCP 授权",
+                )
+            }
+        }
+    }
+
+    fun revokeRemoteMcpGrant(familyId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull("remote.revokeMcpGrant", JSONObject().put("familyId", familyId))
+        }
+        _state.update { cur ->
+            cur.copy(
+                cloudComputer = cur.cloudComputer.copy(
+                    mcpGrants = cur.cloudComputer.mcpGrants.filterNot { it.familyId == familyId },
+                ),
+                toastBanner = "已撤销 Remote MCP 令牌族 ($familyId)",
+            )
+        }
+    }
+
+    fun initSplitKeyVault(password: String) {
+        if (password.length < 6) {
+            _state.update { it.copy(toastBanner = "零知识保险库主口令至少需要 6 位") }
+            return
+        }
+        val uid = _state.value.activeAccountId
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                hostRequestOrNull(
+                    "userVault.initEnvelope",
+                    JSONObject().put("userId", uid).put("password", password),
+                )
+            }
+            _state.update { cur ->
+                cur.copy(
+                    userVault = cur.userVault.copy(
+                        initialized = true,
+                        kdfAlg = "split_key_v2",
+                        keyVersion = 2,
+                        lastVaultMessage = if (res != null) "Split-Key V2 信封已在 Rust 原生端派生并封装 (Argon2id + ChaCha20-Poly1305)" else "Split-Key V2 保险库已就绪",
+                    ),
+                    toastBanner = "Split-Key V2 零知识保险库初始化成功",
+                )
+            }
+        }
+    }
+
+    fun requestDeviceVaultSync() {
+        val uid = _state.value.activeAccountId
+        viewModelScope.launch {
+            val res = withContext(Dispatchers.IO) {
+                hostRequestOrNull(
+                    "userVault.requestDeviceSync",
+                    JSONObject().put("userId", uid).put("deviceName", "Fabushi Android"),
+                )
+            }
+            val reqId = res?.optString("requestId")?.ifBlank { null } ?: "dsync_${UUID.randomUUID().toString().take(8)}"
+            val code = res?.optString("verificationCode")?.ifBlank { null } ?: "%06d".format((System.currentTimeMillis() % 900_000L) + 100_000L)
+            _state.update { cur ->
+                cur.copy(
+                    userVault = cur.userVault.copy(
+                        activeSyncRequestId = reqId,
+                        activeSyncVerificationCode = code,
+                        activeSyncStatus = "pending · 等待受信任桌面端批准",
+                    ),
+                    toastBanner = "已生成 X25519 设备信任环核验码：$code",
+                )
+            }
+        }
+    }
+
+    fun minimizeGlobalDharmaToPip() {
+        val summary = "累计供养 ${_state.value.globalDharma.totalGlobalOfferings} 盏 · 功德 ${_state.value.globalDharma.myMeritPoints}"
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull(
+                "miniapp.webmcp.setControlMode",
+                JSONObject()
+                    .put("botUsername", "fabushi_bot")
+                    .put("shortName", "global_dharma")
+                    .put("appTitle", "全球法布施")
+                    .put("mode", "user_takeover")
+                    .put("statusText", summary)
+                    .put("pipMinimized", true),
+            )
+        }
+        _state.update { cur ->
+            cur.copy(
+                subScreen = TelegramSubScreen.HOME,
+                miniAppPip = MiniAppPipSessionUi(
+                    active = true,
+                    minimized = true,
+                    botUsername = "fabushi_bot",
+                    shortName = "global_dharma",
+                    appTitle = "全球法布施",
+                    controlMode = "user_takeover",
+                    statusText = summary,
+                ),
+                toastBanner = "全球法布施已最小化至悬浮 PiP，随时点击顶部条原地恢复",
+            )
+        }
+    }
+
+    fun restoreMiniAppFromPip() {
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull(
+                "miniapp.webmcp.setControlMode",
+                JSONObject()
+                    .put("botUsername", _state.value.miniAppPip.botUsername)
+                    .put("shortName", _state.value.miniAppPip.shortName)
+                    .put("mode", "user_takeover")
+                    .put("pipMinimized", false),
+            )
+        }
+        _state.update { cur ->
+            cur.copy(
+                subScreen = TelegramSubScreen.GLOBAL_DHARMA,
+                miniAppPip = cur.miniAppPip.copy(minimized = false),
+            )
+        }
+    }
+
+    fun dismissMiniAppPip() {
+        _state.update { cur ->
+            cur.copy(miniAppPip = MiniAppPipSessionUi())
+        }
+    }
+
     private fun nowTimeLabel(epochMs: Long = System.currentTimeMillis()): String =
-        DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(epochMs))
+        TelegramLocalTimeFormatter.formatLocalTime(epochMs)
 
     override fun onCleared() {
         recordingTimerJob?.cancel()

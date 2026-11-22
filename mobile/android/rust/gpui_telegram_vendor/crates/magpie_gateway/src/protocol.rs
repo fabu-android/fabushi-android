@@ -26,6 +26,8 @@ pub struct UnifiedToolCall {
     pub id: String,
     pub name: String,
     pub arguments: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
 }
 
 /// Canonical chat message.
@@ -147,6 +149,84 @@ pub fn resolve_gemini_endpoint_url(base_url: &str, model: &str, stream: bool) ->
     }
 }
 
+/// Recursively normalizes a JSON Schema object into Google Gemini / Vertex AI OpenAPI 3.0 Proto
+/// `Schema` format:
+/// - Converts JSON Schema union `"type": ["string", "null"]` or `["string", "integer"]` into a
+///   single scalar `"type"` string (setting `"nullable": true` when `"null"` was present).
+/// - Strips unsupported meta-keywords (`$schema`, `additionalProperties`, `default`, `title`,
+///   `examples`, `$defs`, `definitions`) that cause Vertex AI HTTP 400 `INVALID_ARGUMENT`.
+pub fn sanitize_schema_for_gemini(schema: &Value) -> Value {
+    match schema {
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            let mut inferred_nullable = false;
+
+            for (k, v) in map {
+                match k.as_str() {
+                    "$schema" | "additionalProperties" | "default" | "title" | "examples"
+                    | "$defs" | "definitions" | "$id" | "const" => continue,
+                    "type" => match v {
+                        Value::Array(arr) => {
+                            let mut chosen: Option<&str> = None;
+                            for item in arr {
+                                if let Some(s) = item.as_str() {
+                                    if s.eq_ignore_ascii_case("null") {
+                                        inferred_nullable = true;
+                                    } else if chosen.is_none() {
+                                        chosen = Some(s);
+                                    }
+                                }
+                            }
+                            out.insert(
+                                "type".to_string(),
+                                Value::String(chosen.unwrap_or("string").to_string()),
+                            );
+                        }
+                        Value::String(s) => {
+                            if s.eq_ignore_ascii_case("null") {
+                                inferred_nullable = true;
+                                out.insert("type".to_string(), Value::String("string".to_string()));
+                            } else {
+                                out.insert("type".to_string(), Value::String(s.clone()));
+                            }
+                        }
+                        _ => {}
+                    },
+                    "properties" => {
+                        if let Value::Object(props) = v {
+                            let mut clean_props = serde_json::Map::new();
+                            for (pk, pv) in props {
+                                clean_props.insert(pk.clone(), sanitize_schema_for_gemini(pv));
+                            }
+                            out.insert("properties".to_string(), Value::Object(clean_props));
+                        }
+                    }
+                    "items" => {
+                        out.insert("items".to_string(), sanitize_schema_for_gemini(v));
+                    }
+                    "anyOf" | "oneOf" | "allOf" => {
+                        if let Value::Array(arr) = v {
+                            let clean_arr: Vec<Value> =
+                                arr.iter().map(sanitize_schema_for_gemini).collect();
+                            out.insert(k.clone(), Value::Array(clean_arr));
+                        }
+                    }
+                    _ => {
+                        out.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+
+            if inferred_nullable && !out.contains_key("nullable") {
+                out.insert("nullable".to_string(), Value::Bool(true));
+            }
+            Value::Object(out)
+        }
+        Value::Array(arr) => Value::Array(arr.iter().map(sanitize_schema_for_gemini).collect()),
+        other => other.clone(),
+    }
+}
+
 /// Build a native Google Gemini `generateContent` JSON request body from a `UnifiedRequest`.
 pub fn build_gemini_generate_content_payload(req: &UnifiedRequest) -> Value {
     let mut system_parts = Vec::new();
@@ -154,7 +234,46 @@ pub fn build_gemini_generate_content_payload(req: &UnifiedRequest) -> Value {
         system_parts.push(json!({ "text": req.system_prompt.trim() }));
     }
 
-    let mut contents = Vec::new();
+    let mut contents: Vec<Value> = Vec::new();
+    let mut pending_call_names: Vec<String> = Vec::new();
+    let mut last_turn_is_tool_response = false;
+
+    let flush_missing_tool_responses = |contents: &mut Vec<Value>,
+                                        pending: &mut Vec<String>,
+                                        in_tool_turn: &mut bool| {
+        if pending.is_empty() {
+            *in_tool_turn = false;
+            return;
+        }
+        let missing_parts: Vec<Value> = pending
+            .drain(..)
+            .map(|missing_name| {
+                json!({
+                    "functionResponse": {
+                        "name": if missing_name.trim().is_empty() { "tool_result".to_string() } else { missing_name },
+                        "response": { "error": "Tool execution interrupted or unavailable in prior turn" },
+                    }
+                })
+            })
+            .collect();
+        if *in_tool_turn {
+            if let Some(parts) = contents
+                .last_mut()
+                .and_then(|turn| turn.get_mut("parts"))
+                .and_then(Value::as_array_mut)
+            {
+                parts.extend(missing_parts);
+                *in_tool_turn = false;
+                return;
+            }
+        }
+        contents.push(json!({
+            "role": "user",
+            "parts": missing_parts,
+        }));
+        *in_tool_turn = false;
+    };
+
     for msg in &req.messages {
         match msg.role {
             UnifiedRole::System => {
@@ -163,39 +282,91 @@ pub fn build_gemini_generate_content_payload(req: &UnifiedRequest) -> Value {
                 }
             }
             UnifiedRole::User => {
+                flush_missing_tool_responses(
+                    &mut contents,
+                    &mut pending_call_names,
+                    &mut last_turn_is_tool_response,
+                );
+                last_turn_is_tool_response = false;
                 contents.push(json!({
                     "role": "user",
                     "parts": [{ "text": msg.content }],
                 }));
             }
             UnifiedRole::Assistant => {
+                flush_missing_tool_responses(
+                    &mut contents,
+                    &mut pending_call_names,
+                    &mut last_turn_is_tool_response,
+                );
                 let mut parts = Vec::new();
                 if !msg.content.is_empty() {
                     parts.push(json!({ "text": msg.content }));
                 }
-                for tc in &msg.tool_calls {
+                let any_has_sig = msg.tool_calls.iter().any(|c| {
+                    c.thought_signature
+                        .as_deref()
+                        .is_some_and(|s| !s.trim().is_empty())
+                });
+                for (idx, tc) in msg.tool_calls.iter().enumerate() {
                     let args_val: Value =
                         serde_json::from_str(&tc.arguments).unwrap_or_else(|_| json!({}));
-                    parts.push(json!({
+                    let mut part = json!({
                         "functionCall": {
                             "name": tc.name,
                             "args": args_val,
                         }
-                    }));
+                    });
+                    if let Some(sig) = tc
+                        .thought_signature
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                    {
+                        part["thoughtSignature"] = Value::String(sig.to_string());
+                    } else if !any_has_sig && idx == 0 {
+                        // Official Vertex AI bypass sentinel for legacy history / cross-model fallback
+                        // when prior turns were persisted without a model thought signature.
+                        part["thoughtSignature"] =
+                            Value::String("skip_thought_signature_validator".to_string());
+                    }
+                    parts.push(part);
                 }
                 if !parts.is_empty() {
                     contents.push(json!({
                         "role": "model",
                         "parts": parts,
                     }));
+                    pending_call_names = msg.tool_calls.iter().map(|tc| tc.name.clone()).collect();
+                    last_turn_is_tool_response = false;
                 }
             }
             UnifiedRole::Tool => {
-                let fn_name = msg
+                if pending_call_names.is_empty() && !last_turn_is_tool_response {
+                    continue;
+                }
+                let explicit_name = msg
                     .name
                     .as_deref()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("tool_result");
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                let matched_idx = explicit_name
+                    .and_then(|en| pending_call_names.iter().position(|p| p == en))
+                    .or_else(|| (!pending_call_names.is_empty()).then_some(0));
+                let fn_name = if let Some(idx) = matched_idx {
+                    let removed = pending_call_names.remove(idx);
+                    explicit_name
+                        .map(ToString::to_string)
+                        .unwrap_or_else(|| {
+                            if removed.trim().is_empty() {
+                                "tool_result".to_string()
+                            } else {
+                                removed
+                            }
+                        })
+                } else {
+                    explicit_name.unwrap_or("tool_result").to_string()
+                };
                 let response_val: Value = serde_json::from_str(&msg.content)
                     .unwrap_or_else(|_| json!({ "result": msg.content }));
                 let response_obj = if response_val.is_object() {
@@ -203,18 +374,35 @@ pub fn build_gemini_generate_content_payload(req: &UnifiedRequest) -> Value {
                 } else {
                     json!({ "result": response_val })
                 };
+                let part = json!({
+                    "functionResponse": {
+                        "name": fn_name,
+                        "response": response_obj,
+                    }
+                });
+                if last_turn_is_tool_response {
+                    if let Some(parts) = contents
+                        .last_mut()
+                        .and_then(|turn| turn.get_mut("parts"))
+                        .and_then(Value::as_array_mut)
+                    {
+                        parts.push(part);
+                        continue;
+                    }
+                }
                 contents.push(json!({
                     "role": "user",
-                    "parts": [{
-                        "functionResponse": {
-                            "name": fn_name,
-                            "response": response_obj,
-                        }
-                    }]
+                    "parts": [part],
                 }));
+                last_turn_is_tool_response = true;
             }
         }
     }
+    flush_missing_tool_responses(
+        &mut contents,
+        &mut pending_call_names,
+        &mut last_turn_is_tool_response,
+    );
 
     let mut payload = json!({
         "contents": contents,
@@ -232,7 +420,7 @@ pub fn build_gemini_generate_content_payload(req: &UnifiedRequest) -> Value {
                 json!({
                     "name": t.name,
                     "description": t.description,
-                    "parameters": t.parameters,
+                    "parameters": sanitize_schema_for_gemini(&t.parameters),
                 })
             })
             .collect();
@@ -356,10 +544,20 @@ fn extract_gemini_parts(val: &Value, call_counter: usize) -> (String, String, Ve
                     .and_then(Value::as_str)
                     .map(ToString::to_string)
                     .unwrap_or_else(|| format!("call_gemini_{}", call_counter + idx + 1));
+                let thought_signature = part
+                    .get("thoughtSignature")
+                    .or_else(|| part.get("thought_signature"))
+                    .or_else(|| fc.get("thoughtSignature"))
+                    .or_else(|| fc.get("thought_signature"))
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
                 tool_calls.push(UnifiedToolCall {
                     id,
                     name,
                     arguments: args,
+                    thought_signature,
                 });
             }
         }
@@ -544,6 +742,7 @@ pub fn inbound_chat_completions_to_unified(body: &Value) -> Result<UnifiedReques
                                 id: if id.is_empty() { format!("call_{idx}") } else { id },
                                 name,
                                 arguments,
+                                thought_signature: None,
                             });
                         }
                     }
@@ -673,6 +872,7 @@ pub fn inbound_responses_to_unified(body: &Value) -> Result<UnifiedRequest, Prot
                                 .and_then(Value::as_str)
                                 .unwrap_or("{}")
                                 .to_string(),
+                            thought_signature: None,
                         }],
                         reasoning: None,
                     });
@@ -865,6 +1065,7 @@ pub fn inbound_anthropic_to_unified(body: &Value) -> Result<UnifiedRequest, Prot
                                     .get("input")
                                     .map(|v| v.to_string())
                                     .unwrap_or_else(|| "{}".to_string()),
+                                thought_signature: None,
                             });
                         }
                         "tool_result" => {
@@ -1422,6 +1623,7 @@ pub fn parse_chat_completions_response_json(
                 id: if id.is_empty() { format!("call_{idx}") } else { id },
                 name,
                 arguments,
+                thought_signature: None,
             });
         }
     }
@@ -1518,6 +1720,7 @@ pub fn parse_responses_response_json(
                             .and_then(Value::as_str)
                             .unwrap_or("{}")
                             .to_string(),
+                        thought_signature: None,
                     });
                 }
                 _ => {}
@@ -1607,6 +1810,7 @@ pub fn parse_anthropic_response_json(
                             .get("input")
                             .map(|v| v.to_string())
                             .unwrap_or_else(|| "{}".to_string()),
+                        thought_signature: None,
                     });
                 }
                 _ => {}
@@ -1736,6 +1940,7 @@ pub fn parse_openai_sse_chunk(line_or_json: &str) -> Result<Option<UnifiedStream
                 id: if id.is_empty() { format!("call_{idx}") } else { id },
                 name,
                 arguments,
+                thought_signature: None,
             });
         }
     }
@@ -1853,6 +2058,7 @@ pub fn parse_anthropic_sse_event(
                             id: format!("toolu_{idx}"),
                             name: String::new(),
                             arguments: partial,
+                            thought_signature: None,
                         }],
                         ..Default::default()
                     }))
@@ -1878,6 +2084,7 @@ pub fn parse_anthropic_sse_event(
                         id,
                         name,
                         arguments: String::new(),
+                        thought_signature: None,
                     }],
                     ..Default::default()
                 }))
@@ -2377,5 +2584,193 @@ mod tests {
             ProtocolError::Upstream(msg) => assert_eq!(msg, "openai_flat_err"),
             other => panic!("expected Upstream error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_sanitize_schema_for_gemini_converts_type_arrays_to_scalar_proto_schema() {
+        let req = UnifiedRequest {
+            model: "gemini-2.5-pro".to_string(),
+            system_prompt: String::new(),
+            messages: vec![UnifiedMessage {
+                role: UnifiedRole::User,
+                content: "hi".to_string(),
+                name: None,
+                tool_call_id: None,
+                tool_calls: Vec::new(),
+                reasoning: None,
+            }],
+            tools: vec![
+                UnifiedToolSpec {
+                    name: "computer_bind".to_string(),
+                    description: "bind".to_string(),
+                    parameters: json!({
+                        "$schema": "https://json-schema.org/draft/2020-12/schema",
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "node_id": { "type": ["string", "null"], "description": "node" },
+                            "poll_id": { "type": ["string", "integer"] }
+                        }
+                    }),
+                },
+            ],
+            stream: false,
+            temperature: None,
+            max_tokens: None,
+            thinking_budget_tokens: None,
+        };
+        let payload = build_gemini_generate_content_payload(&req);
+        let params = &payload["tools"][0]["functionDeclarations"][0]["parameters"];
+        assert!(params.get("$schema").is_none());
+        assert!(params.get("additionalProperties").is_none());
+        assert_eq!(params["properties"]["node_id"]["type"].as_str(), Some("string"));
+        assert_eq!(params["properties"]["node_id"]["nullable"].as_bool(), Some(true));
+        assert_eq!(params["properties"]["poll_id"]["type"].as_str(), Some("string"));
+    }
+
+    #[test]
+    fn test_gemini_parallel_tool_calls_merge_responses_and_preserve_thought_signature() {
+        // 1. Parse response/SSE with `thoughtSignature` and confirm capture
+        let sse_chunk = r#"data: {"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"think","args":{"conclusion":"call webmcp"}},"thoughtSignature":"sig_abc_123"},{"functionCall":{"name":"webmcp_discover","args":{"chat_id":601440062}}}]}}]}"#;
+        let parsed = parse_gemini_sse_data(sse_chunk, 0)
+            .expect("parse gemini sse")
+            .expect("delta present");
+        assert_eq!(parsed.tool_calls.len(), 2);
+        assert_eq!(
+            parsed.tool_calls[0].thought_signature.as_deref(),
+            Some("sig_abc_123")
+        );
+        assert_eq!(parsed.tool_calls[1].thought_signature, None);
+
+        // 2. Two parallel tool results must merge into ONE `user` turn with TWO `functionResponse` parts,
+        // and echo the captured `thoughtSignature` back on the `model` functionCall part.
+        let req_parallel = UnifiedRequest {
+            model: "gemini-3.5-flash".to_string(),
+            system_prompt: String::new(),
+            messages: vec![
+                UnifiedMessage {
+                    role: UnifiedRole::User,
+                    content: "发送金刚经".to_string(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                },
+                UnifiedMessage {
+                    role: UnifiedRole::Assistant,
+                    content: String::new(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: parsed.tool_calls.clone(),
+                    reasoning: None,
+                },
+                UnifiedMessage {
+                    role: UnifiedRole::Tool,
+                    content: r#"{"ok":true}"#.to_string(),
+                    name: Some("think".to_string()),
+                    tool_call_id: Some("call_gemini_1".to_string()),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                },
+                UnifiedMessage {
+                    role: UnifiedRole::Tool,
+                    content: r#"{"tools":["fabushi_send_dharma"]}"#.to_string(),
+                    name: Some("webmcp_discover".to_string()),
+                    tool_call_id: Some("call_gemini_2".to_string()),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                },
+            ],
+            tools: Vec::new(),
+            temperature: None,
+            max_tokens: None,
+            thinking_budget_tokens: None,
+            stream: true,
+        };
+        let payload = build_gemini_generate_content_payload(&req_parallel);
+        let contents = payload["contents"].as_array().expect("contents array");
+        assert_eq!(contents.len(), 3, "expected user + model + single merged user tool-response turn");
+        assert_eq!(contents[1]["role"], "model");
+        let model_parts = contents[1]["parts"].as_array().unwrap();
+        assert_eq!(model_parts.len(), 2);
+        assert_eq!(model_parts[0]["thoughtSignature"], "sig_abc_123");
+        assert!(model_parts[1].get("thoughtSignature").is_none());
+
+        assert_eq!(contents[2]["role"], "user");
+        let resp_parts = contents[2]["parts"].as_array().unwrap();
+        assert_eq!(resp_parts.len(), 2, "both functionResponse parts must be in the single user turn");
+        assert_eq!(resp_parts[0]["functionResponse"]["name"], "think");
+        assert_eq!(resp_parts[1]["functionResponse"]["name"], "webmcp_discover");
+
+        // 3. Missing thoughtSignature fallback injects `skip_thought_signature_validator` on idx==0,
+        // and interrupted history pads missing functionResponse before the next User message.
+        let req_interrupted = UnifiedRequest {
+            model: "gemini-3-flash-preview".to_string(),
+            system_prompt: String::new(),
+            messages: vec![
+                UnifiedMessage {
+                    role: UnifiedRole::User,
+                    content: "first".to_string(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                },
+                UnifiedMessage {
+                    role: UnifiedRole::Assistant,
+                    content: String::new(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: vec![
+                        UnifiedToolCall {
+                            id: "c1".into(),
+                            name: "think".into(),
+                            arguments: "{}".into(),
+                            thought_signature: None,
+                        },
+                        UnifiedToolCall {
+                            id: "c2".into(),
+                            name: "webmcp_discover".into(),
+                            arguments: "{}".into(),
+                            thought_signature: None,
+                        },
+                    ],
+                    reasoning: None,
+                },
+                UnifiedMessage {
+                    role: UnifiedRole::Tool,
+                    content: r#"{"ok":true}"#.into(),
+                    name: Some("think".into()),
+                    tool_call_id: Some("c1".into()),
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                },
+                UnifiedMessage {
+                    role: UnifiedRole::User,
+                    content: "retry now".into(),
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: Vec::new(),
+                    reasoning: None,
+                },
+            ],
+            tools: Vec::new(),
+            temperature: None,
+            max_tokens: None,
+            thinking_budget_tokens: None,
+            stream: false,
+        };
+        let payload2 = build_gemini_generate_content_payload(&req_interrupted);
+        let c2 = payload2["contents"].as_array().unwrap();
+        assert_eq!(c2.len(), 4);
+        assert_eq!(
+            c2[1]["parts"][0]["thoughtSignature"],
+            "skip_thought_signature_validator"
+        );
+        assert!(c2[1]["parts"][1].get("thoughtSignature").is_none());
+        let padded_parts = c2[2]["parts"].as_array().unwrap();
+        assert_eq!(padded_parts.len(), 2);
+        assert_eq!(padded_parts[0]["functionResponse"]["name"], "think");
+        assert_eq!(padded_parts[1]["functionResponse"]["name"], "webmcp_discover");
     }
 }

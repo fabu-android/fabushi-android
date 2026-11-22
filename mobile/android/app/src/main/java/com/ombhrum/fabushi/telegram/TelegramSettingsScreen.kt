@@ -69,6 +69,8 @@ fun TelegramSettingsScreen(
     onOpenTonWallet: () -> Unit,
     onCheckForUpdates: () -> Unit,
     onDownloadAndInstallUpdate: () -> Unit,
+    onInitSplitKeyVault: (String) -> Unit = {},
+    onRequestDeviceVaultSync: () -> Unit = {},
     onBackToHome: () -> Unit,
 ) {
     val palette = LocalTelegramPalette.current
@@ -119,6 +121,8 @@ fun TelegramSettingsScreen(
                 onOpenTonWallet = onOpenTonWallet,
                 onCheckForUpdates = onCheckForUpdates,
                 onDownloadAndInstallUpdate = onDownloadAndInstallUpdate,
+                onInitSplitKeyVault = onInitSplitKeyVault,
+                onRequestDeviceVaultSync = onRequestDeviceVaultSync,
             )
         }
     }
@@ -274,6 +278,8 @@ private fun SettingsSubPageContent(
     onOpenTonWallet: () -> Unit,
     onCheckForUpdates: () -> Unit,
     onDownloadAndInstallUpdate: () -> Unit,
+    onInitSplitKeyVault: (String) -> Unit = {},
+    onRequestDeviceVaultSync: () -> Unit = {},
 ) {
     val palette = LocalTelegramPalette.current
 
@@ -321,10 +327,23 @@ private fun SettingsSubPageContent(
                             }
                             Surface(
                                 shape = RoundedCornerShape(ts.boundedCornerDp),
-                                color = palette.outgoingBubble,
-                                modifier = Modifier.align(Alignment.End),
+                                color = if (palette.isAppleStyle) Color.Transparent else palette.outgoingBubble,
+                                modifier = Modifier
+                                    .align(Alignment.End)
+                                    .then(
+                                        if (palette.isAppleStyle) {
+                                            Modifier.background(palette.outgoingBubbleBrush, RoundedCornerShape(ts.boundedCornerDp))
+                                        } else {
+                                            Modifier
+                                        },
+                                    ),
                             ) {
-                                Text("✨ 1:1 Telegram 主题引擎 ✓✓", color = palette.outgoingText, fontSize = ts.boundedFontSp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp))
+                                Text(
+                                    text = if (palette.isAppleStyle) "✨ Apple Messages v1.6 主题 ✓✓" else "✨ 1:1 Telegram 主题引擎 ✓✓",
+                                    color = palette.outgoingText,
+                                    fontSize = ts.boundedFontSp,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                )
                             }
                         }
                     }
@@ -438,6 +457,48 @@ private fun SettingsSubPageContent(
                             }
                             TelegramHairlineDivider()
                             Text("🛡 端到端加密协议栈：X3DH (X25519 + Ed25519) + Double Ratchet (ChaCha20-Poly1305)", fontSize = 12.sp, color = palette.secondaryText)
+                        }
+                    }
+                }
+                item {
+                    var vaultMasterPass by remember { mutableStateOf("") }
+                    Surface(shape = RoundedCornerShape(16.dp), color = palette.surfaceColor, modifier = Modifier.fillMaxWidth().testTag("settings-user-vault-card")) {
+                        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("🔐 零知识用户保险库 (Split-Key V2 · X25519 设备信任环)", fontWeight = FontWeight.Bold, color = palette.primaryText)
+                            Text(
+                                text = "算法：${state.userVault.kdfAlg} (v${state.userVault.keyVersion}) · 已加密条目：${state.userVault.encryptedItemCount}\n${state.userVault.lastVaultMessage}",
+                                fontSize = 12.sp,
+                                color = palette.secondaryText,
+                            )
+                            OutlinedTextField(
+                                value = vaultMasterPass,
+                                onValueChange = { vaultMasterPass = it },
+                                label = { Text("主口令（仅端侧 Argon2id 派生，绝不上传原文）") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                Button(
+                                    onClick = { onInitSplitKeyVault(vaultMasterPass) },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(if (state.userVault.initialized) "重置保险库" else "初始化 Split-Key V2")
+                                }
+                                Button(
+                                    onClick = onRequestDeviceVaultSync,
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text("X25519 设备同步")
+                                }
+                            }
+                            state.userVault.activeSyncVerificationCode?.let { code ->
+                                Surface(shape = RoundedCornerShape(10.dp), color = palette.elevatedSurface, modifier = Modifier.fillMaxWidth()) {
+                                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("6 位信任环核验码：$code · 状态：${state.userVault.activeSyncStatus}", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = palette.primaryAccent, fontSize = 13.sp)
+                                        Text("受信任桌面端批准后，密文将在首次读取时在 SQLite 中原子擦除（一次性消费）。", fontSize = 11.sp, color = palette.secondaryText)
+                                    }
+                                }
+                            }
                         }
                     }
                 }

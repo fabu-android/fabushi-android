@@ -6,6 +6,7 @@
 pub mod gateway;
 pub mod import;
 pub mod masking;
+pub mod models_catalog;
 pub mod presets;
 pub mod protocol;
 pub mod routing;
@@ -23,6 +24,12 @@ pub use masking::{
     mask_text, unmask_text, MaskResult, MaskingAction, MaskingConfig, MaskingEngine, MaskingHit,
     StreamingUnmasker,
 };
+pub use models_catalog::{
+    fetch_live_upstream_models, fetch_models_dev_catalog, fetch_models_dev_catalog_from_url,
+    merge_discovered_models, models_dev_provider_id_for_subscription, parse_models_dev_json,
+    parse_openai_or_codex_models_response, parse_vertex_or_gemini_models_response,
+    CompactModelsCatalog, MODELS_DEV_API_URL, MODELS_DEV_CACHE_TTL_MS,
+};
 pub use presets::{
     all_presets, canonical_preset_alias, find_preset, resolve_preset_endpoints, MagpiePreset,
     PresetKind, PresetRegion, ProtocolKind, ResolvedPresetEndpoint,
@@ -34,11 +41,12 @@ pub use protocol::{
     parse_anthropic_response_json, parse_anthropic_sse_event, parse_chat_completions_response_json,
     parse_gemini_response_json, parse_gemini_sse_chunk, parse_gemini_sse_data,
     parse_openai_sse_chunk, parse_responses_response_json, resolve_anthropic_messages_url,
-    resolve_gemini_endpoint_url, unified_to_anthropic_json, unified_to_anthropic_request_json,
-    unified_to_chat_completions_json, unified_to_chat_completions_request_json,
-    unified_to_responses_json, unified_to_responses_request_json, GeminiSseDelta, ProtocolError,
-    UnifiedMessage, UnifiedRequest, UnifiedResponse, UnifiedRole, UnifiedStreamChunk,
-    UnifiedToolCall, UnifiedToolSpec, UnifiedUsage,
+    resolve_gemini_endpoint_url, sanitize_schema_for_gemini, unified_to_anthropic_json,
+    unified_to_anthropic_request_json, unified_to_chat_completions_json,
+    unified_to_chat_completions_request_json, unified_to_responses_json,
+    unified_to_responses_request_json, GeminiSseDelta, ProtocolError, UnifiedMessage,
+    UnifiedRequest, UnifiedResponse, UnifiedRole, UnifiedStreamChunk, UnifiedToolCall,
+    UnifiedToolSpec, UnifiedUsage,
 };
 pub use routing::{
     classify_intent, parse_retry_after_header, resolve_group_targets, split_target_spec,
@@ -48,14 +56,15 @@ pub use routing::{
     MAX_RATE_REST_MS, OVERLOAD_REST_MS,
 };
 pub use subscriptions::{
-    decode_jwt_payload, discover_subscriptions_in_home, extract_jwt_exp_ms,
+    decode_jwt_payload, default_models_for_subscription_kind, discover_subscriptions_in_home,
+    discover_syncable_subscriptions_in_home, extract_jwt_exp_ms, is_loopback_server_url,
     is_sensitive_header_name, parse_gcloud_config_default, parse_magpie_logins,
     parse_magpie_providers, parse_vertex_adc_credentials, redact_header_value,
     redact_oauth_error_body, scan_claude_dirs, scan_gemini_dirs, scan_magpie_dir, scan_vertex_adc,
-    CachedVertexToken, CodexTokenManager, GoogleOAuthTokenResponse, SubscriptionAccount,
-    SubscriptionKind, SubscriptionRegistry, TokenRefreshError, VertexAdcCredentials,
-    VertexTokenManager, DEFAULT_CODEX_CLIENT_ID, DEFAULT_TOKEN_REFRESH_LEAD_TIME_MS,
-    GOOGLE_OAUTH2_TOKEN_URL, OPENAI_OAUTH2_TOKEN_URL,
+    CachedVertexToken, ClientSubscriptionSyncItem, CodexOAuthCredentials, CodexTokenManager,
+    GoogleOAuthTokenResponse, SubscriptionAccount, SubscriptionKind, SubscriptionRegistry,
+    TokenRefreshError, VertexAdcCredentials, VertexTokenManager, DEFAULT_CODEX_CLIENT_ID,
+    DEFAULT_TOKEN_REFRESH_LEAD_TIME_MS, GOOGLE_OAUTH2_TOKEN_URL, OPENAI_OAUTH2_TOKEN_URL,
 };
 #[cfg(feature = "axum-server")]
 pub use usage::normalize_session_header;

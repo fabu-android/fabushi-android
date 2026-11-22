@@ -1460,7 +1460,100 @@ data class MagpieGatewayUiState(
     val piiRedactedCount: Int = 37,
     val lastRouteExplanation: String = "Cheapest 路由命中 → DeepSeek V3.2 ($0.27/1M) · Rosetta 协议转换: Anthropic Messages → OpenAI Chat · 延迟 182ms",
     val lastMaskedPreview: String = "",
+    val discoveredModels: List<String> = emptyList(),
+    val modelsDevStatusLabel: String = "未同步 · 点击拉取 models.dev 实时目录与上游 /models",
+    val localSubscriptionsSummary: String = "未扫描 · 支持 Codex / Vertex ADC / Gemini / Claude 本地订阅",
 )
+
+enum class CodingProviderKindUi(val wire: String, val label: String, val recommendedHandle: String, val supportsAcp: Boolean) {
+    CLAUDE_CODE("claude_code", "Claude Code", "@claude_code_bot", false),
+    CODEX("codex", "Codex", "@codex_bot", false),
+    OPEN_CODE("open_code", "OpenCode", "@opencode_bot", true),
+    CURSOR_CLI("cursor_cli", "Cursor CLI", "@cursor_cli_bot", true),
+    ANTIGRAVITY("antigravity", "Antigravity", "@antigravity_bot", false),
+    ACP_CUSTOM("acp_custom", "Custom ACP", "@acp_coding_bot", true),
+}
+
+enum class CodingPermissionModeUi(val wire: String, val label: String) {
+    ASK("ask", "每次询问"),
+    AUTO_EDIT("auto_edit", "自动编辑"),
+    FULL_ACCESS("full_access", "完全访问"),
+}
+
+data class CodingAgentBotItem(
+    val botId: String,
+    val displayName: String,
+    val username: String,
+    val provider: CodingProviderKindUi,
+    val permissionMode: CodingPermissionModeUi,
+    val workspacePath: String,
+    val useWorktree: Boolean = true,
+    val boundNodeId: String? = null,
+    val activeBranch: String = "main",
+    val totalTurns: Int = 0,
+)
+
+data class RemoteAssistConfigUi(
+    val assistId: String = "482910375",
+    val allowAssist: Boolean = true,
+    val codeMode: String = "temporary",
+    val currentCode: String = "839204",
+)
+
+data class RemoteStreamSettingsUi(
+    val codec: String = "auto",
+    val targetFps: Int = 60,
+    val quality: String = "auto",
+    val colorMode: String = "yuv420",
+    val hdr: Boolean = false,
+    val audioEnabled: Boolean = true,
+    val micPassthrough: Boolean = false,
+    val privacyScreen: Boolean = false,
+    val displayIndex: Int = 0,
+)
+
+data class RemoteMcpGrantItem(
+    val familyId: String,
+    val clientName: String,
+    val scopes: List<String>,
+    val allowedNodeIds: List<String>,
+)
+
+data class UserVaultUiState(
+    val initialized: Boolean = false,
+    val kdfAlg: String = "split_key_v2",
+    val keyVersion: Int = 2,
+    val encryptedItemCount: Int = 0,
+    val activeSyncRequestId: String? = null,
+    val activeSyncVerificationCode: String? = null,
+    val activeSyncStatus: String = "未发起跨设备同步",
+    val lastVaultMessage: String = "Split-Key V2 (Argon2id + HKDF) · ChaCha20-Poly1305 按用户隔离加密",
+)
+
+data class MiniAppPipSessionUi(
+    val active: Boolean = false,
+    val minimized: Boolean = false,
+    val botUsername: String = "fabushi_bot",
+    val shortName: String = "global_dharma",
+    val appTitle: String = "全球法布施",
+    val controlMode: String = "idle",
+    val statusText: String = "",
+    val activeTool: String? = null,
+)
+
+object TelegramLocalTimeFormatter {
+    fun formatLocalTime(timestampMs: Long, timeZone: java.util.TimeZone = java.util.TimeZone.getDefault()): String {
+        val fmt = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+        fmt.timeZone = timeZone
+        return fmt.format(java.util.Date(timestampMs))
+    }
+
+    fun formatLocalDateHeader(timestampMs: Long, timeZone: java.util.TimeZone = java.util.TimeZone.getDefault()): String {
+        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        fmt.timeZone = timeZone
+        return fmt.format(java.util.Date(timestampMs))
+    }
+}
 
 enum class ComputerNodeKind(val label: String) {
     LOCAL_DEVICE("本机 Android · Mika"),
@@ -1521,6 +1614,10 @@ data class CloudComputerUiState(
     val actionBusTools: List<ActionBusSchemaItem> = emptyList(),
     val globalTasks: List<GlobalTaskItem> = emptyList(),
     val lastOpOutput: String = "就绪 · 选择节点并获取 CUA 租约即可安全操控本机或云端计算节点。",
+    val assistConfig: RemoteAssistConfigUi = RemoteAssistConfigUi(),
+    val streamSettings: RemoteStreamSettingsUi = RemoteStreamSettingsUi(),
+    val mcpGrants: List<RemoteMcpGrantItem> = emptyList(),
+    val actionBusCategoryCount: Int = 19,
 )
 
 // ============================================================================

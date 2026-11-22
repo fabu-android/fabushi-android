@@ -22,7 +22,7 @@ use ::fabushi_miniapp::sutras::{
     all_dharma_packages, all_sutras, dharma_package_by_key, sutra_by_title,
 };
 use parking_lot::Mutex;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::sync::OnceLock;
 
@@ -109,28 +109,35 @@ fn execute_effects_against_sqlite(
                 target_countries,
                 bytes_sent,
                 beam_count,
+                notify_receipt,
+                receipt_only,
+                session_bytes: _,
+                session_beams: _,
             } => {
-                let res = record_transfer(
-                    conn,
-                    user_id,
-                    &content_title,
-                    &content_kind,
-                    &target_countries,
-                    bytes_sent,
-                    beam_count,
-                )
-                .map_err(|e| e.to_string())?;
-                let merit = (beam_count as i64).max(1) * 18;
-                conn.execute(
-                    "UPDATE dharma_android_aux SET merit_points = merit_points + ?1, updated_at_ms = ?2 WHERE user_id = ?3",
-                    params![merit, chrono::Utc::now().timestamp_millis(), user_id],
-                )
-                .map_err(|e| e.to_string())?;
-                let _ = st.apply_http_effect(HttpResponsePayload::TransferRecorded {
-                    total_transfer_bytes: res.total_transfer_bytes,
-                    total_transfer_count: res.total_transfer_count,
-                    leaderboard: Some(res.leaderboard),
-                });
+                if !receipt_only && (bytes_sent > 0 || beam_count > 0) {
+                    let res = record_transfer(
+                        conn,
+                        user_id,
+                        &content_title,
+                        &content_kind,
+                        &target_countries,
+                        bytes_sent,
+                        beam_count,
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let merit = (beam_count as i64).max(1) * 18;
+                    conn.execute(
+                        "UPDATE dharma_android_aux SET merit_points = merit_points + ?1, updated_at_ms = ?2 WHERE user_id = ?3",
+                        params![merit, chrono::Utc::now().timestamp_millis(), user_id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    let _ = st.apply_http_effect(HttpResponsePayload::TransferRecorded {
+                        total_transfer_bytes: res.total_transfer_bytes,
+                        total_transfer_count: res.total_transfer_count,
+                        leaderboard: Some(res.leaderboard),
+                    });
+                }
+                let _ = notify_receipt;
             }
             HttpActionEffect::SavePracticeSession {
                 sutra,
@@ -820,5 +827,244 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
         }
 
         other => Err(format!("Unsupported fabushiMiniapp method: {other}")),
+    }
+}
+
+/// Generic Mini App WebMCP & Human Takeover RPC surface (`miniapp.webmcp.*`),
+/// aligned with `bhrumom/gpui-telegram` (`053012a`, `9623c2c`, `e9d5b37`).
+pub fn handle_webmcp_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS miniapp_webmcp_sessions (
+            session_key TEXT PRIMARY KEY,
+            bot_username TEXT NOT NULL,
+            short_name TEXT NOT NULL,
+            app_title TEXT NOT NULL,
+            control_mode TEXT NOT NULL DEFAULT 'idle',
+            status_text TEXT NOT NULL DEFAULT '',
+            active_tool TEXT,
+            tools_json TEXT NOT NULL DEFAULT '[]',
+            state_snapshot_json TEXT,
+            pip_minimized INTEGER NOT NULL DEFAULT 0,
+            updated_at_ms INTEGER NOT NULL
+        );",
+    )
+    .map_err(|e| format!("Failed initializing miniapp_webmcp_sessions: {e}"))?;
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let bot_username = params
+        .get("botUsername")
+        .or_else(|| params.get("bot_username"))
+        .and_then(Value::as_str)
+        .unwrap_or("fabushi_bot")
+        .trim();
+    let short_name = params
+        .get("shortName")
+        .or_else(|| params.get("short_name"))
+        .and_then(Value::as_str)
+        .unwrap_or("global_dharma")
+        .trim();
+    let session_key = format!("{bot_username}:{short_name}");
+
+    match submethod {
+        "registerTools" => {
+            let app_title = params
+                .get("appTitle")
+                .and_then(Value::as_str)
+                .unwrap_or("Mini App");
+            let tools_val = params
+                .get("tools")
+                .cloned()
+                .unwrap_or_else(|| json!([]));
+            let tools: Vec<gpui_telegram_proto::miniapp_contracts::WebMcpToolDescriptor> =
+                serde_json::from_value(tools_val)
+                    .map_err(|e| format!("Invalid WebMcpToolDescriptor list: {e}"))?;
+            let tools_json = serde_json::to_string(&tools).map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO miniapp_webmcp_sessions
+                 (session_key, bot_username, short_name, app_title, tools_json, updated_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(session_key) DO UPDATE SET
+                   app_title = excluded.app_title,
+                   tools_json = excluded.tools_json,
+                   updated_at_ms = excluded.updated_at_ms",
+                params![session_key, bot_username, short_name, app_title, tools_json, now],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "sessionKey": session_key,
+                "registeredTools": tools.len(),
+                "tools": tools,
+            }))
+        }
+
+        "setControlMode" => {
+            let mode_raw = params
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or("idle");
+            let mode: gpui_telegram_proto::miniapp_contracts::MiniAppControlMode =
+                serde_json::from_value(Value::String(mode_raw.to_string()))
+                    .map_err(|e| format!("Invalid MiniAppControlMode '{mode_raw}': {e}"))?;
+            let status_text = params
+                .get("statusText")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let active_tool = params.get("activeTool").and_then(Value::as_str);
+            let pip_minimized = params
+                .get("pipMinimized")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let state_snapshot = params
+                .get("stateSnapshot")
+                .map(|v| v.to_string());
+            let app_title = params
+                .get("appTitle")
+                .and_then(Value::as_str)
+                .unwrap_or("Mini App");
+
+            conn.execute(
+                "INSERT INTO miniapp_webmcp_sessions
+                 (session_key, bot_username, short_name, app_title, control_mode, status_text, active_tool, state_snapshot_json, pip_minimized, updated_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(session_key) DO UPDATE SET
+                   control_mode = excluded.control_mode,
+                   status_text = excluded.status_text,
+                   active_tool = excluded.active_tool,
+                   state_snapshot_json = COALESCE(excluded.state_snapshot_json, miniapp_webmcp_sessions.state_snapshot_json),
+                   pip_minimized = excluded.pip_minimized,
+                   updated_at_ms = excluded.updated_at_ms",
+                params![
+                    session_key,
+                    bot_username,
+                    short_name,
+                    app_title,
+                    mode_raw,
+                    status_text,
+                    active_tool,
+                    state_snapshot,
+                    if pip_minimized { 1 } else { 0 },
+                    now,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(json!({
+                "sessionKey": session_key,
+                "mode": mode,
+                "statusText": status_text,
+                "activeTool": active_tool,
+                "pipMinimized": pip_minimized,
+                "updatedAtMs": now,
+            }))
+        }
+
+        "dispatchCommand" => {
+            let cmd_val = params
+                .get("command")
+                .cloned()
+                .unwrap_or_else(|| params.clone());
+            let cmd: gpui_telegram_proto::miniapp_contracts::MiniAppWebMcpCommand =
+                serde_json::from_value(cmd_val)
+                    .map_err(|e| format!("Invalid MiniAppWebMcpCommand: {e}"))?;
+            let next_mode = if cmd.operation == "request_takeover" {
+                "waiting_for_takeover"
+            } else {
+                "ai_controlling"
+            };
+            let sk = format!("{}:{}", cmd.bot_username, cmd.short_name);
+            conn.execute(
+                "INSERT INTO miniapp_webmcp_sessions
+                 (session_key, bot_username, short_name, app_title, control_mode, status_text, active_tool, updated_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(session_key) DO UPDATE SET
+                   control_mode = excluded.control_mode,
+                   status_text = excluded.status_text,
+                   active_tool = excluded.active_tool,
+                   updated_at_ms = excluded.updated_at_ms",
+                params![
+                    sk,
+                    cmd.bot_username,
+                    cmd.short_name,
+                    cmd.app_title,
+                    next_mode,
+                    cmd.status_message.as_deref().unwrap_or("WebMCP command active"),
+                    cmd.tool_name,
+                    now,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "accepted": true,
+                "requestId": cmd.request_id,
+                "operation": cmd.operation,
+                "controlMode": next_mode,
+                "toolName": cmd.tool_name,
+            }))
+        }
+
+        "submitResponse" => {
+            let resp_val = params
+                .get("response")
+                .cloned()
+                .unwrap_or_else(|| params.clone());
+            let resp: gpui_telegram_proto::miniapp_contracts::MiniAppWebMcpResponse =
+                serde_json::from_value(resp_val)
+                    .map_err(|e| format!("Invalid MiniAppWebMcpResponse: {e}"))?;
+            Ok(json!({
+                "recorded": true,
+                "requestId": resp.request_id,
+                "ok": resp.ok,
+                "controlMode": resp.control_mode,
+                "toolsCount": resp.tools.len(),
+            }))
+        }
+
+        "getControlStatus" => {
+            let row: Option<(String, String, String, Option<String>, String, Option<String>, i64, i64)> =
+                conn.query_row(
+                    "SELECT app_title, control_mode, status_text, active_tool, tools_json, state_snapshot_json, pip_minimized, updated_at_ms
+                     FROM miniapp_webmcp_sessions WHERE session_key = ?1",
+                    params![session_key],
+                    |r| {
+                        Ok((
+                            r.get(0)?,
+                            r.get(1)?,
+                            r.get(2)?,
+                            r.get(3)?,
+                            r.get(4)?,
+                            r.get(5)?,
+                            r.get(6)?,
+                            r.get(7)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+
+            match row {
+                Some((title, mode, status_text, active_tool, tools_json, snap, pip, updated)) => {
+                    Ok(json!({
+                        "sessionKey": session_key,
+                        "appTitle": title,
+                        "controlMode": mode,
+                        "statusText": status_text,
+                        "activeTool": active_tool,
+                        "tools": serde_json::from_str::<Value>(&tools_json).unwrap_or_else(|_| json!([])),
+                        "stateSnapshot": snap.and_then(|s| serde_json::from_str::<Value>(&s).ok()),
+                        "pipMinimized": pip != 0,
+                        "updatedAtMs": updated,
+                    }))
+                }
+                None => Ok(json!({
+                    "sessionKey": session_key,
+                    "controlMode": "idle",
+                    "statusText": "",
+                    "tools": [],
+                    "pipMinimized": false,
+                })),
+            }
+        }
+
+        other => Err(format!("Unsupported miniapp.webmcp method: {other}")),
     }
 }

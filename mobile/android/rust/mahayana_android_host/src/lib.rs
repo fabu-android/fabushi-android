@@ -5,6 +5,7 @@
 //! Android (`aarch64-linux-android`, `x86_64-linux-android`) and Linux host JVM
 //! (`x86_64-unknown-linux-gnu`), plus C FFI entrypoints.
 
+pub mod coding_agent;
 pub mod computer;
 pub mod e2ee;
 pub mod fabushi_miniapp;
@@ -12,6 +13,7 @@ pub mod hermes;
 pub mod magpie;
 pub mod messaging;
 pub mod telegram_ext;
+pub mod user_vault;
 pub mod wallet;
 pub mod waveform;
 
@@ -76,6 +78,8 @@ impl MahayanaAndroidHost {
         magpie::init_schema(&conn)?;
         computer::init_schema(&conn)?;
         telegram_ext::init_schema(&conn)?;
+        user_vault::init_schema(&conn)?;
+        coding_agent::init_schema(&conn)?;
 
         Ok(Self {
             app_data_dir: root,
@@ -166,6 +170,9 @@ impl MahayanaAndroidHost {
         if let Some(sub) = method.strip_prefix("fabushiMiniapp.") {
             return fabushi_miniapp::handle_rpc(&conn, sub, params);
         }
+        if let Some(sub) = method.strip_prefix("miniapp.webmcp.") {
+            return fabushi_miniapp::handle_webmcp_rpc(&conn, sub, params);
+        }
         if let Some(sub) = method.strip_prefix("hermes.") {
             return hermes::handle_rpc(&conn, sub, params);
         }
@@ -174,6 +181,15 @@ impl MahayanaAndroidHost {
         }
         if let Some(sub) = method.strip_prefix("computer.") {
             return computer::handle_computer_rpc(&conn, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("remote.") {
+            return computer::handle_remote_rpc(&conn, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("userVault.") {
+            return user_vault::handle_rpc(&conn, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("codingAgent.") {
+            return coding_agent::handle_rpc(&conn, sub, params);
         }
         if let Some(sub) = method.strip_prefix("mika.") {
             return computer::handle_mika_rpc(&conn, sub, params);
@@ -184,6 +200,8 @@ impl MahayanaAndroidHost {
                 "platform": "android",
                 "protocolVersion": "2",
                 "runtimeVersion": if self.test_mode { "2.0.0-test" } else { "2.0.0" },
+                "desktopParityVersion": "1.6.2",
+                "desktopParityCommit": "9542524",
                 "engine": "mahayana-gpui-telegram-mika",
                 "sqliteWal": true
             })),

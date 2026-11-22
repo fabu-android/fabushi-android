@@ -1,9 +1,11 @@
 pub mod cards;
+pub mod coding_agent_contracts;
 pub mod computer_contracts;
 pub mod contracts;
 pub mod e2ee;
 pub mod message;
 pub mod miniapp_contracts;
+pub mod remote_control_contracts;
 pub mod semantic_tree;
 pub mod sync;
 pub mod tailnet_contracts;
@@ -15,6 +17,7 @@ pub use cards::{
     CardActionButton, CardActionType, GenerativeCard, GenerativeCardLayout, GenerativeComponent,
     InvoiceCard, PaymentStatus, PollAnswer, PollCard, PollOption, PriceLine, TodoCard, TodoItem,
 };
+pub use coding_agent_contracts::*;
 pub use computer_contracts::*;
 pub use contracts::*;
 pub use e2ee::*;
@@ -24,6 +27,7 @@ pub use message::{
     VideoNoteItem, VoiceItem,
 };
 pub use miniapp_contracts::*;
+pub use remote_control_contracts::*;
 pub use semantic_tree::*;
 pub use sync::{
     ChatActionEvent, PtsUpdate, ReactionEvent, ReadHistoryEvent, SyncFilter,
@@ -40,3 +44,6 @@ pub use api::*;
 
 pub mod payments;
 pub use payments::*;
+
+pub mod user_vault;
+pub use user_vault::*;

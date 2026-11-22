@@ -604,6 +604,14 @@ impl CodexTokenManager {
         &self.refresh_token
     }
 
+    pub fn client_id(&self) -> &str {
+        &self.client_id
+    }
+
+    pub fn token_url(&self) -> &str {
+        &self.token_url
+    }
+
     pub fn cached_token(&self) -> Option<CachedVertexToken> {
         self.cache.read().ok().and_then(|c| c.clone())
     }
@@ -1487,6 +1495,633 @@ fn parse_codex_config_summary(raw: &str) -> CodexConfigSummary {
         }
     }
     summary
+}
+
+/// Refreshable Codex / ChatGPT OAuth2 credentials synced from a local machine.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodexOAuthCredentials {
+    pub refresh_token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_url: Option<String>,
+}
+
+impl std::fmt::Debug for CodexOAuthCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CodexOAuthCredentials")
+            .field("refresh_token", &"***")
+            .field("client_id", &self.client_id)
+            .field("token_url", &self.token_url)
+            .finish()
+    }
+}
+
+/// Complete client-discovered local subscription bundle for syncing from desktop client to server.
+/// Unlike `SubscriptionAccount` (which omits `access_token` and redacts headers in JSON for safe GET
+/// responses), this struct is ONLY used on authenticated client->server sync requests and redacts all
+/// secrets in `Debug`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientSubscriptionSyncItem {
+    pub account: SubscriptionAccount,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub access_token: Option<String>,
+    #[serde(default)]
+    pub raw_headers: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vertex_adc: Option<VertexAdcCredentials>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_oauth: Option<CodexOAuthCredentials>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub available_models: Vec<String>,
+}
+
+impl std::fmt::Debug for ClientSubscriptionSyncItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted_headers: BTreeMap<&String, String> = self
+            .raw_headers
+            .iter()
+            .map(|(k, v)| (k, redact_header_value(k, v)))
+            .collect();
+        f.debug_struct("ClientSubscriptionSyncItem")
+            .field("account", &self.account)
+            .field("access_token", &self.access_token.as_ref().map(|_| "***"))
+            .field("raw_headers", &redacted_headers)
+            .field("vertex_adc", &self.vertex_adc.as_ref().map(|_| "***"))
+            .field("codex_oauth", &self.codex_oauth)
+            .field("region_id", &self.region_id)
+            .field("available_models", &self.available_models)
+            .finish()
+    }
+}
+
+/// Returns `true` if `url` targets the local host (`127.0.0.1`, `localhost`, or `[::1]`).
+pub fn is_loopback_server_url(url: &str) -> bool {
+    let trimmed = url.trim().to_ascii_lowercase();
+    let without_scheme = trimmed
+        .strip_prefix("http://")
+        .or_else(|| trimmed.strip_prefix("https://"))
+        .or_else(|| trimmed.strip_prefix("ws://"))
+        .or_else(|| trimmed.strip_prefix("wss://"))
+        .unwrap_or(&trimmed);
+    let authority = without_scheme.split('/').next().unwrap_or("");
+    let host = if let Some(rest) = authority.strip_prefix('[') {
+        rest.split(']').next().unwrap_or("")
+    } else {
+        authority.split(':').next().unwrap_or("")
+    };
+    matches!(host, "127.0.0.1" | "localhost" | "::1" | "0.0.0.0")
+}
+
+fn read_vertex_adc_for_account(acc: &SubscriptionAccount, home: &Path) -> Option<VertexAdcCredentials> {
+    let mut candidates = Vec::new();
+    if !acc.source_path.trim().is_empty() {
+        candidates.push(PathBuf::from(&acc.source_path));
+    }
+    if let Ok(env_p) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
+        if !env_p.trim().is_empty() {
+            candidates.push(PathBuf::from(env_p));
+        }
+    }
+    candidates.push(
+        home.join(".config")
+            .join("gcloud")
+            .join("application_default_credentials.json"),
+    );
+    if let Some(appdata) = std::env::var_os("APPDATA").filter(|v| !v.is_empty()) {
+        candidates.push(
+            PathBuf::from(appdata)
+                .join("gcloud")
+                .join("application_default_credentials.json"),
+        );
+    }
+
+    for cand in candidates {
+        if !cand.is_file() {
+            continue;
+        }
+        if let Ok(raw) = std::fs::read_to_string(&cand) {
+            if let Some(mut creds) = parse_vertex_adc_credentials(&raw) {
+                if creds.quota_project_id.is_none() {
+                    creds.quota_project_id = acc.account_id.clone();
+                }
+                if creds.account.is_none() {
+                    creds.account = acc.email.clone();
+                }
+                return Some(creds);
+            }
+        }
+    }
+    None
+}
+
+fn read_codex_oauth_for_account(
+    acc: &SubscriptionAccount,
+    home: &Path,
+    codex_home_override: Option<&Path>,
+) -> Option<CodexOAuthCredentials> {
+    let login_id_opt = acc.id.strip_prefix("magpie_codex:");
+    let mut mgr_opt = None;
+
+    if !acc.source_path.trim().is_empty() {
+        let p = PathBuf::from(&acc.source_path);
+        if p.is_file() {
+            if let Ok(raw) = std::fs::read_to_string(&p) {
+                mgr_opt = if let Some(login_id) = login_id_opt {
+                    CodexTokenManager::from_logins_json_str(&raw, login_id)
+                        .or_else(|| CodexTokenManager::from_auth_json_str(&raw))
+                } else {
+                    CodexTokenManager::from_auth_json_str(&raw)
+                };
+            }
+        }
+    }
+
+    if mgr_opt.is_none() && login_id_opt.is_none() {
+        let codex_dir = codex_home_override
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".codex"));
+        let auth_path = codex_dir.join("auth.json");
+        if let Ok(raw) = std::fs::read_to_string(&auth_path) {
+            mgr_opt = CodexTokenManager::from_auth_json_str(&raw);
+        }
+    }
+
+    mgr_opt.map(|mgr| CodexOAuthCredentials {
+        refresh_token: mgr.refresh_token().to_string(),
+        client_id: Some(mgr.client_id().to_string()),
+        token_url: Some(mgr.token_url().to_string()),
+    })
+}
+
+fn read_magpie_vertex_location(home: &Path) -> Option<String> {
+    let prov_path = home.join(".config").join("magpie").join("providers.json");
+    let raw = std::fs::read_to_string(&prov_path).ok()?;
+    let val: Value = serde_json::from_str(&raw).ok()?;
+    let arr = val
+        .get("providers")
+        .and_then(Value::as_array)
+        .or_else(|| val.as_array())?;
+    for item in arr {
+        let id = non_empty_str(item.get("id")).unwrap_or_default();
+        let preset = non_empty_str(item.get("preset")).unwrap_or_default();
+        if id == "google-vertex" || preset == "google-vertex" {
+            if let Some(loc) = non_empty_str(item.get("vertex").and_then(|v| v.get("location"))) {
+                return Some(loc);
+            }
+        }
+    }
+    None
+}
+
+fn normalize_sync_display_label(label: &str, kind: SubscriptionKind) -> String {
+    let trimmed = label.trim();
+    if let Some(rest) = trimmed.strip_prefix("Magpie Codex") {
+        return format!("Codex{rest}");
+    }
+    if let Some(rest) = trimmed.strip_prefix("Magpie Gemini") {
+        return format!("Gemini CLI{rest}");
+    }
+    if trimmed == "Google Vertex AI (Magpie)" {
+        return "Google Vertex AI".to_string();
+    }
+    if let Some(stripped) = trimmed.strip_suffix(" (Magpie)") {
+        return stripped.to_string();
+    }
+    if trimmed.is_empty() {
+        return kind.display_name().to_string();
+    }
+    trimmed.to_string()
+}
+
+fn normalize_sync_plan_label(plan: Option<String>, kind: SubscriptionKind) -> Option<String> {
+    match plan.as_deref().map(str::trim) {
+        Some("vertex_magpie") | Some("vertex_adc") => Some("Vertex ADC".to_string()),
+        Some("code_assist") => Some("Code Assist".to_string()),
+        Some(other) if !other.is_empty() => Some(other.to_string()),
+        _ => match kind {
+            SubscriptionKind::GoogleVertex => Some("Vertex ADC".to_string()),
+            _ => None,
+        },
+    }
+}
+
+fn dedup_syncable_items(items: Vec<ClientSubscriptionSyncItem>) -> Vec<ClientSubscriptionSyncItem> {
+    let mut out: Vec<ClientSubscriptionSyncItem> = Vec::with_capacity(items.len());
+
+    for item in items {
+        let duplicate_idx = out.iter().position(|existing| {
+            if existing.account.kind != item.account.kind {
+                return false;
+            }
+            match item.account.kind {
+                SubscriptionKind::GoogleVertex => {
+                    let same_path = !existing.account.source_path.is_empty()
+                        && existing.account.source_path == item.account.source_path;
+                    let same_project = existing.account.account_id.is_some()
+                        && existing.account.account_id == item.account.account_id;
+                    let same_refresh = existing
+                        .vertex_adc
+                        .as_ref()
+                        .zip(item.vertex_adc.as_ref())
+                        .is_some_and(|(a, b)| a.refresh_token == b.refresh_token);
+                    same_path || same_project || same_refresh
+                }
+                SubscriptionKind::CodexChatGpt => {
+                    let same_email = existing
+                        .account
+                        .email
+                        .as_deref()
+                        .zip(item.account.email.as_deref())
+                        .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b));
+                    let same_acct = existing.account.account_id.is_some()
+                        && existing.account.account_id == item.account.account_id;
+                    (same_email && same_acct)
+                        || (same_email
+                            && (existing.account.account_id.is_none()
+                                || item.account.account_id.is_none()))
+                }
+                SubscriptionKind::GeminiCodeAssist => existing
+                    .account
+                    .email
+                    .as_deref()
+                    .zip(item.account.email.as_deref())
+                    .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b)),
+                _ => existing.account.id == item.account.id,
+            }
+        });
+
+        if let Some(idx) = duplicate_idx {
+            let existing = &mut out[idx];
+            if existing.region_id.is_none() && item.region_id.is_some() {
+                existing.region_id = item.region_id;
+            }
+            if existing.vertex_adc.is_none() && item.vertex_adc.is_some() {
+                existing.vertex_adc = item.vertex_adc;
+            }
+            if existing.codex_oauth.is_none() && item.codex_oauth.is_some() {
+                existing.codex_oauth = item.codex_oauth;
+            }
+            if existing.access_token.is_none() && item.access_token.is_some() {
+                existing.access_token = item.access_token;
+            }
+            if existing.account.email.is_none() && item.account.email.is_some() {
+                existing.account.email = item.account.email;
+            }
+            if existing.account.account_id.is_none() && item.account.account_id.is_some() {
+                existing.account.account_id = item.account.account_id;
+            }
+            // Prefer canonical native ID/label over magpie_provider:* wrapper when merging
+            if existing.account.id.starts_with("magpie_provider:")
+                && !item.account.id.starts_with("magpie_provider:")
+            {
+                existing.account.id = item.account.id;
+                existing.account.label = item.account.label;
+            }
+        } else {
+            out.push(item);
+        }
+    }
+
+    out
+}
+
+fn push_unique_model(out: &mut Vec<String>, raw: &str) {
+    let m = raw.trim();
+    if !m.is_empty() && !out.iter().any(|x| x == m) {
+        out.push(m.to_string());
+    }
+}
+
+fn read_local_codex_cached_models(home: &Path, codex_home_override: Option<&Path>) -> Vec<String> {
+    let codex_dir = codex_home_override
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"));
+    let mut out = Vec::new();
+
+    if let Ok(raw) = std::fs::read_to_string(codex_dir.join("models_cache.json")) {
+        if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+            if let Some(arr) = val.get("models").and_then(Value::as_array) {
+                for m in arr {
+                    let hidden = m
+                        .get("visibility")
+                        .and_then(Value::as_str)
+                        .is_some_and(|v| v.eq_ignore_ascii_case("hide"));
+                    if hidden {
+                        continue;
+                    }
+                    if let Some(slug) = non_empty_str(m.get("slug")).or_else(|| non_empty_str(m.get("id"))) {
+                        if !slug.contains('/') && slug != "gpt-reserve" {
+                            push_unique_model(&mut out, &slug);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(raw) = std::fs::read_to_string(codex_dir.join("magpie-desktop-models.json")) {
+        if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+            if let Some(arr) = val.get("models").and_then(Value::as_array) {
+                for m in arr {
+                    if let Some(slug) = non_empty_str(m.get("slug")).or_else(|| non_empty_str(m.get("id"))) {
+                        if !slug.contains('/')
+                            && slug != "gpt-reserve"
+                            && (slug.starts_with("gpt-")
+                                || slug.starts_with("codex")
+                                || slug.starts_with("o1")
+                                || slug.starts_with("o3")
+                                || slug.starts_with("o4"))
+                        {
+                            push_unique_model(&mut out, &slug);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
+fn read_local_vertex_and_gemini_cached_models(
+    home: &Path,
+    codex_home_override: Option<&Path>,
+) -> (Vec<String>, Vec<String>) {
+    let codex_dir = codex_home_override
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".codex"));
+    let mut vertex_models = Vec::new();
+    let mut gemini_models = Vec::new();
+
+    if let Ok(raw) = std::fs::read_to_string(codex_dir.join("magpie-desktop-models.json")) {
+        if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+            if let Some(arr) = val.get("models").and_then(Value::as_array) {
+                for m in arr {
+                    if let Some(slug) = non_empty_str(m.get("slug")).or_else(|| non_empty_str(m.get("id"))) {
+                        if let Some(rest) = slug.strip_prefix("google-vertex/") {
+                            // Keep direct Google publisher Gemini models that work on
+                            // `/publishers/google/models/{model}:generateContent`
+                            if rest.starts_with("gemini-") && !rest.contains('/') {
+                                push_unique_model(&mut vertex_models, rest);
+                            }
+                        } else if let Some(rest) = slug.strip_prefix("auto/") {
+                            if rest.starts_with("gemini-") && !rest.contains('/') {
+                                push_unique_model(&mut gemini_models, rest);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let prov_path = home.join(".config").join("magpie").join("providers.json");
+    if let Ok(raw) = std::fs::read_to_string(&prov_path) {
+        if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+            if let Some(arr) = val
+                .get("providers")
+                .and_then(Value::as_array)
+                .or_else(|| val.as_array())
+            {
+                for item in arr {
+                    let id = non_empty_str(item.get("id")).unwrap_or_default();
+                    let preset = non_empty_str(item.get("preset")).unwrap_or_default();
+                    if let Some(models) = item.get("models").and_then(Value::as_array) {
+                        for m in models {
+                            if let Some(name) = m.as_str() {
+                                if id == "google-vertex" || preset == "google-vertex" {
+                                    if name.starts_with("gemini-") && !name.contains('/') {
+                                        push_unique_model(&mut vertex_models, name);
+                                    }
+                                } else if id == "gemini" || preset == "google" {
+                                    push_unique_model(&mut gemini_models, name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (vertex_models, gemini_models)
+}
+
+/// Returns the default built-in model catalog for a given `SubscriptionKind`.
+pub fn default_models_for_subscription_kind(kind: SubscriptionKind) -> &'static [&'static str] {
+    match kind {
+        SubscriptionKind::GoogleVertex => &[
+            "gemini-3.8-flash",
+            "gemini-3.7-flash",
+            "gemini-3.6-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite",
+            "gemini-3-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+        ],
+        SubscriptionKind::CodexChatGpt => &[
+            "gpt-6.2-sol",
+            "gpt-6.1-sol",
+            "gpt-6.1-terra",
+            "gpt-6-astra",
+            "gpt-6-sol",
+            "gpt-6-luna",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "codex-mini-latest",
+            "gpt-4o",
+            "o3-mini",
+        ],
+        SubscriptionKind::GeminiCodeAssist => &[
+            "gemini-3.8-flash",
+            "gemini-3.5-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-pro-preview",
+            "gemini-3.1-flash-lite",
+            "gemini-3-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+        ],
+        SubscriptionKind::ClaudeCode => &[
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5",
+            "claude-sonnet-4-20250514",
+            "claude-3-7-sonnet-20250219",
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+        ],
+        SubscriptionKind::GitHubCopilot => &[
+            "gpt-4o",
+            "gpt-4.1",
+            "claude-sonnet-4-20250514",
+            "gemini-2.5-pro",
+            "o3-mini",
+        ],
+        SubscriptionKind::Antigravity => &[
+            "gemini-3.8-flash",
+            "gemini-3.1-pro-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+        ],
+        SubscriptionKind::GrokSuperGrok => &["grok-4", "grok-3", "grok-3-mini"],
+    }
+}
+
+fn build_available_models(
+    kind: SubscriptionKind,
+    default_model: Option<&str>,
+    discovered_extra: &[String],
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for m in discovered_extra {
+        push_unique_model(&mut out, m);
+    }
+    for m in default_models_for_subscription_kind(kind) {
+        push_unique_model(&mut out, m);
+    }
+    if let Some(dm) = default_model {
+        let trimmed = dm.trim();
+        if !trimmed.is_empty() && !trimmed.starts_with("codex/") && !trimmed.starts_with("auto/") {
+            push_unique_model(&mut out, trimmed);
+        }
+    }
+    out
+}
+
+/// Discovers local subscriptions under `home` and enriches them with unredacted tokens and
+/// refreshable OAuth credentials suitable for syncing from the desktop client to the backend server.
+///
+/// When `target_is_remote` is `true`, loopback proxy URLs (e.g. `http://127.0.0.1:3425/...` written
+/// by Magpie into `~/.codex/config.toml`) and Magpie-specific model prefixes (`codex/...`,
+/// `auto/...`) are normalized to direct upstream endpoints so a remote cloud server can invoke the
+/// upstream AI APIs directly.
+pub fn discover_syncable_subscriptions_in_home(
+    home: &Path,
+    codex_home_override: Option<&Path>,
+    target_is_remote: bool,
+) -> Vec<ClientSubscriptionSyncItem> {
+    let reg = discover_subscriptions_in_home(home, codex_home_override);
+    let vertex_location = read_magpie_vertex_location(home);
+    let cached_codex_models = read_local_codex_cached_models(home, codex_home_override);
+    let (cached_vertex_models, cached_gemini_models) =
+        read_local_vertex_and_gemini_cached_models(home, codex_home_override);
+    let mut items = Vec::with_capacity(reg.accounts.len());
+
+    for mut acc in reg.accounts {
+        let access_token = acc.access_token.clone();
+        let mut raw_headers = acc.headers.clone();
+        let mut vertex_adc = None;
+        let mut codex_oauth = None;
+        let mut region_id = None;
+
+        acc.label = normalize_sync_display_label(&acc.label, acc.kind);
+        acc.plan = normalize_sync_plan_label(acc.plan.take(), acc.kind);
+
+        match acc.kind {
+            SubscriptionKind::GoogleVertex => {
+                vertex_adc = read_vertex_adc_for_account(&acc, home);
+                region_id = vertex_location.clone().or_else(|| Some("global".to_string()));
+                if let Some(ref adc) = vertex_adc {
+                    if acc.account_id.is_none() {
+                        acc.account_id = adc.quota_project_id.clone();
+                    }
+                    if let Some(ref proj) = adc.quota_project_id {
+                        raw_headers
+                            .entry("x-goog-user-project".to_string())
+                            .or_insert_with(|| proj.clone());
+                    }
+                }
+                // Keep Vertex title concise so it doesn't duplicate the project ID shown on the subtitle line
+                if let Some(ref em) = acc.email {
+                    acc.label = format!("Google Vertex AI ({em})");
+                }
+            }
+            SubscriptionKind::CodexChatGpt => {
+                codex_oauth = read_codex_oauth_for_account(&acc, home, codex_home_override);
+                if target_is_remote {
+                    let is_loopback_base = acc
+                        .base_url
+                        .as_deref()
+                        .is_some_and(is_loopback_server_url);
+                    if is_loopback_base {
+                        acc.base_url = Some("https://chatgpt.com/backend-api/codex".to_string());
+                        raw_headers.retain(|k, _| {
+                            !k.eq_ignore_ascii_case("x-openai-actor-authorization")
+                        });
+                        acc.headers.retain(|k, _| {
+                            !k.eq_ignore_ascii_case("x-openai-actor-authorization")
+                        });
+                        if let Some(ref model) = acc.default_model {
+                            let m = model.trim();
+                            if m.starts_with("codex/") || m.starts_with("auto/") {
+                                acc.default_model = Some("codex-mini-latest".to_string());
+                            }
+                        }
+                    }
+                    // If the account only existed because of a local Magpie proxy without any token
+                    // or refresh token, it cannot execute from a remote server.
+                    if access_token.is_none() && codex_oauth.is_none() {
+                        acc.active = false;
+                    }
+                }
+            }
+            SubscriptionKind::ClaudeCode => {
+                if target_is_remote
+                    && acc
+                        .base_url
+                        .as_deref()
+                        .is_some_and(is_loopback_server_url)
+                {
+                    acc.base_url = Some("https://api.anthropic.com/v1".to_string());
+                }
+            }
+            _ => {}
+        }
+
+        // Skip entries that have no usable credential at all when syncing to a remote server
+        if target_is_remote
+            && access_token.is_none()
+            && vertex_adc.is_none()
+            && codex_oauth.is_none()
+        {
+            continue;
+        }
+
+        let extra_models: &[String] = match acc.kind {
+            SubscriptionKind::GoogleVertex => &cached_vertex_models,
+            SubscriptionKind::CodexChatGpt => &cached_codex_models,
+            SubscriptionKind::GeminiCodeAssist => &cached_gemini_models,
+            _ => &[],
+        };
+        let available_models =
+            build_available_models(acc.kind, acc.default_model.as_deref(), extra_models);
+
+        items.push(ClientSubscriptionSyncItem {
+            account: acc,
+            access_token,
+            raw_headers,
+            vertex_adc,
+            codex_oauth,
+            region_id,
+            available_models,
+        });
+    }
+
+    dedup_syncable_items(items)
 }
 
 #[cfg(test)]

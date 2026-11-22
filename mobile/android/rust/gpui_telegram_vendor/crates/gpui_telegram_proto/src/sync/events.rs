@@ -161,4 +161,26 @@ pub enum UpdateEvent {
         hop: u32,
         max_hops: u32,
     },
+    BotActivityChanged {
+        chat_id: ChatId,
+        bot_user_id: UserId,
+        state: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+    MiniAppWebMcpCommand(crate::miniapp_contracts::MiniAppWebMcpCommand),
+    MiniAppControlStatus {
+        bot_username: String,
+        short_name: String,
+        chat_id: ChatId,
+        bot_user_id: UserId,
+        #[serde(default)]
+        app_title: String,
+        mode: crate::miniapp_contracts::MiniAppControlMode,
+        #[serde(default)]
+        status_text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active_tool: Option<String>,
+    },
+    CodingHostCommand(crate::coding_agent_contracts::CodingHostCommand),
 }

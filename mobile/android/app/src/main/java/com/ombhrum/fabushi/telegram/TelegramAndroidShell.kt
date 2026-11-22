@@ -176,6 +176,35 @@ fun TelegramAndroidShell(
                             )
                         }
 
+                        // Floating Live Mini App PiP Restoration Banner (Desktop v1.4/v1.6 in-place restore parity)
+                        if (state.miniAppPip.active && state.miniAppPip.minimized && state.subScreen != TelegramSubScreen.GLOBAL_DHARMA) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1A2233))
+                                    .clickable { telegramViewModel.restoreMiniAppFromPip() }
+                                    .padding(horizontal = 14.dp, vertical = 8.dp)
+                                    .testTag("miniapp-live-pip-banner"),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    text = "🪷 ${state.miniAppPip.appTitle} 后台运行中 · ${state.miniAppPip.statusText.ifBlank { "点击原地恢复（不重置状态）" }}",
+                                    color = Color(0xFFFFE082),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = { telegramViewModel.restoreMiniAppFromPip() }) {
+                                    Text("恢复", color = Color(0xFF64B5F6), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                                TextButton(onClick = { telegramViewModel.dismissMiniAppPip() }) {
+                                    Text("关闭", color = Color(0xFFFF8A80), fontSize = 12.sp)
+                                }
+                            }
+                        }
+
                         Box(modifier = Modifier.weight(1f)) {
                             when (state.subScreen) {
                                 TelegramSubScreen.HOME -> {
@@ -288,7 +317,10 @@ fun TelegramAndroidShell(
                                 TelegramSubScreen.BOTFATHER -> {
                                     BotFatherWorkspaceScreen(
                                         existingBots = state.chats.filter { it.isBot },
+                                        codingBots = state.codingAgentBots,
                                         onCreateBot = telegramViewModel::createCompanionBot,
+                                        onCreateCodingBot = telegramViewModel::createCodingAgentBot,
+                                        onCycleCodingPermission = telegramViewModel::cycleCodingAgentPermission,
                                         onOpenBotChat = { id -> telegramViewModel.openChat(id) },
                                         onBack = { telegramViewModel.navigateTo(TelegramSubScreen.HOME) },
                                     )
@@ -303,6 +335,7 @@ fun TelegramAndroidShell(
                                         onTapWoodenFish = telegramViewModel::tapWoodenFish,
                                         onCompletePractice = telegramViewModel::completePracticeMinutes,
                                         onAskDharmaAi = telegramViewModel::askDharmaAi,
+                                        onMinimizeToPip = telegramViewModel::minimizeGlobalDharmaToPip,
                                         onBack = { telegramViewModel.navigateTo(TelegramSubScreen.HOME) },
                                     )
                                 }
@@ -344,6 +377,8 @@ fun TelegramAndroidShell(
                                         onConfigureProvider = telegramViewModel::configureMagpieProvider,
                                         onImportEnvOrUri = telegramViewModel::importMagpieEnvOrUri,
                                         onTestPiiMask = telegramViewModel::testMagpiePiiMask,
+                                        onSyncModelsDev = telegramViewModel::syncModelsDevCatalog,
+                                        onScanLocalSubscriptions = telegramViewModel::scanLocalSubscriptions,
                                         onBack = { telegramViewModel.navigateTo(TelegramSubScreen.HOME) },
                                     )
                                 }
@@ -356,6 +391,11 @@ fun TelegramAndroidShell(
                                         onEmergencyTakeover = telegramViewModel::emergencyHumanTakeover,
                                         onExecuteOp = telegramViewModel::executeComputerOp,
                                         onAdvanceTaskFsm = telegramViewModel::advanceGlobalTaskFsm,
+                                        onToggleRemoteAssist = telegramViewModel::toggleRemoteAssist,
+                                        onUpdateAssistCode = telegramViewModel::updateRemoteAssistCode,
+                                        onUpdateStreamSettings = telegramViewModel::updateRemoteStreamSettings,
+                                        onIssueMcpGrant = telegramViewModel::issueRemoteMcpGrant,
+                                        onRevokeMcpGrant = telegramViewModel::revokeRemoteMcpGrant,
                                         onOpenMikaWorkspace = { telegramViewModel.navigateTo(TelegramSubScreen.MIKA_WORKSPACE) },
                                         onBack = { telegramViewModel.navigateTo(TelegramSubScreen.HOME) },
                                     )
@@ -398,6 +438,8 @@ fun TelegramAndroidShell(
                                         onOpenTonWallet = { telegramViewModel.navigateTo(TelegramSubScreen.TON_WALLET) },
                                         onCheckForUpdates = onCheckForUpdates,
                                         onDownloadAndInstallUpdate = onDownloadAndInstallUpdate,
+                                        onInitSplitKeyVault = telegramViewModel::initSplitKeyVault,
+                                        onRequestDeviceVaultSync = telegramViewModel::requestDeviceVaultSync,
                                         onBackToHome = { telegramViewModel.navigateTo(TelegramSubScreen.HOME) },
                                     )
                                 }

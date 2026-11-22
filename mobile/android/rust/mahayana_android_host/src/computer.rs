@@ -364,10 +364,25 @@ pub fn handle_computer_rpc(conn: &Connection, submethod: &str, params: &Value) -
                 .get("generation")
                 .and_then(Value::as_i64)
                 .ok_or_else(|| "executeOp requires lease 'generation'".to_string())?;
-            let op = params
-                .get("op")
-                .and_then(Value::as_str)
-                .unwrap_or("tap");
+            let (op_label, parsed_op): (String, Option<gpui_telegram_proto::computer_contracts::RemoteComputerOp>) =
+                if let Some(op_obj) = params.get("op").filter(|v| v.is_object()) {
+                    let parsed: gpui_telegram_proto::computer_contracts::RemoteComputerOp =
+                        serde_json::from_value(op_obj.clone())
+                            .map_err(|e| format!("Invalid RemoteComputerOp payload: {e}"))?;
+                    let tag = op_obj
+                        .get("op")
+                        .and_then(Value::as_str)
+                        .unwrap_or("structured")
+                        .to_string();
+                    (tag, Some(parsed))
+                } else {
+                    let s = params
+                        .get("op")
+                        .and_then(Value::as_str)
+                        .unwrap_or("tap")
+                        .to_string();
+                    (s, None)
+                };
 
             let (cur_gen, cur_exp): (i64, i64) = conn
                 .query_row(
@@ -388,10 +403,13 @@ pub fn handle_computer_rpc(conn: &Connection, submethod: &str, params: &Value) -
                 return Err("CUA lease has expired".into());
             }
 
+            let read_only = parsed_op.as_ref().map(|p| p.is_read_only()).unwrap_or(false);
             Ok(json!({
                 "nodeId": node_id,
                 "generation": cur_gen,
-                "op": op,
+                "op": op_label,
+                "readOnly": read_only,
+                "structuredOp": parsed_op,
                 "executed": true,
                 "timestampMs": now,
             }))
@@ -707,5 +725,422 @@ pub fn handle_mika_rpc(conn: &Connection, submethod: &str, params: &Value) -> Re
         }
 
         other => Err(format!("Unsupported mika method: {other}")),
+    }
+}
+
+fn ensure_remote_schema(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS remote_assist_config (
+            singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+            assist_id TEXT NOT NULL,
+            allow_assist INTEGER NOT NULL DEFAULT 1,
+            code_mode TEXT NOT NULL DEFAULT 'temporary',
+            current_code TEXT NOT NULL,
+            expires_at_ms INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS remote_stream_settings (
+            singleton_id INTEGER PRIMARY KEY CHECK (singleton_id = 1),
+            settings_json TEXT NOT NULL,
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS remote_sessions (
+            session_id TEXT PRIMARY KEY,
+            dto_json TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            updated_at_ms INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS remote_mcp_oauth_grants (
+            family_id TEXT PRIMARY KEY,
+            client_id TEXT NOT NULL,
+            client_name TEXT NOT NULL,
+            scopes_json TEXT NOT NULL,
+            allowed_nodes_json TEXT NOT NULL,
+            created_at_ms INTEGER NOT NULL,
+            last_used_ms INTEGER,
+            expires_at_ms INTEGER NOT NULL
+        );",
+    )
+    .map_err(|e| format!("Failed initializing remote_control schema: {e}"))?;
+
+    let exists: i64 = conn
+        .query_row("SELECT COUNT(*) FROM remote_assist_config", [], |r| r.get(0))
+        .unwrap_or(0);
+    if exists == 0 {
+        use rand::RngCore;
+        let mut buf = [0u8; 8];
+        rand::rngs::OsRng.fill_bytes(&mut buf);
+        let id_num = 100_000_000 + (u64::from_le_bytes(buf) % 900_000_000);
+        let code_num = 100_000 + ((u64::from_le_bytes(buf) >> 17) % 900_000);
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "INSERT INTO remote_assist_config (singleton_id, assist_id, allow_assist, code_mode, current_code, expires_at_ms)
+             VALUES (1, ?1, 1, 'temporary', ?2, ?3)",
+            params![format!("{id_num:09}"), format!("{code_num:06}"), now + 3_600_000],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// UU-Remote parity & Official OAuth 2.1 Remote MCP RPCs (`remote.*`)
+/// aligned with `bhrumom/gpui-telegram@f97f9f6` (`v1.5.0`–`v1.6.2`).
+pub fn handle_remote_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
+    init_schema(conn)?;
+    ensure_remote_schema(conn)?;
+    let now = chrono::Utc::now().timestamp_millis();
+
+    match submethod {
+        "getAssistConfig" => {
+            let (assist_id, allow_assist, code_mode, current_code, expires_at_ms): (
+                String,
+                i64,
+                String,
+                String,
+                Option<i64>,
+            ) = conn
+                .query_row(
+                    "SELECT assist_id, allow_assist, code_mode, current_code, expires_at_ms
+                     FROM remote_assist_config WHERE singleton_id = 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                )
+                .map_err(|e| e.to_string())?;
+            let cfg = gpui_telegram_proto::remote_control_contracts::RemoteAssistConfigDto {
+                assist_id,
+                allow_assist: allow_assist != 0,
+                code_mode: if code_mode == "custom" {
+                    gpui_telegram_proto::remote_control_contracts::AssistCodeMode::Custom
+                } else {
+                    gpui_telegram_proto::remote_control_contracts::AssistCodeMode::Temporary
+                },
+                current_code: Some(current_code),
+                expires_at_ms,
+            };
+            Ok(serde_json::to_value(&cfg).map_err(|e| e.to_string())?)
+        }
+
+        "setAssistAllow" => {
+            let allow = params
+                .get("allowAssist")
+                .or_else(|| params.get("allow_assist"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            conn.execute(
+                "UPDATE remote_assist_config SET allow_assist = ?1 WHERE singleton_id = 1",
+                params![if allow { 1 } else { 0 }],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({ "ok": true, "allowAssist": allow }))
+        }
+
+        "setAssistCode" => {
+            let raw_code = params
+                .get("code")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("");
+            if raw_code.len() < 6 || raw_code.len() > 24 {
+                return Err("Remote assist code must be 6..24 characters".to_string());
+            }
+            let mode = params
+                .get("codeMode")
+                .and_then(Value::as_str)
+                .unwrap_or("custom");
+            let expires = if mode == "temporary" {
+                Some(now + 3_600_000)
+            } else {
+                None
+            };
+            conn.execute(
+                "UPDATE remote_assist_config SET code_mode = ?1, current_code = ?2, expires_at_ms = ?3 WHERE singleton_id = 1",
+                params![mode, raw_code, expires],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "ok": true,
+                "codeMode": mode,
+                "currentCode": raw_code,
+                "expiresAtMs": expires,
+            }))
+        }
+
+        "startAssist" => {
+            let req_id = params
+                .get("assistId")
+                .or_else(|| params.get("assist_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("");
+            let req_code = params
+                .get("accessCode")
+                .or_else(|| params.get("access_code"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .unwrap_or("");
+
+            let (stored_id, allow, stored_code, expires_at): (String, i64, String, Option<i64>) =
+                conn.query_row(
+                    "SELECT assist_id, allow_assist, current_code, expires_at_ms
+                     FROM remote_assist_config WHERE singleton_id = 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .map_err(|e| e.to_string())?;
+
+            if allow == 0 {
+                return Err("Remote Assist is disabled on this device".to_string());
+            }
+            if req_id != stored_id {
+                return Err(format!("Unknown 9-digit Remote Assist ID '{req_id}'"));
+            }
+            if req_code != stored_code {
+                return Err("Invalid Remote Assist verification code".to_string());
+            }
+            if let Some(exp) = expires_at {
+                if exp < now {
+                    return Err("Remote Assist temporary code has expired".to_string());
+                }
+            }
+
+            let session_id = format!("rassist_{}", uuid::Uuid::new_v4().simple());
+            let requester_name = params
+                .get("requesterName")
+                .and_then(Value::as_str)
+                .unwrap_or("Remote Helper");
+            let requester_platform = params
+                .get("requesterPlatform")
+                .and_then(Value::as_str)
+                .unwrap_or("desktop");
+            let mode_raw = params
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or("desktop");
+            let mode: gpui_telegram_proto::remote_control_contracts::RemoteControlMode =
+                serde_json::from_value(Value::String(mode_raw.to_string())).unwrap_or_default();
+
+            let session = gpui_telegram_proto::remote_control_contracts::RemoteSessionDto {
+                session_id: session_id.clone(),
+                controller_kind: gpui_telegram_proto::remote_control_contracts::RemoteControllerKind::AssistGuest,
+                controller_name: requester_name.to_string(),
+                controller_platform: requester_platform.to_string(),
+                controller_id: params
+                    .get("requesterDeviceId")
+                    .and_then(Value::as_str)
+                    .unwrap_or("guest_device")
+                    .to_string(),
+                target_node_id: "local-android-mika".to_string(),
+                target_device_id: stored_id,
+                mode,
+                started_at_ms: now,
+                last_activity_ms: now,
+                active_tool: None,
+                relay_mode: gpui_telegram_proto::tailnet_contracts::TailnetRelayMode::DirectUdp,
+                rtt_ms: Some(18),
+                fps: Some(60),
+            };
+            conn.execute(
+                "INSERT INTO remote_sessions (session_id, dto_json, active, updated_at_ms)
+                 VALUES (?1, ?2, 1, ?3)",
+                params![session_id, serde_json::to_string(&session).unwrap(), now],
+            )
+            .map_err(|e| e.to_string())?;
+
+            Ok(json!({
+                "sessionId": session_id,
+                "targetNodeId": "local-android-mika",
+                "tempRelayToken": format!("relay_{}", uuid::Uuid::new_v4().simple()),
+                "requiresHostConfirm": true,
+                "expiresAtMs": now + 1_800_000,
+                "session": session,
+            }))
+        }
+
+        "listSessions" => {
+            let mut stmt = conn
+                .prepare("SELECT dto_json FROM remote_sessions WHERE active = 1 ORDER BY updated_at_ms DESC")
+                .map_err(|e| e.to_string())?;
+            let sessions = stmt
+                .query_map([], |r| {
+                    let raw: String = r.get(0)?;
+                    Ok(serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| json!({})))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "sessions": sessions }))
+        }
+
+        "disconnectSession" => {
+            let session_id = params
+                .get("sessionId")
+                .or_else(|| params.get("session_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "remote.disconnectSession requires 'sessionId'".to_string())?;
+            let updated = conn
+                .execute(
+                    "UPDATE remote_sessions SET active = 0, updated_at_ms = ?1 WHERE session_id = ?2",
+                    params![now, session_id],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "sessionId": session_id, "disconnected": updated > 0 }))
+        }
+
+        "getStreamSettings" => {
+            let raw: Option<String> = conn
+                .query_row(
+                    "SELECT settings_json FROM remote_stream_settings WHERE singleton_id = 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            let dto: gpui_telegram_proto::remote_control_contracts::RemoteStreamSettingsDto = raw
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            Ok(serde_json::to_value(&dto).map_err(|e| e.to_string())?)
+        }
+
+        "updateStreamSettings" => {
+            let settings_val = params
+                .get("settings")
+                .cloned()
+                .unwrap_or_else(|| params.clone());
+            let dto: gpui_telegram_proto::remote_control_contracts::RemoteStreamSettingsDto =
+                serde_json::from_value(settings_val)
+                    .map_err(|e| format!("Invalid RemoteStreamSettingsDto: {e}"))?;
+            let serialized = serde_json::to_string(&dto).map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT OR REPLACE INTO remote_stream_settings (singleton_id, settings_json, updated_at_ms)
+                 VALUES (1, ?1, ?2)",
+                params![serialized, now],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(serde_json::to_value(&dto).map_err(|e| e.to_string())?)
+        }
+
+        "issueMcpGrant" => {
+            let client_name = params
+                .get("clientName")
+                .and_then(Value::as_str)
+                .unwrap_or("External AI MCP Client")
+                .trim();
+            let client_id = params
+                .get("clientId")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .map(String::from)
+                .unwrap_or_else(|| format!("mcp_client_{}", uuid::Uuid::new_v4().simple()));
+            let family_id = format!("fam_{}", uuid::Uuid::new_v4().simple());
+            let scopes: Vec<String> = params
+                .get("scopes")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(Value::as_str)
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_else(|| vec!["remote.read".into(), "remote.control".into(), "mcp.tools".into()]);
+            let allowed_node_ids: Vec<String> = params
+                .get("allowedNodeIds")
+                .and_then(Value::as_array)
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(Value::as_str)
+                        .map(String::from)
+                        .collect()
+                })
+                .unwrap_or_else(|| vec!["local-android-mika".into()]);
+            let ttl_ms = params
+                .get("ttlMs")
+                .and_then(Value::as_i64)
+                .unwrap_or(7 * 24 * 3_600_000)
+                .clamp(60_000, 90 * 24 * 3_600_000);
+            let expires_at_ms = now + ttl_ms;
+
+            conn.execute(
+                "INSERT INTO remote_mcp_oauth_grants
+                 (family_id, client_id, client_name, scopes_json, allowed_nodes_json, created_at_ms, last_used_ms, expires_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
+                params![
+                    family_id,
+                    client_id,
+                    client_name,
+                    serde_json::to_string(&scopes).unwrap(),
+                    serde_json::to_string(&allowed_node_ids).unwrap(),
+                    now,
+                    expires_at_ms,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+
+            let grant = gpui_telegram_proto::remote_control_contracts::McpOAuthGrantSummaryDto {
+                family_id,
+                client_id,
+                client_name: client_name.to_string(),
+                scopes,
+                allowed_node_ids,
+                created_at_ms: now,
+                last_used_ms: None,
+                expires_at_ms,
+            };
+            Ok(serde_json::to_value(&grant).map_err(|e| e.to_string())?)
+        }
+
+        "listMcpGrants" => {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT family_id, client_id, client_name, scopes_json, allowed_nodes_json, created_at_ms, last_used_ms, expires_at_ms
+                     FROM remote_mcp_oauth_grants ORDER BY created_at_ms DESC",
+                )
+                .map_err(|e| e.to_string())?;
+            let grants = stmt
+                .query_map([], |r| {
+                    let scopes_raw: String = r.get(3)?;
+                    let nodes_raw: String = r.get(4)?;
+                    Ok(gpui_telegram_proto::remote_control_contracts::McpOAuthGrantSummaryDto {
+                        family_id: r.get(0)?,
+                        client_id: r.get(1)?,
+                        client_name: r.get(2)?,
+                        scopes: serde_json::from_str(&scopes_raw).unwrap_or_default(),
+                        allowed_node_ids: serde_json::from_str(&nodes_raw).unwrap_or_default(),
+                        created_at_ms: r.get(5)?,
+                        last_used_ms: r.get(6)?,
+                        expires_at_ms: r.get(7)?,
+                    })
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "grants": grants }))
+        }
+
+        "revokeMcpGrant" => {
+            let family_id = params
+                .get("familyId")
+                .or_else(|| params.get("family_id"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "remote.revokeMcpGrant requires 'familyId'".to_string())?;
+            let deleted = conn
+                .execute(
+                    "DELETE FROM remote_mcp_oauth_grants WHERE family_id = ?1",
+                    params![family_id],
+                )
+                .map_err(|e| e.to_string())?;
+            Ok(json!({ "familyId": family_id, "revoked": deleted > 0 }))
+        }
+
+        "actionBusCategories" => {
+            let categories: Vec<&str> = gpui_telegram_core::action_bus::ActionCategory::ALL
+                .iter()
+                .map(|c| c.as_str())
+                .collect();
+            Ok(json!({
+                "total": categories.len(),
+                "categories": categories,
+            }))
+        }
+
+        other => Err(format!("Unsupported remote method: {other}")),
     }
 }

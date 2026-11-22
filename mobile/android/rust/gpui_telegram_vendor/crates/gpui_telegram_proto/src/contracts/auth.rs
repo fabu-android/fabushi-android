@@ -9,6 +9,10 @@ pub struct StatusResponse {
     pub capabilities: Vec<String>,
 }
 
+fn default_auth_version_one() -> i32 {
+    1
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthResponse {
     pub user_id: u64,
@@ -25,6 +29,8 @@ pub struct AuthResponse {
     pub created_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires_at: Option<String>,
+    #[serde(default = "default_auth_version_one")]
+    pub auth_version: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

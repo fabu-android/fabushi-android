@@ -52,7 +52,46 @@ class MahayanaHostJniIntegrationTest {
                 )
                 assertEquals("completed", oauthCompleted.getString("status"))
 
-                executeFeature(host, "chat.send", "android-chat", JSONObject().put("text", "请用一句话说明自动化测试状态"))
+                val sseServer = java.net.ServerSocket(0)
+                val sseThread = Thread {
+                    runCatching {
+                        sseServer.accept().use { sock ->
+                            val input = sock.getInputStream().bufferedReader()
+                            while (true) {
+                                val line = input.readLine() ?: break
+                                if (line.isEmpty()) break
+                            }
+                            val body =
+                                "data: {\"choices\":[{\"delta\":{\"content\":\"自动化测试状态正常。\"}}]}\n\n" +
+                                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n" +
+                                    "data: [DONE]\n\n"
+                            val resp =
+                                "HTTP/1.1 200 OK\r\n" +
+                                    "Content-Type: text/event-stream\r\n" +
+                                    "Content-Length: ${body.toByteArray().size}\r\n" +
+                                    "Connection: close\r\n\r\n" +
+                                    body
+                            sock.getOutputStream().write(resp.toByteArray())
+                            sock.getOutputStream().flush()
+                        }
+                    }
+                }.apply { isDaemon = true; start() }
+                try {
+                    host.request(
+                        "magpie.upsertProvider",
+                        JSONObject()
+                            .put("id", "jni-loopback")
+                            .put("presetId", "openai")
+                            .put("baseUrl", "http://127.0.0.1:${sseServer.localPort}/v1")
+                            .put("apiKey", "sk-jni-loopback-test")
+                            .put("defaultModel", "gpt-4o")
+                            .put("priority", 1),
+                    )
+                    executeFeature(host, "chat.send", "android-chat", JSONObject().put("text", "请用一句话说明自动化测试状态"))
+                } finally {
+                    runCatching { sseServer.close() }
+                    runCatching { sseThread.join(1000) }
+                }
                 executeFeature(host, "marketplace.install", "android-install", JSONObject().put("miniAppId", "global-dharma"))
                 executeFeature(host, "miniapp.open", "android-open", JSONObject().put("miniAppId", "global-dharma"))
                 executeFeature(
