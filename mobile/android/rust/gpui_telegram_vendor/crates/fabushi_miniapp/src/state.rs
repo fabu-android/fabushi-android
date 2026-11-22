@@ -412,6 +412,10 @@ pub enum HttpActionEffect {
         target_countries: Vec<String>,
         bytes_sent: u64,
         beam_count: u32,
+        notify_receipt: bool,
+        receipt_only: bool,
+        session_bytes: Option<u64>,
+        session_beams: Option<u32>,
     },
     SavePracticeSession {
         sutra: String,
@@ -686,6 +690,20 @@ pub struct FabushiClientState {
     transfer_bytes_per_hop: u64,
     loopback_accum_ms: f64,
     field_accum_ms: f64,
+    #[serde(skip)]
+    session_content_title: String,
+    #[serde(skip)]
+    session_content_kind: String,
+    #[serde(skip)]
+    session_target_countries: Vec<String>,
+    #[serde(skip)]
+    session_pending_bytes: u64,
+    #[serde(skip)]
+    session_pending_beams: u32,
+    #[serde(skip)]
+    session_total_bytes: u64,
+    #[serde(skip)]
+    session_total_beams: u32,
 
     // Modals & sheets
     pub is_region_selector_open: bool,
@@ -778,6 +796,13 @@ impl FabushiClientState {
             transfer_bytes_per_hop: 0,
             loopback_accum_ms: 0.0,
             field_accum_ms: 0.0,
+            session_content_title: String::new(),
+            session_content_kind: String::new(),
+            session_target_countries: Vec::new(),
+            session_pending_bytes: 0,
+            session_pending_beams: 0,
+            session_total_bytes: 0,
+            session_total_beams: 0,
             is_region_selector_open: false,
             region_search_query: String::new(),
             is_leaderboard_open: false,
@@ -1128,7 +1153,7 @@ impl FabushiClientState {
                 }
             }
             UiCommand::StopTransfer => {
-                self.stop_dharma_transfer();
+                self.stop_dharma_transfer(&mut effects);
             }
             UiCommand::StopAiGeneration => {
                 self.is_ai_generating = false;
@@ -1641,6 +1666,16 @@ impl FabushiClientState {
             return;
         }
 
+        if self.is_transferring {
+            self.stop_dharma_transfer(effects);
+        }
+
+        let reported_codes: Vec<String> = if self.country_list.iter().any(|c| c == "ALL") {
+            vec!["ALL".to_string()]
+        } else {
+            self.country_list.clone()
+        };
+
         self.is_preparing_send = false;
         self.is_transferring = true;
         self.current_sending_scripture = content.title.clone();
@@ -1651,6 +1686,13 @@ impl FabushiClientState {
         self.is_current_material_completed = false;
         self.current_country_progress = 0.0;
         self.transfer_targets = targets;
+        self.session_content_title = content.title.clone();
+        self.session_content_kind = content.kind.clone();
+        self.session_target_countries = reported_codes;
+        self.session_pending_bytes = 0;
+        self.session_pending_beams = 0;
+        self.session_total_bytes = 0;
+        self.session_total_beams = 0;
 
         let target_count = self.transfer_targets.len().max(1) as u64;
         self.transfer_bytes_per_hop = (content.size_bytes / target_count).max(1024);
@@ -1670,19 +1712,6 @@ impl FabushiClientState {
             self.current_sending_country = "本地法界".to_string();
         }
 
-        let reported_codes: Vec<String> = if self.country_list.iter().any(|c| c == "ALL") {
-            vec!["ALL".to_string()]
-        } else {
-            self.country_list.clone()
-        };
-        let reported_bytes = content.size_bytes.max(self.transfer_bytes_per_hop * target_count);
-        effects.push(HttpActionEffect::RecordTransfer {
-            content_title: content.title,
-            content_kind: content.kind,
-            target_countries: reported_codes,
-            bytes_sent: reported_bytes,
-            beam_count: target_count as u32,
-        });
         effects.push(HttpActionEffect::Heartbeat {
             activity_type: "global_sending".to_string(),
         });
@@ -1735,6 +1764,14 @@ impl FabushiClientState {
             .collect()
     }
 
+    fn record_session_progress(&mut self, bytes: u64, beams: u32) {
+        self.global_data_sent_bytes = self.global_data_sent_bytes.saturating_add(bytes);
+        self.session_pending_bytes = self.session_pending_bytes.saturating_add(bytes);
+        self.session_pending_beams = self.session_pending_beams.saturating_add(beams);
+        self.session_total_bytes = self.session_total_bytes.saturating_add(bytes);
+        self.session_total_beams = self.session_total_beams.saturating_add(beams);
+    }
+
     fn advance_dharma_transfer(
         &mut self,
         dt_ms: f64,
@@ -1745,11 +1782,23 @@ impl FabushiClientState {
             return;
         }
 
+        let local_bytes = if self.transfer_targets.is_empty() {
+            self.selected_content
+                .as_ref()
+                .map(|c| c.size_bytes.max(1024))
+                .unwrap_or(1024)
+        } else {
+            0
+        };
+
         if self.is_local_loopback_enabled {
             self.loopback_accum_ms += dt_ms;
             if self.loopback_accum_ms >= 350.0 {
                 self.loopback_accum_ms = 0.0;
                 self.loopback_count = self.loopback_count.saturating_add(1);
+                if local_bytes > 0 {
+                    self.record_session_progress(local_bytes, 1);
+                }
             }
         }
         if self.is_field_energy_mode {
@@ -1757,6 +1806,9 @@ impl FabushiClientState {
             if self.field_accum_ms >= 850.0 {
                 self.field_accum_ms = 0.0;
                 self.field_broadcast_count = self.field_broadcast_count.saturating_add(1);
+                if local_bytes > 0 {
+                    self.record_session_progress(local_bytes, 1);
+                }
             }
         }
 
@@ -1772,32 +1824,54 @@ impl FabushiClientState {
         if self.transfer_hop_elapsed_ms >= HOP_DURATION_MS {
             self.transfer_hop_elapsed_ms = 0.0;
             self.global_sent_count = self.global_sent_count.saturating_add(1);
-            self.global_data_sent_bytes = self
-                .global_data_sent_bytes
-                .saturating_add(self.transfer_bytes_per_hop);
+            self.record_session_progress(self.transfer_bytes_per_hop, 1);
             self.transfer_target_idx += 1;
 
             if self.transfer_target_idx >= self.transfer_targets.len() {
                 if self.is_looping {
                     self.transfer_target_idx = 0;
                     self.loop_count = self.loop_count.saturating_add(1);
-                    if let Some(content) = &self.selected_content {
-                        let reported_codes = if self.country_list.iter().any(|c| c == "ALL") {
+                    let title = if !self.session_content_title.trim().is_empty() {
+                        self.session_content_title.clone()
+                    } else {
+                        self.selected_content
+                            .as_ref()
+                            .map(|c| c.title.clone())
+                            .unwrap_or_default()
+                    };
+                    if !title.is_empty() && self.session_pending_bytes > 0 {
+                        let kind = if !self.session_content_kind.trim().is_empty() {
+                            self.session_content_kind.clone()
+                        } else {
+                            self.selected_content
+                                .as_ref()
+                                .map(|c| c.kind.clone())
+                                .unwrap_or_else(|| "sutra".to_string())
+                        };
+                        let targets = if self.session_target_countries.is_empty() {
                             vec!["ALL".to_string()]
                         } else {
-                            self.country_list.clone()
+                            self.session_target_countries.clone()
                         };
                         effects.push(HttpActionEffect::RecordTransfer {
-                            content_title: content.title.clone(),
-                            content_kind: content.kind.clone(),
-                            target_countries: reported_codes,
-                            bytes_sent: content.size_bytes.max(1024),
-                            beam_count: self.transfer_targets.len() as u32,
+                            content_title: title,
+                            content_kind: kind,
+                            target_countries: targets,
+                            bytes_sent: self.session_pending_bytes,
+                            beam_count: self
+                                .session_pending_beams
+                                .max(self.transfer_targets.len() as u32),
+                            notify_receipt: false,
+                            receipt_only: false,
+                            session_bytes: None,
+                            session_beams: None,
                         });
+                        self.session_pending_bytes = 0;
+                        self.session_pending_beams = 0;
                     }
                 } else {
                     let count = self.global_sent_count;
-                    self.stop_dharma_transfer();
+                    self.stop_dharma_transfer(effects);
                     self.toast_message = Some(format!("✨ 所选内容已发送完成，共完成 {count} 个国家！"));
                     return;
                 }
@@ -1820,7 +1894,47 @@ impl FabushiClientState {
         }
     }
 
-    fn stop_dharma_transfer(&mut self) {
+    fn stop_dharma_transfer(&mut self, effects: &mut Vec<HttpActionEffect>) {
+        if self.is_transferring && self.session_total_bytes > 0 {
+            let title = if !self.session_content_title.trim().is_empty() {
+                self.session_content_title.clone()
+            } else if !self.current_sending_scripture.trim().is_empty() {
+                self.current_sending_scripture.clone()
+            } else {
+                self.selected_content
+                    .as_ref()
+                    .map(|c| c.title.clone())
+                    .unwrap_or_default()
+            };
+            if !title.trim().is_empty() {
+                let kind = if !self.session_content_kind.trim().is_empty() {
+                    self.session_content_kind.clone()
+                } else {
+                    self.selected_content
+                        .as_ref()
+                        .map(|c| c.kind.clone())
+                        .unwrap_or_else(|| "sutra".to_string())
+                };
+                let targets = if self.session_target_countries.is_empty() {
+                    vec!["ALL".to_string()]
+                } else {
+                    self.session_target_countries.clone()
+                };
+                let receipt_only = self.session_pending_bytes == 0;
+                effects.push(HttpActionEffect::RecordTransfer {
+                    content_title: title,
+                    content_kind: kind,
+                    target_countries: targets,
+                    bytes_sent: self.session_pending_bytes,
+                    beam_count: self.session_pending_beams,
+                    notify_receipt: true,
+                    receipt_only,
+                    session_bytes: Some(self.session_total_bytes),
+                    session_beams: Some(self.session_total_beams.max(1)),
+                });
+            }
+        }
+
         self.is_transferring = false;
         self.is_preparing_send = false;
         self.current_country_progress = 0.0;
@@ -1828,6 +1942,13 @@ impl FabushiClientState {
         self.current_sending_country.clear();
         self.current_sending_scripture.clear();
         self.globe_scene.clear_beams();
+        self.session_content_title.clear();
+        self.session_content_kind.clear();
+        self.session_target_countries.clear();
+        self.session_pending_bytes = 0;
+        self.session_pending_beams = 0;
+        self.session_total_bytes = 0;
+        self.session_total_beams = 0;
     }
 
     fn sync_summary_effect(&self, effects: &mut Vec<HttpActionEffect>) {
@@ -2069,16 +2190,133 @@ mod tests {
         let res = st.dispatch(UiCommand::SubmitComposer);
         assert!(res.snapshot.is_transferring);
         assert_eq!(res.snapshot.current_sending_scripture, "心经");
+        assert!(!res
+            .effects
+            .iter()
+            .any(|e| matches!(e, HttpActionEffect::RecordTransfer { .. })));
         assert!(res
+            .effects
+            .iter()
+            .any(|e| matches!(e, HttpActionEffect::Heartbeat { .. })));
+
+        // Advance 2 hops -> hop 1 is silent, hop 2 completes CN+JP and emits single receipt-enabled RecordTransfer
+        let hop1 = st.tick(1700.0, 11_700.0, 420.0, 780.0);
+        assert!(hop1.snapshot.is_transferring);
+        assert!(!hop1
             .effects
             .iter()
             .any(|e| matches!(e, HttpActionEffect::RecordTransfer { .. })));
 
-        // Advance 2 hops -> completes both CN and JP and stops
-        st.tick(1700.0, 11_700.0, 420.0, 780.0);
         let fin = st.tick(1700.0, 13_400.0, 420.0, 780.0);
         assert!(!fin.snapshot.is_transferring);
         assert_eq!(fin.snapshot.global_sent_count, 2);
+        let rec_effects: Vec<_> = fin
+            .effects
+            .iter()
+            .filter(|e| matches!(e, HttpActionEffect::RecordTransfer { .. }))
+            .collect();
+        assert_eq!(rec_effects.len(), 1);
+        assert!(matches!(
+            rec_effects[0],
+            HttpActionEffect::RecordTransfer {
+                notify_receipt: true,
+                receipt_only: false,
+                session_beams: Some(2),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn looping_transfer_is_silent_per_round_and_notifies_only_on_stop() {
+        let mut st = FabushiClientState::new(10_000.0);
+        st.dispatch(UiCommand::ActivateDharmaMode);
+        st.dispatch(UiCommand::ToggleLooping);
+        st.dispatch(UiCommand::ApplyRegionSelection {
+            country_codes: vec!["CN".into(), "JP".into()],
+            field_energy: false,
+            local_loopback: false,
+        });
+        st.dispatch(UiCommand::SelectDharmaSutra {
+            title: "心经".into(),
+        });
+
+        let start = st.dispatch(UiCommand::SubmitComposer);
+        assert!(start.snapshot.is_transferring);
+        assert!(!start
+            .effects
+            .iter()
+            .any(|e| matches!(e, HttpActionEffect::RecordTransfer { .. })));
+
+        // Complete round 1 (2 hops) -> silent DB sync only (`notify_receipt: false`)
+        let r1_h1 = st.tick(1700.0, 11_700.0, 420.0, 780.0);
+        assert!(!r1_h1
+            .effects
+            .iter()
+            .any(|e| matches!(e, HttpActionEffect::RecordTransfer { .. })));
+        let r1_done = st.tick(1700.0, 13_400.0, 420.0, 780.0);
+        assert!(r1_done.snapshot.is_transferring);
+        assert!(matches!(
+            r1_done
+                .effects
+                .iter()
+                .find(|e| matches!(e, HttpActionEffect::RecordTransfer { .. })),
+            Some(HttpActionEffect::RecordTransfer {
+                notify_receipt: false,
+                receipt_only: false,
+                beam_count: 2,
+                ..
+            })
+        ));
+
+        // Advance 1 hop into round 2, then stop -> emits receipt with pending delta + total session beams (3)
+        let _r2_h1 = st.tick(1700.0, 15_100.0, 420.0, 780.0);
+        let stopped = st.dispatch(UiCommand::StopTransfer);
+        assert!(!stopped.snapshot.is_transferring);
+        assert!(matches!(
+            stopped
+                .effects
+                .iter()
+                .find(|e| matches!(e, HttpActionEffect::RecordTransfer { .. })),
+            Some(HttpActionEffect::RecordTransfer {
+                notify_receipt: true,
+                receipt_only: false,
+                beam_count: 1,
+                session_beams: Some(3),
+                ..
+            })
+        ));
+
+        // Second scenario: stop immediately after round 1 completes (0 pending hops) -> `receipt_only: true`
+        let mut st2 = FabushiClientState::new(20_000.0);
+        st2.dispatch(UiCommand::ActivateDharmaMode);
+        st2.dispatch(UiCommand::ToggleLooping);
+        st2.dispatch(UiCommand::ApplyRegionSelection {
+            country_codes: vec!["CN".into(), "JP".into()],
+            field_energy: false,
+            local_loopback: false,
+        });
+        st2.dispatch(UiCommand::SelectDharmaSutra {
+            title: "心经".into(),
+        });
+        st2.dispatch(UiCommand::SubmitComposer);
+        st2.tick(1700.0, 21_700.0, 420.0, 780.0);
+        st2.tick(1700.0, 23_400.0, 420.0, 780.0);
+        let stopped_boundary = st2.dispatch(UiCommand::StopTransfer);
+        assert!(matches!(
+            stopped_boundary
+                .effects
+                .iter()
+                .find(|e| matches!(e, HttpActionEffect::RecordTransfer { .. })),
+            Some(HttpActionEffect::RecordTransfer {
+                notify_receipt: true,
+                receipt_only: true,
+                bytes_sent: 0,
+                beam_count: 0,
+                session_beams: Some(2),
+                ..
+            })
+        ));
     }
 
     #[test]

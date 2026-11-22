@@ -45,6 +45,9 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 enum class TelegramThemePreset(val wire: String, val label: String, val isDark: Boolean) {
+    APPLE_DAY("apple_day", "Apple Messages 明亮 (v1.6)", false),
+    APPLE_NIGHT("apple_night", "Apple Messages 深邃 (v1.6)", true),
+    APPLE_TINTED("apple_tinted", "Apple Messages 靛蓝夜色 (v1.6)", true),
     DAY_BLUE("day_blue", "Telegram 经典蓝 (日间)", false),
     NIGHT("night", "Telegram 深夜模式", true),
     NIGHT_TINTED("night_tinted", "Telegram 深海蓝调", true),
@@ -63,12 +66,12 @@ enum class TelegramWallpaperStyle(val wire: String, val label: String) {
 
 @Immutable
 data class TelegramThemeSettings(
-    val preset: TelegramThemePreset = TelegramThemePreset.DAY_BLUE,
+    val preset: TelegramThemePreset = TelegramThemePreset.APPLE_DAY,
     val customAccentArgb: Long = 0xFF8E44ADL,
     val customDark: Boolean = false,
-    val bubbleCornerRadiusDp: Int = 16,
+    val bubbleCornerRadiusDp: Int = 18,
     val messageFontSizeSp: Int = 16,
-    val wallpaperStyle: TelegramWallpaperStyle = TelegramWallpaperStyle.DOODLE_CLASSIC,
+    val wallpaperStyle: TelegramWallpaperStyle = TelegramWallpaperStyle.SOLID_MINIMAL,
     val wallpaperDimPercent: Int = 12,
     val animationsEnabled: Boolean = true,
     val autoNightMode: Boolean = false,
@@ -77,8 +80,8 @@ data class TelegramThemeSettings(
     val boundedFontSp: TextUnit get() = messageFontSizeSp.coerceIn(12, 22).sp
     val isDarkEffective: Boolean
         get() = when (preset) {
-            TelegramThemePreset.DAY_BLUE, TelegramThemePreset.CLASSIC_GREEN -> false
-            TelegramThemePreset.NIGHT, TelegramThemePreset.NIGHT_TINTED -> true
+            TelegramThemePreset.APPLE_DAY, TelegramThemePreset.DAY_BLUE, TelegramThemePreset.CLASSIC_GREEN -> false
+            TelegramThemePreset.APPLE_NIGHT, TelegramThemePreset.APPLE_TINTED, TelegramThemePreset.NIGHT, TelegramThemePreset.NIGHT_TINTED -> true
             TelegramThemePreset.CUSTOM_ACCENT -> customDark
         }
 }
@@ -117,10 +120,130 @@ data class TelegramPalette(
     val wallpaperEnd: Color,
     val doodleTint: Color,
     val settings: TelegramThemeSettings,
-)
+    val isAppleStyle: Boolean = false,
+    val outgoingBubbleTop: Color = outgoingBubble,
+    val outgoingBubbleBottom: Color = outgoingBubble,
+) {
+    val outgoingBubbleBrush: Brush
+        get() = Brush.verticalGradient(listOf(outgoingBubbleTop, outgoingBubbleBottom))
+}
 
 fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
     return when (settings.preset) {
+        TelegramThemePreset.APPLE_DAY -> TelegramPalette(
+            isDark = false,
+            topBarBackground = Color(0xFFFFFFFF),
+            topBarContent = Color(0xFF1D1D1F),
+            topBarSubtitle = Color(0xFF86868B),
+            drawerHeaderStart = Color(0xFF2C95FF),
+            drawerHeaderEnd = Color(0xFF007AFF),
+            appBackground = Color(0xFFF5F5F7),
+            surfaceColor = Color(0xFFFFFFFF),
+            elevatedSurface = Color(0xFFF2F2F7),
+            primaryAccent = Color(0xFF007AFF),
+            outgoingBubble = Color(0xFF007AFF),
+            incomingBubble = Color(0xFFE9E9EB),
+            outgoingText = Color(0xFFFFFFFF),
+            incomingText = Color(0xFF1D1D1F),
+            outgoingMeta = Color(0xFFE5F2FF),
+            incomingMeta = Color(0xFF8E8E93),
+            checkMarkColor = Color(0xFF007AFF),
+            unreadBadgeActive = Color(0xFF007AFF),
+            unreadBadgeMuted = Color(0xFFC7C7CC),
+            secretGreen = Color(0xFF34C759),
+            destructiveRed = Color(0xFFFF3B30),
+            goldMerit = Color(0xFFD99B26),
+            linkColor = Color(0xFF007AFF),
+            codeBackground = Color(0xFFE6E8EB),
+            dividerColor = Color(0x14000000),
+            primaryText = Color(0xFF1D1D1F),
+            secondaryText = Color(0xFF86868B),
+            hintText = Color(0xFFAEAEB2),
+            wallpaperStart = Color(0xFFFFFFFF),
+            wallpaperEnd = Color(0xFFFFFFFF),
+            doodleTint = Color(0x12007AFF),
+            settings = settings,
+            isAppleStyle = true,
+            outgoingBubbleTop = Color(0xFF2C95FF),
+            outgoingBubbleBottom = Color(0xFF007AFF),
+        )
+
+        TelegramThemePreset.APPLE_NIGHT -> TelegramPalette(
+            isDark = true,
+            topBarBackground = Color(0xFF1E1E1E),
+            topBarContent = Color(0xFFF5F5F7),
+            topBarSubtitle = Color(0xFF98989D),
+            drawerHeaderStart = Color(0xFF1E8FFF),
+            drawerHeaderEnd = Color(0xFF0A84FF),
+            appBackground = Color(0xFF1E1E1E),
+            surfaceColor = Color(0xFF1C1C1E),
+            elevatedSurface = Color(0xFF2A2A2D),
+            primaryAccent = Color(0xFF0A84FF),
+            outgoingBubble = Color(0xFF0A84FF),
+            incomingBubble = Color(0xFF262629),
+            outgoingText = Color(0xFFFFFFFF),
+            incomingText = Color(0xFFF5F5F7),
+            outgoingMeta = Color(0xFFD6EBFF),
+            incomingMeta = Color(0xFF8E8E93),
+            checkMarkColor = Color(0xFF0A84FF),
+            unreadBadgeActive = Color(0xFF0A84FF),
+            unreadBadgeMuted = Color(0xFF48484A),
+            secretGreen = Color(0xFF30D158),
+            destructiveRed = Color(0xFFFF453A),
+            goldMerit = Color(0xFFF5B841),
+            linkColor = Color(0xFF409CFF),
+            codeBackground = Color(0xFF2C2C2E),
+            dividerColor = Color(0x17FFFFFF),
+            primaryText = Color(0xFFF5F5F7),
+            secondaryText = Color(0xFF98989D),
+            hintText = Color(0xFF636366),
+            wallpaperStart = Color(0xFF1E1E1E),
+            wallpaperEnd = Color(0xFF1E1E1E),
+            doodleTint = Color(0x160A84FF),
+            settings = settings,
+            isAppleStyle = true,
+            outgoingBubbleTop = Color(0xFF1E8FFF),
+            outgoingBubbleBottom = Color(0xFF0A84FF),
+        )
+
+        TelegramThemePreset.APPLE_TINTED -> TelegramPalette(
+            isDark = true,
+            topBarBackground = Color(0xFF181C22),
+            topBarContent = Color(0xFFF5F7FA),
+            topBarSubtitle = Color(0xFF949DA8),
+            drawerHeaderStart = Color(0xFF1E8FFF),
+            drawerHeaderEnd = Color(0xFF0A84FF),
+            appBackground = Color(0xFF181C22),
+            surfaceColor = Color(0xFF161A20),
+            elevatedSurface = Color(0xFF222831),
+            primaryAccent = Color(0xFF0A84FF),
+            outgoingBubble = Color(0xFF0A84FF),
+            incomingBubble = Color(0xFF242A33),
+            outgoingText = Color(0xFFFFFFFF),
+            incomingText = Color(0xFFF5F7FA),
+            outgoingMeta = Color(0xFFD6EBFF),
+            incomingMeta = Color(0xFF8E96A0),
+            checkMarkColor = Color(0xFF0A84FF),
+            unreadBadgeActive = Color(0xFF0A84FF),
+            unreadBadgeMuted = Color(0xFF444D5A),
+            secretGreen = Color(0xFF30D158),
+            destructiveRed = Color(0xFFFF453A),
+            goldMerit = Color(0xFFF5B841),
+            linkColor = Color(0xFF409CFF),
+            codeBackground = Color(0xFF242A33),
+            dividerColor = Color(0x17FFFFFF),
+            primaryText = Color(0xFFF5F7FA),
+            secondaryText = Color(0xFF949DA8),
+            hintText = Color(0xFF5A6370),
+            wallpaperStart = Color(0xFF181C22),
+            wallpaperEnd = Color(0xFF181C22),
+            doodleTint = Color(0x160A84FF),
+            settings = settings,
+            isAppleStyle = true,
+            outgoingBubbleTop = Color(0xFF1E8FFF),
+            outgoingBubbleBottom = Color(0xFF0A84FF),
+        )
+
         TelegramThemePreset.DAY_BLUE -> TelegramPalette(
             isDark = false,
             topBarBackground = Color(0xFF517DA2),
@@ -440,7 +563,10 @@ fun TelegramChatWallpaperBackground(
             } else {
                 Triple(Color(0xFFD5E8D4), Color(0xFFBCD8C1), Color(0x243A784C))
             }
-            TelegramWallpaperStyle.SOLID_MINIMAL -> Triple(palette.appBackground, palette.appBackground, Color.Transparent)
+            TelegramWallpaperStyle.SOLID_MINIMAL -> {
+                val bg = if (palette.isAppleStyle) palette.wallpaperStart else palette.appBackground
+                Triple(bg, bg, Color.Transparent)
+            }
         }
     }
 

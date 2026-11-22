@@ -341,11 +341,21 @@ fun TelegramComposer(
                     TelegramIcon(TelegramGlyph.EMOJI_SMILE, tint = if (showEmojiStickerPanel) palette.primaryAccent else palette.hintText, size = 23.dp)
                 }
 
-                // Rich Input Field
+                // Rich Input Field (Apple Messages pill capsule in v1.6.0 Apple style)
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                        .then(
+                            if (palette.isAppleStyle) {
+                                Modifier
+                                    .clip(RoundedCornerShape(20.dp))
+                                    .background(palette.elevatedSurface)
+                                    .border(0.75.dp, palette.dividerColor, RoundedCornerShape(20.dp))
+                                    .padding(horizontal = 14.dp, vertical = 9.dp)
+                            } else {
+                                Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
+                            },
+                        ),
                 ) {
                     BasicTextField(
                         value = tfv,

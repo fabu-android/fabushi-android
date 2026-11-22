@@ -4,6 +4,7 @@
 //! bot-to-computer bindings, and remote operation/approval DTOs shared across proto, client,
 //! server, and desktop crates.
 
+use crate::remote_control_contracts::PowerActionKind;
 use serde::{Deserialize, Serialize};
 
 /// Classification of a controllable computer node.
@@ -283,6 +284,100 @@ pub enum RemoteComputerOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    MouseAction {
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        x: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        y: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dx: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dy: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        button: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clicks: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scroll_x: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scroll_y: Option<i32>,
+        #[serde(default)]
+        relative: bool,
+    },
+    KeyboardAction {
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+        #[serde(default)]
+        modifiers: Vec<String>,
+    },
+    ClipboardGet,
+    ClipboardSet {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        image_b64: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mime_type: Option<String>,
+    },
+    PowerAction {
+        action: PowerActionKind,
+    },
+    DisplayList,
+    DisplaySwitch {
+        display_index: u32,
+    },
+    PrivacyScreenToggle {
+        enabled: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+    },
+    TerminalOp {
+        #[serde(rename = "terminal_op", alias = "sub_op")]
+        op: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_name: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shell: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        input: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        command: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cols: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rows: Option<u16>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        new_name: Option<String>,
+    },
+    AccessibilityTree {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_depth: Option<u32>,
+    },
+    SemanticAction {
+        element_id: String,
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<String>,
+    },
+    FileChunkOp {
+        #[serde(rename = "chunk_op", alias = "sub_op")]
+        op: String,
+        transfer_id: String,
+        path: String,
+        offset: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        data_b64: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        total_size: Option<u64>,
+    },
     #[default]
     TestConnection,
 }
@@ -290,13 +385,17 @@ pub enum RemoteComputerOp {
 impl RemoteComputerOp {
     /// Returns true when the operation only inspects state without mutating files, processes, or GUI.
     pub fn is_read_only(&self) -> bool {
-        matches!(
-            self,
+        match self {
             Self::ReadFile { .. }
-                | Self::ListDir { .. }
-                | Self::CaptureScreen
-                | Self::TestConnection
-        )
+            | Self::ListDir { .. }
+            | Self::CaptureScreen
+            | Self::TestConnection
+            | Self::ClipboardGet
+            | Self::DisplayList
+            | Self::AccessibilityTree { .. } => true,
+            Self::TerminalOp { op, .. } => matches!(op.as_str(), "ls" | "has" | "read"),
+            _ => false,
+        }
     }
 }
 
@@ -543,5 +642,120 @@ mod tests {
         assert_eq!(partial.kind, ComputerNodeKind::LocalDevice);
         assert_eq!(partial.run_policy, ComputerRunPolicy::AskEveryTime);
         assert!(!partial.has_saved_credential);
+    }
+
+    #[test]
+    fn test_extended_remote_computer_ops_roundtrip_and_read_only() {
+        let ops = vec![
+            RemoteComputerOp::MouseAction {
+                action: "click".into(),
+                x: Some(120),
+                y: Some(240),
+                dx: None,
+                dy: None,
+                button: Some("left".into()),
+                clicks: Some(2),
+                scroll_x: None,
+                scroll_y: None,
+                relative: false,
+            },
+            RemoteComputerOp::KeyboardAction {
+                action: "hotkey".into(),
+                text: None,
+                key: Some("c".into()),
+                modifiers: vec!["cmd".into()],
+            },
+            RemoteComputerOp::ClipboardGet,
+            RemoteComputerOp::ClipboardSet {
+                text: Some("hello".into()),
+                image_b64: None,
+                mime_type: Some("text/plain".into()),
+            },
+            RemoteComputerOp::PowerAction {
+                action: PowerActionKind::WakeOnLan {
+                    mac_address: "AA:BB:CC:DD:EE:FF".into(),
+                    broadcast_ip: Some("192.168.1.255".into()),
+                },
+            },
+            RemoteComputerOp::DisplayList,
+            RemoteComputerOp::DisplaySwitch { display_index: 1 },
+            RemoteComputerOp::PrivacyScreenToggle {
+                enabled: true,
+                message: Some("Remote maintenance".into()),
+            },
+            RemoteComputerOp::TerminalOp {
+                op: "exec".into(),
+                session_name: Some("main".into()),
+                shell: None,
+                input: None,
+                command: Some("pwd".into()),
+                cols: Some(120),
+                rows: Some(40),
+                timeout_ms: Some(5000),
+                new_name: None,
+            },
+            RemoteComputerOp::AccessibilityTree { max_depth: Some(4) },
+            RemoteComputerOp::SemanticAction {
+                element_id: "el-1".into(),
+                action: "press".into(),
+                value: None,
+            },
+            RemoteComputerOp::FileChunkOp {
+                op: "write_chunk".into(),
+                transfer_id: "tx-1".into(),
+                path: "/tmp/file.bin".into(),
+                offset: 0,
+                data_b64: Some("AAAA".into()),
+                sha256: Some("deadbeef".into()),
+                total_size: Some(3),
+            },
+        ];
+
+        for op in ops {
+            let val = serde_json::to_value(&op).expect("serialize extended RemoteComputerOp");
+            assert!(val.get("op").is_some());
+            let parsed: RemoteComputerOp =
+                serde_json::from_value(val).expect("deserialize extended RemoteComputerOp");
+            assert_eq!(parsed, op);
+        }
+
+        assert!(RemoteComputerOp::ClipboardGet.is_read_only());
+        assert!(RemoteComputerOp::DisplayList.is_read_only());
+        assert!(RemoteComputerOp::AccessibilityTree { max_depth: None }.is_read_only());
+        for ro in ["ls", "has", "read"] {
+            assert!(
+                RemoteComputerOp::TerminalOp {
+                    op: ro.into(),
+                    session_name: None,
+                    shell: None,
+                    input: None,
+                    command: None,
+                    cols: None,
+                    rows: None,
+                    timeout_ms: None,
+                    new_name: None,
+                }
+                .is_read_only()
+            );
+        }
+        assert!(
+            !RemoteComputerOp::TerminalOp {
+                op: "exec".into(),
+                session_name: None,
+                shell: None,
+                input: None,
+                command: Some("ls".into()),
+                cols: None,
+                rows: None,
+                timeout_ms: None,
+                new_name: None,
+            }
+            .is_read_only()
+        );
+        assert!(!RemoteComputerOp::PrivacyScreenToggle {
+            enabled: true,
+            message: None
+        }
+        .is_read_only());
     }
 }

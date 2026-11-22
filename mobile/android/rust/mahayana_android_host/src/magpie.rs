@@ -515,7 +515,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
                         format!("{:?}", p.protocol),
                         p.base_url,
                         p.default_model,
-                        (idx as i32) + 1,
+                        100 + (idx as i32),
                         p.input_cost_per_1m_usd,
                         p.output_cost_per_1m_usd,
                         120 + (idx as i64) * 35,
@@ -782,6 +782,7 @@ fn mask_unified_request(req: &UnifiedRequest, engine: &MaskingEngine) -> (Unifie
                 id: tc.id.clone(),
                 name: tc.name.clone(),
                 arguments: arg_res.masked_text,
+                thought_signature: tc.thought_signature.clone(),
             });
         }
         masked_messages.push(UnifiedMessage {
@@ -953,6 +954,7 @@ fn parse_codex_responses_sse_line(
                             id,
                             name,
                             arguments,
+                            thought_signature: None,
                         }],
                         ..Default::default()
                     }));
@@ -1941,6 +1943,175 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 "latencyMs": outcome.latency_ms,
                 "failedOverFrom": outcome.failed_over_from,
             }))
+        }
+
+        "parseModelsDevCatalog" => {
+            let raw_json = params
+                .get("json")
+                .or_else(|| params.get("raw"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "magpie.parseModelsDevCatalog requires 'json' string".to_string())?;
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let catalog = magpie_gateway::parse_models_dev_json(raw_json, now_ms)?;
+            Ok(json!({
+                "source": catalog.source,
+                "fetchedAtMs": catalog.fetched_at_ms,
+                "providerCount": catalog.providers.len(),
+                "providers": catalog.providers,
+            }))
+        }
+
+        "fetchModelsDevCatalog" => {
+            let force_refresh = params
+                .get("forceRefresh")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let url = params
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or(magpie_gateway::MODELS_DEV_API_URL);
+            let cache_path = params
+                .get("cachePath")
+                .and_then(Value::as_str)
+                .map(std::path::PathBuf::from);
+            let agent = ureq::Agent::new();
+            let catalog = magpie_gateway::fetch_models_dev_catalog_from_url(
+                &agent,
+                url,
+                cache_path.as_deref(),
+                force_refresh,
+            )?;
+            Ok(json!({
+                "source": catalog.source,
+                "fetchedAtMs": catalog.fetched_at_ms,
+                "providerCount": catalog.providers.len(),
+                "providers": catalog.providers,
+            }))
+        }
+
+        "discoverModels" => {
+            let kind_raw = params
+                .get("subscriptionKind")
+                .or_else(|| params.get("providerId"))
+                .and_then(Value::as_str)
+                .unwrap_or("codex");
+            let kind = match kind_raw.trim().to_ascii_lowercase().as_str() {
+                "google-vertex" | "vertex" | "google_vertex" => {
+                    magpie_gateway::SubscriptionKind::GoogleVertex
+                }
+                "gemini" | "google" | "gemini_code_assist" => {
+                    magpie_gateway::SubscriptionKind::GeminiCodeAssist
+                }
+                "anthropic" | "claude" | "claude_code" => {
+                    magpie_gateway::SubscriptionKind::ClaudeCode
+                }
+                "github_copilot" | "copilot" => magpie_gateway::SubscriptionKind::GitHubCopilot,
+                "antigravity" => magpie_gateway::SubscriptionKind::Antigravity,
+                "grok" | "xai" => magpie_gateway::SubscriptionKind::GrokSuperGrok,
+                _ => magpie_gateway::SubscriptionKind::CodexChatGpt,
+            };
+
+            let base_url = params.get("baseUrl").and_then(Value::as_str);
+            let bearer = params
+                .get("apiKey")
+                .or_else(|| params.get("bearerToken"))
+                .and_then(Value::as_str);
+            let project_id = params.get("projectId").and_then(Value::as_str);
+            let location = params.get("location").and_then(Value::as_str);
+            let headers = std::collections::BTreeMap::new();
+
+            let mut live_models: Vec<String> = Vec::new();
+            let mut live_error: Option<String> = None;
+            if bearer.is_some() || base_url.is_some() {
+                let agent = ureq::Agent::new();
+                match magpie_gateway::fetch_live_upstream_models(
+                    &agent,
+                    kind,
+                    base_url,
+                    bearer,
+                    &headers,
+                    project_id,
+                    location,
+                ) {
+                    Ok(m) => live_models = m,
+                    Err(e) => live_error = Some(e),
+                }
+            }
+
+            let defaults: Vec<String> = magpie_gateway::default_models_for_subscription_kind(kind)
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            let merged = magpie_gateway::merge_discovered_models(&[&live_models, &defaults]);
+            Ok(json!({
+                "subscriptionKind": format!("{kind:?}"),
+                "modelsDevProvider": magpie_gateway::models_dev_provider_id_for_subscription(kind),
+                "liveCount": live_models.len(),
+                "liveError": live_error,
+                "models": merged,
+            }))
+        }
+
+        "discoverSyncableSubscriptions" => {
+            let home_dir = params
+                .get("homeDir")
+                .and_then(Value::as_str)
+                .map(std::path::PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+                .unwrap_or_else(|| std::path::PathBuf::from("/"));
+            let target_is_remote = params
+                .get("targetIsRemote")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let items = magpie_gateway::discover_syncable_subscriptions_in_home(
+                &home_dir,
+                None,
+                target_is_remote,
+            );
+            let redacted: Vec<Value> = items
+                .iter()
+                .map(|item| {
+                    json!({
+                        "id": item.account.id,
+                        "kind": format!("{:?}", item.account.kind),
+                        "label": item.account.label,
+                        "email": item.account.email,
+                        "plan": item.account.plan,
+                        "active": item.account.active,
+                        "baseUrl": item.account.base_url,
+                        "defaultModel": item.account.default_model,
+                        "regionId": item.region_id,
+                        "hasAccessToken": item.access_token.is_some(),
+                        "hasVertexAdc": item.vertex_adc.is_some(),
+                        "hasCodexOAuth": item.codex_oauth.is_some(),
+                        "availableModels": item.available_models,
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "total": redacted.len(),
+                "subscriptions": redacted,
+            }))
+        }
+
+        "sanitizeVertexSchema" => {
+            let schema = params
+                .get("schema")
+                .ok_or_else(|| "magpie.sanitizeVertexSchema requires 'schema'".to_string())?;
+            Ok(json!({
+                "sanitized": magpie_gateway::sanitize_schema_for_gemini(schema),
+            }))
+        }
+
+        "mergeGeminiFunctionResponses" => {
+            let req_val = params
+                .get("request")
+                .cloned()
+                .unwrap_or_else(|| params.clone());
+            let unified: UnifiedRequest = serde_json::from_value(req_val)
+                .map_err(|e| format!("Invalid UnifiedRequest JSON: {e}"))?;
+            let payload = magpie_gateway::build_gemini_generate_content_payload(&unified);
+            Ok(json!({ "payload": payload }))
         }
 
         other => Err(format!("Unsupported magpie method: {other}")),
