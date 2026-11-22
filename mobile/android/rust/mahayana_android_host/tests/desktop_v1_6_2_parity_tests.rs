@@ -16,8 +16,8 @@ fn new_test_host(tag: &str) -> (MahayanaAndroidHost, PathBuf) {
 fn test_feature_info_reports_desktop_v162_parity() {
     let (host, dir) = new_test_host("feature_info");
     let info = host.dispatch("feature.info", &json!({})).unwrap();
-    assert_eq!(info["desktopParityVersion"], "1.6.2");
-    assert_eq!(info["desktopParityCommit"], "9542524");
+    assert_eq!(info["desktopParityVersion"], "1.6.5");
+    assert_eq!(info["desktopParityCommit"], "db06f9c");
     assert_eq!(info["platform"], "android");
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -472,5 +472,93 @@ fn test_magpie_models_dev_vertex_sanitization_gemini_parallel_merge_and_webmcp()
     assert_eq!(st["pipMinimized"], true);
     assert_eq!(st["activeTool"], "start_dharma_offering");
 
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn test_real_gpui_telegram_server_api_v1_client_loopback() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().unwrap();
+    let server_url = format!("http://{addr}");
+
+    let handle = thread::spawn(move || {
+        for _ in 0..5 {
+            let (mut stream, _) = match listener.accept() {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            let req_str = String::from_utf8_lossy(&buf[..n]);
+            let first_line = req_str.lines().next().unwrap_or("");
+            let body = if first_line.starts_with("POST /api/v1/auth/login") {
+                r#"{"user_id":1001,"username":"alice","session_id":"sess_1","token":"tok_live_123","first_name":"Alice"}"#
+            } else if first_line.starts_with("GET /api/v1/auth/me") {
+                r#"{"user_id":1001,"username":"alice","first_name":"Alice","session_id":"sess_1"}"#
+            } else if first_line.starts_with("GET /api/v1/chats/42/messages") {
+                r#"[{"id":901,"chat_id":42,"sender_id":1002,"sender_name":"Bob","text":"Real message from server","created_at_ms":1763800000000}]"#
+            } else if first_line.starts_with("GET /api/v1/chats") {
+                r#"[{"id":42,"title":"Bob","kind":"direct","last_message_text":"Real message from server","unread_count":1,"is_pinned":true}]"#
+            } else if first_line.starts_with("POST /api/v1/messages/send") {
+                r#"{"message_id":902,"pts":55,"ok":true}"#
+            } else {
+                r#"{"ok":true}"#
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        }
+    });
+
+    let (host, dir) = new_test_host("real_server");
+
+    let sess0 = host.dispatch("telegram.server.session", &json!({})).unwrap();
+    assert_eq!(sess0["authenticated"], false);
+
+    let login = host
+        .dispatch(
+            "telegram.server.login",
+            &json!({ "endpoint": server_url, "username": "alice", "password": "secret" }),
+        )
+        .unwrap();
+    assert_eq!(login["token"], "tok_live_123");
+
+    let sess1 = host.dispatch("telegram.server.session", &json!({})).unwrap();
+    assert_eq!(sess1["authenticated"], true);
+    assert_eq!(sess1["username"], "alice");
+
+    let me = host.dispatch("telegram.server.me", &json!({})).unwrap();
+    assert_eq!(me["user_id"], 1001);
+
+    let chats = host.dispatch("telegram.server.listChats", &json!({})).unwrap();
+    assert_eq!(chats["chats"][0]["id"], 42);
+    assert_eq!(chats["chats"][0]["title"], "Bob");
+
+    let msgs = host
+        .dispatch("telegram.server.getMessages", &json!({ "chatId": 42 }))
+        .unwrap();
+    assert_eq!(msgs["messages"][0]["text"], "Real message from server");
+
+    let sent = host
+        .dispatch(
+            "telegram.server.sendMessage",
+            &json!({ "chatId": 42, "text": "Hello real server" }),
+        )
+        .unwrap();
+    assert_eq!(sent["message_id"], 902);
+
+    let logout = host.dispatch("telegram.server.logout", &json!({})).unwrap();
+    assert_eq!(logout["loggedOut"], true);
+    let sess2 = host.dispatch("telegram.server.session", &json!({})).unwrap();
+    assert_eq!(sess2["authenticated"], false);
+
+    let _ = handle.join();
     let _ = std::fs::remove_dir_all(dir);
 }

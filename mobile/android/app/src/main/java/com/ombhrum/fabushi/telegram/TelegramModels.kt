@@ -1002,19 +1002,14 @@ data class TonConnectPreview(
 )
 
 data class TonWalletUiState(
-    val initialized: Boolean = true,
-    val addressFriendly: String = "UQBk9x_fabushi_mahayana_v4r2_8ZpL9mK2Q7wH4tN8vX",
-    val mnemonicWords: List<String> = listOf(
-        "lotus", "dharma", "ocean", "wisdom", "compass", "golden",
-        "crystal", "beacon", "harbor", "merit", "planet", "serenity",
-        "thunder", "velvet", "aurora", "bridge", "summit", "lantern",
-        "breeze", "cipher", "harmony", "orbit", "quantum", "zenith",
-    ),
-    val tonBalance: Double = 128.64,
-    val usdtBalance: Double = 420.50,
-    val starsBalance: Long = 3_850L,
-    val stakedTon: Double = 50.00,
-    val stakingApyPercent: Double = 4.25,
+    val initialized: Boolean = false,
+    val addressFriendly: String = "",
+    val mnemonicWords: List<String> = emptyList(),
+    val tonBalance: Double = 0.0,
+    val usdtBalance: Double = 0.0,
+    val starsBalance: Long = 0L,
+    val stakedTon: Double = 0.0,
+    val stakingApyPercent: Double = 0.0,
     val transactions: List<TonTransactionItem> = emptyList(),
     val collectibles: List<TonCollectibleItem> = emptyList(),
     val pendingTonConnect: TonConnectPreview? = null,
@@ -1075,18 +1070,16 @@ data class GlobalDharmaUiState(
     val countries: List<CountryOfferingNode> = GlobalDharmaCatalog.build240Countries(),
     val selectedCountryCode: String = "CN",
     val activeArcs: List<OfferingArc> = emptyList(),
-    val totalGlobalOfferings: Long = 1_284_920L,
-    val myMeritPoints: Long = 1_080L,
-    val prayerWheelSpins: Long = 324L,
-    val mantraCount: Long = 2_592L,
-    val practiceMinutesTotal: Int = 185,
-    val woodenFishHits: Long = 108L,
+    val totalGlobalOfferings: Long = 0L,
+    val myMeritPoints: Long = 0L,
+    val prayerWheelSpins: Long = 0L,
+    val mantraCount: Long = 0L,
+    val practiceMinutesTotal: Int = 0,
+    val woodenFishHits: Long = 0L,
     val sutras: List<SutraTextItem> = GlobalDharmaCatalog.DEFAULT_SUTRAS,
-    val leaderboard: List<MeritLeaderboardEntry> = GlobalDharmaCatalog.DEFAULT_LEADERBOARD,
-    val achievements: List<DharmaAchievement> = GlobalDharmaCatalog.DEFAULT_ACHIEVEMENTS,
-    val aiDharmaMessages: List<Pair<Boolean, String>> = listOf(
-        false to "善哉！欢迎来到全球法布施 · 地球供养坛城与禅房。您可以拨动 3D 地球向全球 240 个国家与地区点亮祈福心灯，转动摩尼经轮，或随时向我请益经典义理。",
-    ),
+    val leaderboard: List<MeritLeaderboardEntry> = emptyList(),
+    val achievements: List<DharmaAchievement> = emptyList(),
+    val aiDharmaMessages: List<Pair<Boolean, String>> = emptyList(),
 )
 
 object GlobalDharmaCatalog {
@@ -1186,7 +1179,7 @@ object GlobalDharmaCatalog {
 
     fun build240Countries(): List<CountryOfferingNode> {
         val list = ArrayList<CountryOfferingNode>(244)
-        NAMED_COUNTRIES.forEachIndexed { idx, c ->
+        NAMED_COUNTRIES.forEach { c ->
             list += CountryOfferingNode(
                 code = c.code,
                 nameZh = c.zh,
@@ -1194,11 +1187,11 @@ object GlobalDharmaCatalog {
                 region = c.region,
                 latitude = c.lat,
                 longitude = c.lon,
-                offeringsCount = 12_000L + (50 - idx) * 620L,
-                lampLitByMe = idx < 4,
+                offeringsCount = 0L,
+                lampLitByMe = false,
             )
         }
-        ISO_REGION_MATRIX.forEachIndexed { idx, (code, meta) ->
+        ISO_REGION_MATRIX.forEach { (code, meta) ->
             val (zh, coords) = meta
             list += CountryOfferingNode(
                 code = code,
@@ -1207,10 +1200,10 @@ object GlobalDharmaCatalog {
                 region = "全球十方",
                 latitude = coords.first,
                 longitude = coords.second,
-                offeringsCount = 2_400L + (idx * 87L) % 5_000L,
+                offeringsCount = 0L,
+                lampLitByMe = false,
             )
         }
-        // Fill remaining territories/islands across global Fibonacci sphere up to 242 regions
         val needed = 242 - list.size
         val goldenAngle = PI * (3.0 - sqrt(5.0))
         for (k in 0 until needed) {
@@ -1225,7 +1218,8 @@ object GlobalDharmaCatalog {
                 region = "环海诸岛",
                 latitude = lat,
                 longitude = lon,
-                offeringsCount = 680L + (k * 43L),
+                offeringsCount = 0L,
+                lampLitByMe = false,
             )
         }
         return list
@@ -1266,20 +1260,9 @@ object GlobalDharmaCatalog {
         ),
     )
 
-    val DEFAULT_LEADERBOARD = listOf(
-        MeritLeaderboardEntry(1, "莲池海会 · 觉行者", "CN", 108_600L, 12_800L),
-        MeritLeaderboardEntry(2, "Bodhi Light · Kathmandu", "NP", 94_200L, 10_400L),
-        MeritLeaderboardEntry(3, "清凉山行愿团", "SG", 82_500L, 9_120L),
-        MeritLeaderboardEntry(4, "Kyoto Zen Mind", "JP", 65_800L, 7_300L),
-        MeritLeaderboardEntry(5, "当前账号 · 全球法布施", "CN", 1_080L, 324L),
-    )
+    val DEFAULT_LEADERBOARD: List<MeritLeaderboardEntry> = emptyList()
 
-    val DEFAULT_ACHIEVEMENTS = listOf(
-        DharmaAchievement("first-lamp", "初点心灯", "在地球坛城点亮第一盏祈福法灯", "🪔", true),
-        DharmaAchievement("wheel-108", "百八法轮", "累计转动摩尼转经轮满 108 圈", "☸️", true),
-        DharmaAchievement("continents-7", "遍照十方", "向五大洲 10 个以上国家送出法布施", "🌍", false),
-        DharmaAchievement("sutra-30m", "禅定安住", "累计正念诵经与禅修满 30 分钟", "🪷", true),
-    )
+    val DEFAULT_ACHIEVEMENTS: List<DharmaAchievement> = emptyList()
 }
 
 // ============================================================================
@@ -1453,12 +1436,12 @@ object MagpiePresetCatalog {
 data class MagpieGatewayUiState(
     val strategy: MagpieRoutingStrategy = MagpieRoutingStrategy.CHEAPEST,
     val presets: List<MagpieProviderPreset> = MagpiePresetCatalog.PRESETS_48,
-    val totalRequests: Long = 1_428L,
-    val totalPromptTokens: Long = 2_840_120L,
-    val totalCompletionTokens: Long = 692_450L,
-    val totalCostUsd: Double = 1.8426,
-    val piiRedactedCount: Int = 37,
-    val lastRouteExplanation: String = "Cheapest 路由命中 → DeepSeek V3.2 ($0.27/1M) · Rosetta 协议转换: Anthropic Messages → OpenAI Chat · 延迟 182ms",
+    val totalRequests: Long = 0L,
+    val totalPromptTokens: Long = 0L,
+    val totalCompletionTokens: Long = 0L,
+    val totalCostUsd: Double = 0.0,
+    val piiRedactedCount: Int = 0,
+    val lastRouteExplanation: String = "尚未发起请求 · 请先配置 API Key 或同步本地订阅",
     val lastMaskedPreview: String = "",
     val discoveredModels: List<String> = emptyList(),
     val modelsDevStatusLabel: String = "未同步 · 点击拉取 models.dev 实时目录与上游 /models",
@@ -1494,10 +1477,10 @@ data class CodingAgentBotItem(
 )
 
 data class RemoteAssistConfigUi(
-    val assistId: String = "482910375",
-    val allowAssist: Boolean = true,
+    val assistId: String = "",
+    val allowAssist: Boolean = false,
     val codeMode: String = "temporary",
-    val currentCode: String = "839204",
+    val currentCode: String = "",
 )
 
 data class RemoteStreamSettingsUi(

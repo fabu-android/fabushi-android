@@ -67,6 +67,8 @@ fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+pub const DEFAULT_DESKTOP_SERVER_URL: &str = "http://34.46.77.133:8080";
+
 pub fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS tg_accounts (
@@ -85,7 +87,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             two_factor_salt_hex TEXT,
             two_factor_hash_hex TEXT,
             two_factor_hint TEXT,
-            server_endpoint TEXT NOT NULL DEFAULT 'https://telegram.fabushi.ombhrum.com',
+            server_endpoint TEXT NOT NULL DEFAULT 'http://34.46.77.133:8080',
             sync_pts INTEGER NOT NULL DEFAULT 1
         );
         INSERT OR IGNORE INTO tg_fence (singleton_id, generation) VALUES (1, 1);
@@ -152,6 +154,10 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
 
     let _ = conn.execute("ALTER TABLE tg_fence ADD COLUMN auth_token TEXT", []);
     let _ = conn.execute("ALTER TABLE tg_server_outbox ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0", []);
+    let _ = conn.execute("ALTER TABLE tg_fence ADD COLUMN session_user_id INTEGER", []);
+    let _ = conn.execute("ALTER TABLE tg_fence ADD COLUMN session_username TEXT", []);
+    let _ = conn.execute("ALTER TABLE tg_fence ADD COLUMN session_first_name TEXT", []);
+    let _ = conn.execute("ALTER TABLE tg_fence ADD COLUMN session_id TEXT", []);
     let _ = conn.execute("ALTER TABLE tg_server_outbox ADD COLUMN remote_id TEXT", []);
     let _ = conn.execute("ALTER TABLE tg_server_outbox ADD COLUMN flushed_at_ms INTEGER", []);
 
@@ -1308,6 +1314,445 @@ pub fn handle_server_rpc(conn: &Connection, submethod: &str, params: &Value) -> 
             }))
         }
 
+        // ------------------------------------------------------------------
+        // Desktop bhrumom/gpui-telegram real server API (/api/v1/*)
+        // ------------------------------------------------------------------
+        "session" => {
+            let row: (String, Option<String>, Option<i64>, Option<String>, Option<String>, Option<String>) = conn
+                .query_row(
+                    "SELECT server_endpoint, auth_token, session_user_id, session_username, session_first_name, session_id
+                     FROM tg_fence WHERE singleton_id = 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+                )
+                .unwrap_or_else(|_| (DEFAULT_DESKTOP_SERVER_URL.into(), None, None, None, None, None));
+            let has_token = row.1.as_deref().map(|s| !s.is_empty()).unwrap_or(false);
+            Ok(json!({
+                "authenticated": has_token,
+                "endpoint": row.0,
+                "token": row.1.unwrap_or_default(),
+                "userId": row.2,
+                "username": row.3,
+                "firstName": row.4,
+                "sessionId": row.5,
+            }))
+        }
+
+        "login" | "register" | "registerEmail" => {
+            let ep = resolve_server_endpoint(conn, params);
+            let username = params
+                .get("username")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("{submethod} requires 'username'"))?;
+            let password = params
+                .get("password")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| format!("{submethod} requires 'password'"))?;
+            let device_name = params
+                .get("deviceName")
+                .or_else(|| params.get("device_name"))
+                .and_then(Value::as_str)
+                .unwrap_or("Fabushi Android");
+            let first_name = params
+                .get("firstName")
+                .or_else(|| params.get("first_name"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(username);
+
+            let (path, body) = match submethod {
+                "login" => (
+                    "/api/v1/auth/login",
+                    json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": device_name,
+                    }),
+                ),
+                "register" => (
+                    "/api/v1/auth/register",
+                    json!({
+                        "username": username,
+                        "password": password,
+                        "first_name": first_name,
+                        "device_name": device_name,
+                    }),
+                ),
+                _ => {
+                    let email = params
+                        .get("email")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| "registerEmail requires 'email'".to_string())?;
+                    let code = params
+                        .get("code")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| "registerEmail requires 'code'".to_string())?;
+                    (
+                        "/api/v1/auth/email/register",
+                        json!({
+                            "email": email,
+                            "code": code,
+                            "username": username,
+                            "password": password,
+                            "first_name": first_name,
+                        }),
+                    )
+                }
+            };
+
+            let val = desktop_http_json("POST", &format!("{ep}{path}"), None, Some(body))?;
+            persist_server_session(conn, &ep, &val)?;
+            Ok(val)
+        }
+
+        "sendEmailCode" => {
+            let ep = resolve_server_endpoint(conn, params);
+            let email = params
+                .get("email")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "sendEmailCode requires 'email'".to_string())?;
+            desktop_http_json(
+                "POST",
+                &format!("{ep}/api/v1/auth/email/send-code"),
+                None,
+                Some(json!({ "email": email })),
+            )
+        }
+
+        "alipayStart" => {
+            let ep = resolve_server_endpoint(conn, params);
+            desktop_http_json("POST", &format!("{ep}/api/v1/auth/alipay/start"), None, Some(json!({})))
+        }
+
+        "alipayPoll" => {
+            let ep = resolve_server_endpoint(conn, params);
+            let attempt_id = params
+                .get("attemptId")
+                .or_else(|| params.get("attempt_id"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "alipayPoll requires 'attemptId'".to_string())?;
+            let val = desktop_http_json(
+                "GET",
+                &format!("{ep}/api/v1/auth/alipay/poll/{attempt_id}"),
+                None,
+                None,
+            )?;
+            let status = val.get("status").and_then(Value::as_str).unwrap_or("");
+            if status == "complete" || status == "completed" {
+                let session_val = val.get("session").unwrap_or(&val);
+                let _ = persist_server_session(conn, &ep, session_val);
+            }
+            Ok(val)
+        }
+
+        "me" => {
+            let (ep, tok) = require_server_auth(conn, params)?;
+            match desktop_http_json("GET", &format!("{ep}/api/v1/auth/me"), Some(&tok), None) {
+                Ok(val) => {
+                    if let Some(uid) = val.get("user_id").and_then(Value::as_i64) {
+                        let uname = val.get("username").and_then(Value::as_str);
+                        let fname = val.get("first_name").and_then(Value::as_str);
+                        let sid = val.get("session_id").and_then(Value::as_str);
+                        let _ = conn.execute(
+                            "UPDATE tg_fence SET session_user_id = ?1, session_username = COALESCE(?2, session_username), session_first_name = COALESCE(?3, session_first_name), session_id = COALESCE(?4, session_id) WHERE singleton_id = 1",
+                            params![uid, uname, fname, sid],
+                        );
+                    }
+                    Ok(val)
+                }
+                Err(e) if e.contains("HTTP 401") => {
+                    let _ = conn.execute(
+                        "UPDATE tg_fence SET auth_token = NULL, session_user_id = NULL, session_username = NULL, session_first_name = NULL, session_id = NULL WHERE singleton_id = 1",
+                        [],
+                    );
+                    Err(e)
+                }
+                Err(e) => Err(e),
+            }
+        }
+
+        "logout" => {
+            conn.execute(
+                "UPDATE tg_fence SET auth_token = NULL, session_user_id = NULL, session_username = NULL, session_first_name = NULL, session_id = NULL WHERE singleton_id = 1",
+                [],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({ "loggedOut": true }))
+        }
+
+        "listChats" => {
+            let (ep, tok) = require_server_auth(conn, params)?;
+            let val = desktop_http_json("GET", &format!("{ep}/api/v1/chats"), Some(&tok), None)?;
+            if val.is_array() {
+                Ok(json!({ "chats": val }))
+            } else {
+                Ok(val)
+            }
+        }
+
+        "getMessages" => {
+            let (ep, tok) = require_server_auth(conn, params)?;
+            let chat_id = params
+                .get("chatId")
+                .or_else(|| params.get("chat_id"))
+                .and_then(|v| v.as_u64().map(|n| n.to_string()).or_else(|| v.as_str().map(ToString::to_string)))
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| "getMessages requires 'chatId'".to_string())?;
+            let primary = format!("{ep}/api/v1/chats/{chat_id}/messages");
+            let val = match desktop_http_json("GET", &primary, Some(&tok), None) {
+                Ok(v) => v,
+                Err(_) => desktop_http_json(
+                    "GET",
+                    &format!("{ep}/api/v1/messages/history?chat_id={chat_id}"),
+                    Some(&tok),
+                    None,
+                )?,
+            };
+            if val.is_array() {
+                Ok(json!({ "messages": val }))
+            } else {
+                Ok(val)
+            }
+        }
+
+        "sendMessage" => {
+            let (ep, tok) = require_server_auth(conn, params)?;
+            let chat_id = params
+                .get("chatId")
+                .or_else(|| params.get("chat_id"))
+                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                .ok_or_else(|| "sendMessage requires numeric 'chatId'".to_string())?;
+            let text = params
+                .get("text")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
+                .ok_or_else(|| "sendMessage requires non-empty 'text'".to_string())?;
+            let mut body = json!({ "chat_id": chat_id, "text": text });
+            if let Some(reply_to) = params
+                .get("replyTo")
+                .or_else(|| params.get("reply_to"))
+                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+            {
+                body["reply_to"] = json!(reply_to);
+            }
+            desktop_http_json("POST", &format!("{ep}/api/v1/messages/send"), Some(&tok), Some(body))
+        }
+
+        "addContact" => {
+            let (ep, tok) = require_server_auth(conn, params)?;
+            let username = params
+                .get("username")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "addContact requires 'username'".to_string())?;
+            let kind = params.get("kind").and_then(Value::as_str).unwrap_or("user");
+            desktop_http_json(
+                "POST",
+                &format!("{ep}/api/v1/contacts/add"),
+                Some(&tok),
+                Some(json!({
+                    "username": username.trim_start_matches('@'),
+                    "kind": kind,
+                })),
+            )
+        }
+
+        "createChat" => {
+            let (ep, tok) = require_server_auth(conn, params)?;
+            let title = params
+                .get("title")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "createChat requires 'title'".to_string())?;
+            let kind = params.get("kind").and_then(Value::as_str).unwrap_or("group");
+            let member_ids = params
+                .get("memberIds")
+                .or_else(|| params.get("member_ids"))
+                .cloned()
+                .unwrap_or_else(|| json!([]));
+            desktop_http_json(
+                "POST",
+                &format!("{ep}/api/v1/chats/create"),
+                Some(&tok),
+                Some(json!({
+                    "title": title,
+                    "kind": kind,
+                    "member_ids": member_ids,
+                })),
+            )
+        }
+
+        "searchMessages" => {
+            let (ep, tok) = require_server_auth(conn, params)?;
+            let query = params.get("query").or_else(|| params.get("q")).and_then(Value::as_str).unwrap_or("");
+            let category = params.get("category").and_then(Value::as_str).unwrap_or("all");
+            let encoded_q = url_encode_query(query);
+            let encoded_cat = url_encode_query(category);
+            desktop_http_json(
+                "GET",
+                &format!("{ep}/api/v1/search/messages?q={encoded_q}&category={encoded_cat}"),
+                Some(&tok),
+                None,
+            )
+        }
+
         other => Err(format!("Unsupported telegram.server method: {other}")),
     }
+}
+
+fn resolve_server_endpoint(conn: &Connection, params: &Value) -> String {
+    if let Some(ep) = params
+        .get("endpoint")
+        .or_else(|| params.get("serverUrl"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let clean = ep.trim_end_matches('/').to_string();
+        let _ = conn.execute(
+            "UPDATE tg_fence SET server_endpoint = ?1 WHERE singleton_id = 1",
+            params![&clean],
+        );
+        return clean;
+    }
+    conn.query_row(
+        "SELECT server_endpoint FROM tg_fence WHERE singleton_id = 1",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .unwrap_or_else(|_| DEFAULT_DESKTOP_SERVER_URL.to_string())
+    .trim_end_matches('/')
+    .to_string()
+}
+
+fn require_server_auth(conn: &Connection, params: &Value) -> Result<(String, String), String> {
+    let ep = resolve_server_endpoint(conn, params);
+    let token = params
+        .get("token")
+        .or_else(|| params.get("authToken"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            conn.query_row(
+                "SELECT auth_token FROM tg_fence WHERE singleton_id = 1",
+                [],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten()
+            .filter(|s| !s.trim().is_empty())
+        })
+        .ok_or_else(|| "AUTH_REQUIRED: Not logged in to gpui_telegram_server".to_string())?;
+    Ok((ep, token))
+}
+
+fn persist_server_session(conn: &Connection, ep: &str, val: &Value) -> Result<(), String> {
+    let token = val
+        .get("token")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Server auth response missing 'token'".to_string())?;
+    let user_id = val
+        .get("user_id")
+        .or_else(|| val.pointer("/user/user_id"))
+        .and_then(Value::as_i64);
+    let username = val
+        .get("username")
+        .or_else(|| val.pointer("/user/username"))
+        .and_then(Value::as_str);
+    let first_name = val
+        .get("first_name")
+        .or_else(|| val.pointer("/user/first_name"))
+        .and_then(Value::as_str);
+    let session_id = val.get("session_id").and_then(Value::as_str);
+    conn.execute(
+        "UPDATE tg_fence
+         SET server_endpoint = ?1, auth_token = ?2, session_user_id = ?3,
+             session_username = ?4, session_first_name = ?5, session_id = ?6
+         WHERE singleton_id = 1",
+        params![ep.trim_end_matches('/'), token, user_id, username, first_name, session_id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn desktop_http_json(
+    method: &str,
+    url: &str,
+    bearer_token: Option<&str>,
+    body: Option<Value>,
+) -> Result<Value, String> {
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(8))
+        .timeout_read(std::time::Duration::from_secs(15))
+        .build();
+    let mut req = match method {
+        "POST" => agent.post(url).set("Content-Type", "application/json"),
+        "DELETE" => agent.delete(url),
+        _ => agent.get(url),
+    };
+    if let Some(tok) = bearer_token.filter(|s| !s.is_empty()) {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    let result = if let Some(payload) = body {
+        req.send_json(payload)
+    } else {
+        req.call()
+    };
+    match result {
+        Ok(resp) => {
+            let text = resp.into_string().unwrap_or_default();
+            if text.trim().is_empty() {
+                Ok(json!({ "ok": true }))
+            } else {
+                serde_json::from_str::<Value>(&text)
+                    .map_err(|e| format!("Invalid JSON from {url}: {e}"))
+            }
+        }
+        Err(ureq::Error::Status(code, resp)) => {
+            let raw = resp.into_string().unwrap_or_default();
+            let detail = serde_json::from_str::<Value>(&raw)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .or_else(|| v.get("message"))
+                        .and_then(Value::as_str)
+                        .map(ToString::to_string)
+                })
+                .unwrap_or(raw);
+            Err(format!("HTTP {code}: {}", detail.trim()))
+        }
+        Err(ureq::Error::Transport(tr)) => Err(format!("SERVER_UNREACHABLE: {tr}")),
+    }
+}
+
+fn url_encode_query(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for b in raw.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push_str("%20"),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
