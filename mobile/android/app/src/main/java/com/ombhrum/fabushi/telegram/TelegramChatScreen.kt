@@ -197,8 +197,196 @@ fun TelegramChatScreen(
             .testTag("telegram-chat-screen"),
     ) {
         // ====================================================================
-        // 1. Authentic Telegram Android Chat Top AppBar
         // ====================================================================
+        // 1. Desktop v1.6.5 Centered Apple Messages Contact Header / Classic Top Bar
+        // ====================================================================
+        if (palette.isAppleStyle) {
+            val subtitleLine = when {
+                !chat.typingLabel.isNullOrBlank() -> chat.typingLabel
+                chat.kind == ConversationKind.CHANNEL && chat.subscriberCount > 0 -> "${chat.subscriberCount} 位订阅者"
+                chat.kind == ConversationKind.GROUP && chat.memberCount > 0 -> "${chat.memberCount} 位成员${if (chat.isForum) " · 多话题" else ""}"
+                chat.online -> "在线"
+                else -> ""
+            }
+            val glassPillBg = if (palette.isDark) palette.elevatedSurface.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.90f)
+            val glassPillBorder = if (palette.isDark) Color.White.copy(alpha = 0.14f) else Color.Black.copy(alpha = 0.08f)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(palette.topBarBackground.copy(alpha = 0.94f))
+                    .statusBarsPadding()
+                    .testTag("apple-centered-contact-header"),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(78.dp)
+                        .padding(horizontal = 10.dp),
+                ) {
+                    // Left circular glass back button
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(glassPillBg)
+                            .border(0.75.dp, glassPillBorder, CircleShape)
+                            .clickable(onClick = onBack)
+                            .testTag("telegram-chat-back"),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        TelegramIcon(TelegramGlyph.BACK, tint = palette.primaryAccent, size = 19.dp)
+                    }
+
+                    // Center: 38dp Avatar stacked above overlapping frosted Name Pill (Desktop v1.6.5 stage_bars.rs)
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .widthIn(max = 220.dp)
+                            .clickable {
+                                if (chat.isSecretChat) onOpenSecretChatVerify(chat.id)
+                                else if (chat.kind == ConversationKind.CHANNEL) onOpenChannelStats(chat.id)
+                            },
+                    ) {
+                        TelegramAvatar(
+                            idSeed = chat.id,
+                            title = chat.title,
+                            size = 38.dp,
+                            kind = chat.kind,
+                            online = chat.online,
+                            isSecret = chat.isSecretChat,
+                            isCompanionGhost = chat.isCompanionGhost,
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = glassPillBg,
+                            modifier = Modifier
+                                .offset(y = (-4).dp)
+                                .border(0.75.dp, glassPillBorder, RoundedCornerShape(999.dp)),
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(3.dp),
+                            ) {
+                                if (chat.isSecretChat) {
+                                    TelegramIcon(TelegramGlyph.LOCK_CLOSED, tint = palette.secretGreen, size = 11.dp)
+                                }
+                                Text(
+                                    text = chat.title,
+                                    color = palette.primaryText,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text("›", color = palette.secondaryText, fontSize = 12.sp)
+                            }
+                        }
+                        if (subtitleLine.isNotEmpty()) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                if (chat.online && chat.typingLabel.isNullOrBlank()) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(5.5.dp)
+                                            .clip(CircleShape)
+                                            .background(palette.secretGreen),
+                                    )
+                                }
+                                Text(
+                                    text = subtitleLine,
+                                    color = if (!chat.typingLabel.isNullOrBlank()) palette.primaryAccent else palette.secondaryText,
+                                    fontSize = 10.5.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+
+                    // Right floating glass action pill (Call / Video / Search / Overflow)
+                    Row(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .clip(RoundedCornerShape(999.dp))
+                            .background(glassPillBg)
+                            .border(0.75.dp, glassPillBorder, RoundedCornerShape(999.dp))
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onStartVoiceCall),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TelegramIcon(TelegramGlyph.PHONE_CALL, tint = palette.primaryAccent, size = 16.dp)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    onStartVideoCall(chat.kind == ConversationKind.GROUP || chat.kind == ConversationKind.CHANNEL)
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TelegramIcon(TelegramGlyph.VIDEO_CALL, tint = palette.primaryAccent, size = 16.dp)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .clickable { onSetInChatSearch(!state.inChatSearchActive, "") },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TelegramIcon(TelegramGlyph.SEARCH, tint = palette.secondaryText, size = 15.dp)
+                        }
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .clickable { showOverflowMenu = true }
+                                    .testTag("telegram-chat-overflow"),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                TelegramIcon(TelegramGlyph.MORE_VERT, tint = palette.secondaryText, size = 16.dp)
+                            }
+                            DropdownMenu(expanded = showOverflowMenu, onDismissRequest = { showOverflowMenu = false }) {
+                                DropdownMenuItem(
+                                    text = { Text("🎙 开启 <60ms 全双工语音球") },
+                                    onClick = { showOverflowMenu = false; onOpenTalkModeOrb() },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(if (chat.isMuted) "取消静音" else "静音此会话") },
+                                    onClick = { showOverflowMenu = false; onToggleMuteChat(chat.id) },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("设置阅后即焚 TTL") },
+                                    onClick = { showOverflowMenu = false; showTtlDialog = true },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("导出聊天记录 (JSON)") },
+                                    onClick = { showOverflowMenu = false; onExportChatHistory(chat.id, "json") },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("清空聊天记录", color = palette.destructiveRed) },
+                                    onClick = { showOverflowMenu = false; onClearChatHistory(chat.id) },
+                                )
+                            }
+                        }
+                    }
+                }
+                TelegramHairlineDivider()
+            }
+        } else {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -426,49 +614,50 @@ fun TelegramChatScreen(
                     }
                 }
             }
+        }
+        }
 
-            // In-Chat Search Bar
-            AnimatedVisibility(visible = state.inChatSearchActive) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(palette.surfaceColor)
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TelegramIcon(TelegramGlyph.SEARCH, tint = palette.secondaryText, size = 18.dp)
-                    Spacer(Modifier.width(8.dp))
-                    BasicTextField(
-                        value = state.inChatSearchQuery,
-                        onValueChange = { onSetInChatSearch(true, it) },
-                        singleLine = true,
-                        textStyle = TextStyle(color = palette.primaryText, fontSize = 15.sp),
-                        cursorBrush = SolidColor(palette.primaryAccent),
-                        modifier = Modifier.weight(1f),
-                        decorationBox = { inner ->
-                            if (state.inChatSearchQuery.isEmpty()) {
-                                Text("搜索当前对话消息…", color = palette.hintText, fontSize = 14.sp)
-                            }
-                            inner()
-                        },
+        // In-Chat Search Bar (shared between Apple Messages and Classic headers)
+        AnimatedVisibility(visible = state.inChatSearchActive) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(palette.surfaceColor)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TelegramIcon(TelegramGlyph.SEARCH, tint = palette.secondaryText, size = 18.dp)
+                Spacer(Modifier.width(8.dp))
+                BasicTextField(
+                    value = state.inChatSearchQuery,
+                    onValueChange = { onSetInChatSearch(true, it) },
+                    singleLine = true,
+                    textStyle = TextStyle(color = palette.primaryText, fontSize = 15.sp),
+                    cursorBrush = SolidColor(palette.primaryAccent),
+                    modifier = Modifier.weight(1f),
+                    decorationBox = { inner ->
+                        if (state.inChatSearchQuery.isEmpty()) {
+                            Text("搜索当前对话消息…", color = palette.hintText, fontSize = 14.sp)
+                        }
+                        inner()
+                    },
+                )
+                if (state.inChatSearchQuery.isNotBlank()) {
+                    Text(
+                        text = "${filteredMessages.size} 条匹配",
+                        color = palette.primaryAccent,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(end = 8.dp),
                     )
-                    if (state.inChatSearchQuery.isNotBlank()) {
-                        Text(
-                            text = "${filteredMessages.size} 条匹配",
-                            color = palette.primaryAccent,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(end = 8.dp),
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .clickable { onSetInChatSearch(false, "") },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        TelegramIcon(TelegramGlyph.CLOSE, tint = palette.secondaryText, size = 16.dp)
-                    }
+                }
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .clickable { onSetInChatSearch(false, "") },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TelegramIcon(TelegramGlyph.CLOSE, tint = palette.secondaryText, size = 16.dp)
                 }
             }
         }

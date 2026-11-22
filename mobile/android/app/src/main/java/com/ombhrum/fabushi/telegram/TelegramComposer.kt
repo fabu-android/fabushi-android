@@ -323,6 +323,148 @@ fun TelegramComposer(
                     Text(if (recordingState.mode == ComposerRecordMode.ROUND_VIDEO_NOTE) "发送圆视频" else "发送语音")
                 }
             }
+        } else if (palette.isAppleStyle) {
+            // Desktop v1.6.0 Apple Messages composer strip (composer_ui.rs parity)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .testTag("apple-messages-composer-row"),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // Circular '+' attachment button
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(CircleShape)
+                        .background(palette.elevatedSurface)
+                        .clickable { showAttachmentSheet = true }
+                        .testTag("telegram-attach-button"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("+", color = palette.secondaryText, fontSize = 21.sp, fontWeight = FontWeight.Normal)
+                }
+
+                // Full-pill text input container with inline Aa, Emoji, and embedded Send Up-Arrow / Mic
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(20.dp))
+                        .background(if (palette.isDark) palette.elevatedSurface else palette.surfaceColor)
+                        .border(0.75.dp, palette.dividerColor, RoundedCornerShape(20.dp))
+                        .padding(start = 14.dp, end = 5.dp, top = 5.dp, bottom = 5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Box(modifier = Modifier.weight(1f)) {
+                        BasicTextField(
+                            value = tfv,
+                            onValueChange = { next ->
+                                tfv = next
+                                onDraftChange(next.text)
+                            },
+                            maxLines = 6,
+                            textStyle = TextStyle(color = palette.primaryText, fontSize = palette.settings.boundedFontSp),
+                            cursorBrush = SolidColor(palette.primaryAccent),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("telegram-composer-input"),
+                            decorationBox = { inner ->
+                                if (tfv.text.isEmpty()) {
+                                    Text("信息", color = palette.hintText, fontSize = 15.sp)
+                                }
+                                inner()
+                            },
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable { showFormatBar = !showFormatBar }
+                            .padding(horizontal = 5.dp, vertical = 3.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "Aa",
+                            color = if (showFormatBar) palette.primaryAccent else palette.secondaryText,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .clip(CircleShape)
+                            .clickable { showEmojiStickerPanel = !showEmojiStickerPanel },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        TelegramIcon(
+                            TelegramGlyph.EMOJI_SMILE,
+                            tint = if (showEmojiStickerPanel) palette.primaryAccent else palette.secondaryText,
+                            size = 18.dp,
+                        )
+                    }
+                    if (tfv.text.isNotBlank()) {
+                        Box {
+                            Box(
+                                modifier = Modifier
+                                    .size(28.dp)
+                                    .clip(CircleShape)
+                                    .background(palette.primaryAccent)
+                                    .combinedClickable(
+                                        onClick = {
+                                            val sending = tfv.text
+                                            tfv = TextFieldValue("")
+                                            onSendMessage(sending, false, null, null)
+                                        },
+                                        onLongClick = { showSendOptionsMenu = true },
+                                    )
+                                    .testTag("telegram-send-button"),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("↑", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            }
+                            DropdownMenu(
+                                expanded = showSendOptionsMenu,
+                                onDismissRequest = { showSendOptionsMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("🔕 静音发送") },
+                                    onClick = {
+                                        showSendOptionsMenu = false
+                                        val sending = tfv.text
+                                        tfv = TextFieldValue("")
+                                        onSendMessage(sending, true, null, null)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("🕒 1 分钟后定时发送") },
+                                    onClick = {
+                                        showSendOptionsMenu = false
+                                        val sending = tfv.text
+                                        tfv = TextFieldValue("")
+                                        onSendMessage(sending, false, System.currentTimeMillis() + 60_000L, null)
+                                    },
+                                )
+                            }
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable {
+                                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                                    if (granted) onStartRecording() else audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TelegramIcon(TelegramGlyph.MIC, tint = palette.secondaryText, size = 18.dp)
+                        }
+                    }
+                }
+            }
         } else {
             Row(
                 modifier = Modifier
@@ -341,21 +483,11 @@ fun TelegramComposer(
                     TelegramIcon(TelegramGlyph.EMOJI_SMILE, tint = if (showEmojiStickerPanel) palette.primaryAccent else palette.hintText, size = 23.dp)
                 }
 
-                // Rich Input Field (Apple Messages pill capsule in v1.6.0 Apple style)
+                // Classic Input Field
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .then(
-                            if (palette.isAppleStyle) {
-                                Modifier
-                                    .clip(RoundedCornerShape(20.dp))
-                                    .background(palette.elevatedSurface)
-                                    .border(0.75.dp, palette.dividerColor, RoundedCornerShape(20.dp))
-                                    .padding(horizontal = 14.dp, vertical = 9.dp)
-                            } else {
-                                Modifier.padding(vertical = 8.dp, horizontal = 4.dp)
-                            },
-                        ),
+                        .padding(vertical = 8.dp, horizontal = 4.dp),
                 ) {
                     BasicTextField(
                         value = tfv,

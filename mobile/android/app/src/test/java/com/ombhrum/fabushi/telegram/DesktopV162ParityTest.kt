@@ -92,14 +92,52 @@ class DesktopV162ParityTest {
     }
 
     @Test
-    fun jniHostExercisesDesktopV162VaultCodingRemoteMagpieAndWebMcpEndToEnd() {
-        val (context, dir) = createTempContext("jni_v162")
+    fun zeroFakeDataInDefaultUiModelsAndAppleMessagesDefaultTheme() {
+        val ui = TelegramUiState()
+        assertFalse(ui.isAuthenticated)
+        assertFalse(ui.offlineLocalMode)
+        assertEquals(DEFAULT_DESKTOP_SERVER_URL, ui.serverEndpoint)
+        assertTrue(ui.accounts.isEmpty())
+        assertTrue(ui.stories.isEmpty())
+        assertTrue(ui.chats.isEmpty())
+        assertTrue(ui.messagesByChat.isEmpty())
+        assertTrue(ui.callHistory.isEmpty())
+        assertEquals(TelegramThemePreset.APPLE_DAY, ui.themeSettings.preset)
+        assertEquals(TelegramWallpaperStyle.SOLID_MINIMAL, ui.themeSettings.wallpaperStyle)
+
+        val wallet = TonWalletUiState()
+        assertFalse(wallet.initialized)
+        assertEquals("", wallet.addressFriendly)
+        assertTrue(wallet.mnemonicWords.isEmpty())
+        assertEquals(0.0, wallet.tonBalance, 0.0)
+        assertEquals(0L, wallet.starsBalance)
+
+        val dharma = GlobalDharmaUiState()
+        assertEquals(0L, dharma.totalGlobalOfferings)
+        assertEquals(0L, dharma.myMeritPoints)
+        assertTrue(dharma.leaderboard.isEmpty())
+        assertTrue(dharma.achievements.isEmpty())
+        assertTrue(dharma.countries.all { it.offeringsCount == 0L && !it.lampLitByMe })
+
+        val magpie = MagpieGatewayUiState()
+        assertEquals(0L, magpie.totalRequests)
+        assertEquals(0.0, magpie.totalCostUsd, 0.0)
+        assertEquals(0, magpie.piiRedactedCount)
+
+        val assist = RemoteAssistConfigUi()
+        assertEquals("", assist.assistId)
+        assertEquals("", assist.currentCode)
+    }
+
+    @Test
+    fun jniHostExercisesDesktopV165VaultCodingRemoteMagpieWebMcpAndServerApiEndToEnd() {
+        val (context, dir) = createTempContext("jni_v165")
         try {
             MahayanaHost(context, featureHostTest = true).use { host ->
-                // 1. feature.info reports desktop v1.6.2 parity
+                // 1. feature.info reports desktop v1.6.5 parity
                 val info = host.request("feature.info")
-                assertEquals("1.6.2", info.getString("desktopParityVersion"))
-                assertEquals("9542524", info.getString("desktopParityCommit"))
+                assertEquals("1.6.5", info.getString("desktopParityVersion"))
+                assertEquals("db06f9c", info.getString("desktopParityCommit"))
 
                 // 2. Zero-Knowledge Split-Key V2 + X25519 Device Trust Ring atomic wipe
                 val env = host.request(
@@ -201,6 +239,45 @@ class DesktopV162ParityTest {
                 )
                 assertEquals("ai_controlling", webmcp.getString("controlMode"))
                 assertTrue(webmcp.getBoolean("pipMinimized"))
+
+                // 7. Real loopback gpui_telegram_server /api/v1/* auth & dialogs
+                java.net.ServerSocket(0).use { srv ->
+                    val port = srv.localPort
+                    val thread = Thread {
+                        repeat(3) {
+                            srv.accept().use { sock ->
+                                val reqLine = sock.getInputStream().bufferedReader().readLine().orEmpty()
+                                val body = when {
+                                    reqLine.startsWith("POST /api/v1/auth/login") ->
+                                        """{"user_id":77,"username":"real_user","session_id":"s77","token":"tok_77","first_name":"Real"}"""
+                                    reqLine.startsWith("GET /api/v1/chats") ->
+                                        """[{"id":501,"title":"Real Server Chat","kind":"direct","last_message_text":"Hi"}]"""
+                                    else -> """{"message_id":999,"ok":true}"""
+                                }
+                                val resp = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ${body.toByteArray().size}\r\nConnection: close\r\n\r\n$body"
+                                sock.getOutputStream().write(resp.toByteArray())
+                                sock.getOutputStream().flush()
+                            }
+                        }
+                    }
+                    thread.start()
+                    val login = host.request(
+                        "telegram.server.login",
+                        JSONObject()
+                            .put("endpoint", "http://127.0.0.1:$port")
+                            .put("username", "real_user")
+                            .put("password", "pass123"),
+                    )
+                    assertEquals("tok_77", login.getString("token"))
+                    val chats = host.request("telegram.server.listChats")
+                    assertEquals("Real Server Chat", chats.getJSONArray("chats").getJSONObject(0).getString("title"))
+                    val sent = host.request(
+                        "telegram.server.sendMessage",
+                        JSONObject().put("chatId", 501).put("text", "Hello over JNI"),
+                    )
+                    assertEquals(999, sent.getInt("message_id"))
+                    thread.join(3000)
+                }
             }
         } finally {
             dir.deleteRecursively()

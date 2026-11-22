@@ -34,8 +34,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.json.JSONArray
 import org.json.JSONObject
+
+const val DEFAULT_DESKTOP_SERVER_URL = "http://34.46.77.133:8080"
 
 enum class TelegramSubScreen {
     HOME,
@@ -81,8 +88,17 @@ data class CallHistoryEntry(
 data class TelegramUiState(
     val subScreen: TelegramSubScreen = TelegramSubScreen.HOME,
     val settingsPage: TelegramSettingsPage = TelegramSettingsPage.OVERVIEW,
-    val syncStatusLabel: String = "Telegram",
-    val serverEndpoint: String = "https://telegram-sync.ombhrum.com",
+    val isAuthenticated: Boolean = false,
+    val offlineLocalMode: Boolean = false,
+    val isAuthenticating: Boolean = false,
+    val authError: String? = null,
+    val alipayAttemptId: String? = null,
+    val alipayLoginUrl: String? = null,
+    val alipayStatusText: String? = null,
+    val emailCodeSentNotice: String? = null,
+    val serverWsConnected: Boolean = false,
+    val syncStatusLabel: String = "信息",
+    val serverEndpoint: String = DEFAULT_DESKTOP_SERVER_URL,
     val proxyEnabled: Boolean = false,
     val proxyHost: String = "127.0.0.1:1080",
     val uiLanguage: String = "简体中文",
@@ -90,15 +106,15 @@ data class TelegramUiState(
     val autoTranslateChannels: Boolean = false,
     val powerSavingThreshold: Int = 20,
     val inAppSoundsEnabled: Boolean = true,
-    val storageCacheMb: Double = 24.6,
-    val twoFactorEnabled: Boolean = true,
+    val storageCacheMb: Double = 0.0,
+    val twoFactorEnabled: Boolean = false,
     val themeSettings: TelegramThemeSettings = TelegramThemeSettings(),
     val passcodeConfigured: Boolean = false,
     val biometricUnlockEnabled: Boolean = true,
     val isLocked: Boolean = false,
     val passcodeError: String? = null,
     val accounts: List<TelegramAccount> = emptyList(),
-    val activeAccountId: String = "acc-primary",
+    val activeAccountId: String = "",
     val stories: List<TelegramStoryItem> = emptyList(),
     val viewingStoryId: String? = null,
     val folderTabs: List<TelegramFolderTab> = TelegramFolderFilter.DEFAULT_BUILT_IN_TABS,
@@ -154,20 +170,23 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
     private val prefs = appContext.getSharedPreferences("fabushi.telegram.prefs", 0)
     private val generationFence = GenerationFence(1L)
     private val voiceRecorder = NativeVoiceRecorder(appContext)
+    private val wsHttpClient by lazy { OkHttpClient.Builder().build() }
+    private var serverWebSocket: WebSocket? = null
+    private var currentServerUserId: Long? = null
 
     private val mahayanaHost: MahayanaHost? by lazy {
         runCatching { MahayanaHost(appContext) }.getOrNull()
     }
 
     private var mikaBridge: MikaBridgeCallbacks? = null
-    private var actorId: String = "actor:local-primary"
+    private var actorId: String = "actor:local"
     private var recordingTimerJob: Job? = null
     private var audioProgressJob: Job? = null
     private var callTimerJob: Job? = null
     private var activeMediaPlayer: MediaPlayer? = null
     private val cachedVoiceBlobs = mutableMapOf<String, ByteArray>()
 
-    private val _state = MutableStateFlow(buildInitialSeedState())
+    private val _state = MutableStateFlow(buildCleanInitialState())
     val state: StateFlow<TelegramUiState> = _state.asStateFlow()
 
     init {
@@ -176,12 +195,21 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
     }
 
     // ------------------------------------------------------------------------
-    // Host RPC Dispatch with Graceful Fallback
+    // Host RPC Dispatch with Explicit Error Propagation
     // ------------------------------------------------------------------------
 
     private fun hostRequestOrNull(method: String, params: JSONObject = JSONObject()): JSONObject? {
         val host = mahayanaHost ?: return null
         return runCatching { host.request(method, params) }.getOrNull()
+    }
+
+    private fun hostRequestWithError(method: String, params: JSONObject = JSONObject()): Pair<JSONObject?, String?> {
+        val host = mahayanaHost ?: return null to "原生 Rust Host 未初始化"
+        return try {
+            host.request(method, params) to null
+        } catch (t: Throwable) {
+            null to (t.message ?: t.javaClass.simpleName)
+        }
     }
 
     fun attachMikaBridge(callbacks: MikaBridgeCallbacks?) {
@@ -205,25 +233,29 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
     }
 
     private fun restorePersistedSettings() {
-        val presetWire = prefs.getString("theme_preset", TelegramThemePreset.DAY_BLUE.wire)
-        val preset = TelegramThemePreset.entries.firstOrNull { it.wire == presetWire } ?: TelegramThemePreset.DAY_BLUE
-        val wallpaperWire = prefs.getString("wallpaper_style", TelegramWallpaperStyle.DOODLE_CLASSIC.wire)
-        val wallpaper = TelegramWallpaperStyle.entries.firstOrNull { it.wire == wallpaperWire } ?: TelegramWallpaperStyle.DOODLE_CLASSIC
+        val presetWire = prefs.getString("theme_preset", TelegramThemePreset.APPLE_DAY.wire)
+        val preset = TelegramThemePreset.entries.firstOrNull { it.wire == presetWire } ?: TelegramThemePreset.APPLE_DAY
+        val wallpaperWire = prefs.getString("wallpaper_style", TelegramWallpaperStyle.SOLID_MINIMAL.wire)
+        val wallpaper = TelegramWallpaperStyle.entries.firstOrNull { it.wire == wallpaperWire } ?: TelegramWallpaperStyle.SOLID_MINIMAL
         val savedPin = prefs.getString("passcode_pin", null)
-        val endpoint = prefs.getString("server_endpoint", "https://telegram-sync.ombhrum.com") ?: "https://telegram-sync.ombhrum.com"
+        val savedEndpoint = prefs.getString("server_endpoint", DEFAULT_DESKTOP_SERVER_URL)
+            ?.takeIf { it.isNotBlank() && it != "https://telegram-sync.ombhrum.com" }
+            ?: DEFAULT_DESKTOP_SERVER_URL
+        val savedOffline = prefs.getBoolean("offline_local_mode", false)
         _state.update { current ->
             current.copy(
-                serverEndpoint = endpoint,
+                serverEndpoint = savedEndpoint,
+                offlineLocalMode = savedOffline,
                 passcodeConfigured = !savedPin.isNullOrBlank(),
                 isLocked = !savedPin.isNullOrBlank(),
                 themeSettings = current.themeSettings.copy(
                     preset = preset,
-                    customAccentArgb = prefs.getLong("custom_accent", 0xFF8E44ADL),
+                    customAccentArgb = prefs.getLong("custom_accent", 0xFF007AFFL),
                     customDark = prefs.getBoolean("custom_dark", false),
-                    bubbleCornerRadiusDp = prefs.getInt("bubble_radius", 16).coerceIn(4, 18),
-                    messageFontSizeSp = prefs.getInt("font_size", 16).coerceIn(12, 22),
+                    bubbleCornerRadiusDp = prefs.getInt("bubble_radius", 18).coerceIn(4, 22),
+                    messageFontSizeSp = prefs.getInt("font_size", 15).coerceIn(12, 22),
                     wallpaperStyle = wallpaper,
-                    wallpaperDimPercent = prefs.getInt("wallpaper_dim", 12).coerceIn(0, 80),
+                    wallpaperDimPercent = prefs.getInt("wallpaper_dim", 0).coerceIn(0, 80),
                 ),
             )
         }
@@ -234,10 +266,41 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(syncStatusLabel = "同步中…") }
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                val auth = hostRequestOrNull("feature.auth.status")
-                val userObj = auth?.optJSONObject("user")
-                val resolvedName = userObj?.optString("nickname")?.ifBlank { null }
-                    ?: userObj?.optString("username")?.ifBlank { null }
+                val serverSession = hostRequestOrNull("telegram.server.session")
+                val hasServerToken = serverSession?.optBoolean("authenticated", false) == true
+                val sessionToken = serverSession?.optString("token").orEmpty()
+                val sessionEndpoint = serverSession?.optString("endpoint")?.ifBlank { null }
+                    ?: _state.value.serverEndpoint
+
+                var liveAuthenticated = false
+                var liveUserId: Long? = null
+                var liveUsername: String? = null
+                var liveFirstName: String? = null
+                var serverChatsParsed: List<TelegramChatItem>? = null
+
+                if (hasServerToken && sessionToken.isNotBlank()) {
+                    val (meResp, meErr) = hostRequestWithError("telegram.server.me")
+                    if (meResp != null) {
+                        liveAuthenticated = true
+                        liveUserId = meResp.optLong("user_id").takeIf { it > 0L }
+                            ?: serverSession?.optLong("userId")?.takeIf { it > 0L }
+                        liveUsername = meResp.optString("username").ifBlank { null }
+                            ?: serverSession?.optString("username")?.ifBlank { null }
+                        liveFirstName = meResp.optString("first_name").ifBlank { null }
+                            ?: serverSession?.optString("firstName")?.ifBlank { null }
+                        val chatsResp = hostRequestOrNull("telegram.server.listChats")
+                        serverChatsParsed = parseServerChats(chatsResp)
+                    } else if (meErr?.contains("HTTP 401") == true) {
+                        liveAuthenticated = false
+                    } else {
+                        // Offline or temporary network error: keep stored authenticated identity without fabricating chats
+                        liveAuthenticated = true
+                        liveUserId = serverSession?.optLong("userId")?.takeIf { it > 0L }
+                        liveUsername = serverSession?.optString("username")?.ifBlank { null }
+                        liveFirstName = serverSession?.optString("firstName")?.ifBlank { null }
+                    }
+                }
+
                 val access = hostRequestOrNull(
                     "feature.messaging.access.issue",
                     JSONObject()
@@ -247,7 +310,7 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                 )
                 access?.optString("actorId")?.takeIf { it.isNotBlank() }?.let { actorId = it }
 
-                // Sync protocol v2 conversations if available
+                // Sync protocol v2 local SQLite conversations if available
                 val syncId = "tg-sync-${UUID.randomUUID()}"
                 val syncEnvelope = JSONObject()
                     .put("protocolVersion", 2)
@@ -255,7 +318,6 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                     .put("command", JSONObject().put("type", "sync").put("cursor", JSONObject.NULL).put("limit", 500))
                 val syncResult = hostRequestOrNull("feature.messaging.execute", JSONObject().put("requestId", syncId).put("envelope", syncEnvelope))
 
-                // Optional extended Telegram/Wallet/Dharma/Hermes/Magpie/Computer/v1.6.2 status calls
                 val walletResp = hostRequestOrNull("wallet.status")
                 val dharmaResp = hostRequestOrNull("fabushiMiniapp.bootstrap")
                 val mikaResp = hostRequestOrNull("mika.bridgeStatus")
@@ -263,29 +325,52 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                 val streamResp = hostRequestOrNull("remote.getStreamSettings")
                 val mcpGrantsResp = hostRequestOrNull("remote.listMcpGrants")
                 val codingBotsResp = hostRequestOrNull("codingAgent.listBots")
+                val computerNodesResp = hostRequestOrNull("computer.listNodes")
+                val vaultUid = liveUserId?.let { "user:$it" } ?: _state.value.activeAccountId.ifBlank { "local" }
                 val vaultEnvResp = hostRequestOrNull(
                     "userVault.getEnvelope",
-                    JSONObject().put("userId", _state.value.activeAccountId),
+                    JSONObject().put("userId", vaultUid),
                 )
 
                 if (!generationFence.isCurrent(capturedGen)) return@withContext
+                currentServerUserId = liveUserId
+
+                if (liveAuthenticated && sessionToken.isNotBlank()) {
+                    connectServerWebSocket(sessionEndpoint, sessionToken)
+                }
 
                 _state.update { prev ->
-                    var next = prev.copy(syncStatusLabel = "Telegram")
-                    if (!resolvedName.isNullOrBlank()) {
-                        next = next.copy(
-                            accounts = next.accounts.map { acc ->
-                                if (acc.id == next.activeAccountId) acc.copy(displayName = resolvedName) else acc
-                            },
+                    val displayName = liveFirstName?.ifBlank { null } ?: liveUsername?.ifBlank { null }
+                    val resolvedAccount = if (liveAuthenticated && !displayName.isNullOrBlank()) {
+                        TelegramAccount(
+                            id = liveUserId?.let { "user:$it" } ?: "user:${liveUsername ?: "me"}",
+                            slotIndex = 0,
+                            displayName = displayName,
+                            username = liveUsername?.let { if (it.startsWith("@")) it else "@$it" } ?: "",
+                            phone = "",
+                            bio = sessionEndpoint,
+                            isActive = true,
                         )
-                    }
-                    if (syncResult != null) {
+                    } else null
+
+                    var next = prev.copy(
+                        isAuthenticated = liveAuthenticated,
+                        serverEndpoint = sessionEndpoint,
+                        syncStatusLabel = if (liveAuthenticated) "信息" else "信息（离线）",
+                        accounts = if (resolvedAccount != null) listOf(resolvedAccount) else prev.accounts,
+                        activeAccountId = resolvedAccount?.id ?: prev.activeAccountId,
+                    )
+                    if (serverChatsParsed != null) {
+                        val merged = mergeServerChats(next.chats, serverChatsParsed)
+                        next = next.copy(chats = sortTelegramChats(merged))
+                    } else if (syncResult != null) {
                         next = mergeHostSyncEnvelopes(next, syncResult.optJSONArray("envelopes") ?: JSONArray())
                     }
-                    if (walletResp != null && walletResp.has("tonBalance")) {
+                    if (walletResp != null && walletResp.optBoolean("initialized", false)) {
                         next = next.copy(
                             tonWallet = next.tonWallet.copy(
-                                addressFriendly = walletResp.optString("address", next.tonWallet.addressFriendly).ifBlank { next.tonWallet.addressFriendly },
+                                initialized = true,
+                                addressFriendly = walletResp.optString("address", next.tonWallet.addressFriendly),
                                 tonBalance = walletResp.optDouble("tonBalance", next.tonWallet.tonBalance),
                                 starsBalance = walletResp.optLong("starsBalance", next.tonWallet.starsBalance),
                             ),
@@ -294,15 +379,15 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                     if (dharmaResp != null && dharmaResp.has("totalGlobalOfferings")) {
                         next = next.copy(
                             globalDharma = next.globalDharma.copy(
-                                totalGlobalOfferings = dharmaResp.optLong("totalGlobalOfferings", next.globalDharma.totalGlobalOfferings),
-                                myMeritPoints = dharmaResp.optLong("myMeritPoints", next.globalDharma.myMeritPoints),
+                                totalGlobalOfferings = dharmaResp.optLong("totalGlobalOfferings", 0L),
+                                myMeritPoints = dharmaResp.optLong("myMeritPoints", 0L),
                             ),
                         )
                     }
                     if (mikaResp != null && mikaBridge == null) {
                         next = next.copy(
                             mikaSnapshot = next.mikaSnapshot.copy(
-                                available = mikaResp.optBoolean("available", true),
+                                available = mikaResp.optBoolean("available", false),
                             ),
                         )
                     }
@@ -310,10 +395,10 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                         next = next.copy(
                             cloudComputer = next.cloudComputer.copy(
                                 assistConfig = RemoteAssistConfigUi(
-                                    assistId = assistResp.optString("assist_id", next.cloudComputer.assistConfig.assistId),
-                                    allowAssist = assistResp.optBoolean("allow_assist", true),
+                                    assistId = assistResp.optString("assist_id", ""),
+                                    allowAssist = assistResp.optBoolean("allow_assist", false),
                                     codeMode = assistResp.optString("code_mode", "temporary"),
-                                    currentCode = assistResp.optString("current_code", next.cloudComputer.assistConfig.currentCode),
+                                    currentCode = assistResp.optString("current_code", ""),
                                 ),
                             ),
                         )
@@ -334,6 +419,32 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                                 ),
                             ),
                         )
+                    }
+                    val nodesArr = computerNodesResp?.optJSONArray("nodes")
+                    if (nodesArr != null) {
+                        val parsedNodes = buildList {
+                            for (i in 0 until nodesArr.length()) {
+                                val n = nodesArr.optJSONObject(i) ?: continue
+                                val kind = when (n.optString("kind")) {
+                                    "cloud_server" -> ComputerNodeKind.CLOUD_SERVER
+                                    "cloud_sandbox" -> ComputerNodeKind.CLOUD_SANDBOX
+                                    else -> ComputerNodeKind.LOCAL_DEVICE
+                                }
+                                add(
+                                    ComputerNodeItem(
+                                        id = n.optString("nodeId"),
+                                        name = n.optString("name"),
+                                        kind = kind,
+                                        osInfo = n.optString("osPlatform", "android"),
+                                        online = n.optString("status") == "online",
+                                        cpuLoadPercent = 0,
+                                        memorySummary = "${n.optInt("viewportWidth", 1080)}x${n.optInt("viewportHeight", 2400)}",
+                                        leaseOwner = n.optString("leaseHolder").ifBlank { null },
+                                    ),
+                                )
+                            }
+                        }
+                        next = next.copy(cloudComputer = next.cloudComputer.copy(nodes = parsedNodes))
                     }
                     val grantsArr = mcpGrantsResp?.optJSONArray("grants")
                     if (grantsArr != null) {
@@ -899,6 +1010,10 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                 selectedChatIds = emptySet(),
             )
         }
+        val numericId = chatId.toLongOrNull()
+        if (_state.value.isAuthenticated && numericId != null) {
+            fetchServerMessagesForChat(chatId, numericId)
+        }
     }
 
     fun closeChat() {
@@ -916,6 +1031,25 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun openSavedMessages() {
+        val existing = _state.value.chats.firstOrNull {
+            it.kind == ConversationKind.SAVED_MESSAGES || it.id == "saved-messages"
+        }
+        if (existing != null) {
+            openChat(existing.id)
+            return
+        }
+        val saved = TelegramChatItem(
+            id = "saved-messages",
+            title = "收藏夹 (Saved Messages)",
+            subtitle = "个人笔记与文件箱",
+            preview = "",
+            time = nowTimeLabel(),
+            kind = ConversationKind.SAVED_MESSAGES,
+            isPinned = true,
+        )
+        _state.update { cur ->
+            cur.copy(chats = sortTelegramChats(listOf(saved) + cur.chats))
+        }
         openChat("saved-messages")
     }
 
@@ -1166,7 +1300,24 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
         appendMessageToChat(conversationId, newMsg, clearDraft = true)
 
         viewModelScope.launch(Dispatchers.IO) {
-            if (currentChat?.isSecretChat == true) {
+            val numericChatId = conversationId.toLongOrNull()
+            if (_state.value.isAuthenticated && numericChatId != null && currentChat?.isSecretChat != true) {
+                val payload = JSONObject()
+                    .put("chatId", numericChatId)
+                    .put("text", plainText)
+                reply?.id?.toLongOrNull()?.let { payload.put("replyTo", it) }
+                val (resp, err) = hostRequestWithError("telegram.server.sendMessage", payload)
+                if (resp != null) {
+                    val serverMsgId = resp.optLong("message_id").takeIf { it > 0L }?.toString()
+                    if (serverMsgId != null) {
+                        updateMessageInChat(conversationId, msgId) {
+                            it.copy(id = serverMsgId, deliveryState = "sent")
+                        }
+                    }
+                } else if (!err.isNullOrBlank()) {
+                    postBanner("发送失败：$err")
+                }
+            } else if (currentChat?.isSecretChat == true) {
                 hostRequestOrNull(
                     "telegram.e2ee.sendEncrypted",
                     JSONObject().put("conversationId", conversationId).put("plaintext", plainText),
@@ -3104,7 +3255,437 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
     private fun nowTimeLabel(epochMs: Long = System.currentTimeMillis()): String =
         TelegramLocalTimeFormatter.formatLocalTime(epochMs)
 
+    // ------------------------------------------------------------------------
+    // Real Desktop gpui_telegram_server Auth, Contacts, History & WebSocket
+    // ------------------------------------------------------------------------
+
+    fun updateDesktopServerEndpoint(url: String) {
+        val clean = url.trim().trimEnd('/').ifBlank { DEFAULT_DESKTOP_SERVER_URL }
+        prefs.edit().putString("server_endpoint", clean).apply()
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull("telegram.server.setEndpoint", JSONObject().put("endpoint", clean))
+        }
+        _state.update { it.copy(serverEndpoint = clean, authError = null, toastBanner = "服务器地址已更新：$clean") }
+    }
+
+    fun loginWithPassword(username: String, password: String) {
+        val ep = _state.value.serverEndpoint
+        _state.update { it.copy(isAuthenticating = true, authError = null) }
+        viewModelScope.launch {
+            val (resp, err) = withContext(Dispatchers.IO) {
+                hostRequestWithError(
+                    "telegram.server.login",
+                    JSONObject()
+                        .put("endpoint", ep)
+                        .put("username", username)
+                        .put("password", password)
+                        .put("deviceName", "Fabushi Android (${Build.MODEL})"),
+                )
+            }
+            if (resp != null) {
+                prefs.edit().putBoolean("offline_local_mode", false).apply()
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        isAuthenticated = true,
+                        offlineLocalMode = false,
+                        authError = null,
+                        toastBanner = "已登录 ${resp.optString("username", username)}",
+                    )
+                }
+                refreshAllFromHost()
+            } else {
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        authError = err ?: "登录失败，请检查服务器地址与账号密码",
+                    )
+                }
+            }
+        }
+    }
+
+    fun registerWithPassword(username: String, password: String, firstName: String) {
+        val ep = _state.value.serverEndpoint
+        _state.update { it.copy(isAuthenticating = true, authError = null) }
+        viewModelScope.launch {
+            val (resp, err) = withContext(Dispatchers.IO) {
+                hostRequestWithError(
+                    "telegram.server.register",
+                    JSONObject()
+                        .put("endpoint", ep)
+                        .put("username", username)
+                        .put("password", password)
+                        .put("firstName", firstName.ifBlank { username })
+                        .put("deviceName", "Fabushi Android (${Build.MODEL})"),
+                )
+            }
+            if (resp != null) {
+                prefs.edit().putBoolean("offline_local_mode", false).apply()
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        isAuthenticated = true,
+                        offlineLocalMode = false,
+                        authError = null,
+                        toastBanner = "注册并登录成功",
+                    )
+                }
+                refreshAllFromHost()
+            } else {
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        authError = err ?: "注册失败，请检查服务器响应",
+                    )
+                }
+            }
+        }
+    }
+
+    fun sendEmailVerificationCode(email: String) {
+        val ep = _state.value.serverEndpoint
+        _state.update { it.copy(isAuthenticating = true, authError = null, emailCodeSentNotice = null) }
+        viewModelScope.launch {
+            val (resp, err) = withContext(Dispatchers.IO) {
+                hostRequestWithError(
+                    "telegram.server.sendEmailCode",
+                    JSONObject().put("endpoint", ep).put("email", email),
+                )
+            }
+            if (resp != null) {
+                val debugCode = resp.optString("debug_code").ifBlank { null }
+                val notice = if (debugCode != null) "验证码已发送（调试码：$debugCode）" else "验证码已发送至 $email"
+                _state.update { it.copy(isAuthenticating = false, emailCodeSentNotice = notice) }
+            } else {
+                _state.update { it.copy(isAuthenticating = false, authError = err ?: "发送验证码失败") }
+            }
+        }
+    }
+
+    fun registerWithEmail(email: String, code: String, username: String, password: String, firstName: String) {
+        val ep = _state.value.serverEndpoint
+        _state.update { it.copy(isAuthenticating = true, authError = null) }
+        viewModelScope.launch {
+            val (resp, err) = withContext(Dispatchers.IO) {
+                hostRequestWithError(
+                    "telegram.server.registerEmail",
+                    JSONObject()
+                        .put("endpoint", ep)
+                        .put("email", email)
+                        .put("code", code)
+                        .put("username", username)
+                        .put("password", password)
+                        .put("firstName", firstName.ifBlank { username }),
+                )
+            }
+            if (resp != null) {
+                prefs.edit().putBoolean("offline_local_mode", false).apply()
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        isAuthenticated = true,
+                        offlineLocalMode = false,
+                        authError = null,
+                        toastBanner = "邮箱注册并登录成功",
+                    )
+                }
+                refreshAllFromHost()
+            } else {
+                _state.update { it.copy(isAuthenticating = false, authError = err ?: "邮箱注册失败") }
+            }
+        }
+    }
+
+    fun startAlipayLogin() {
+        val ep = _state.value.serverEndpoint
+        _state.update { it.copy(isAuthenticating = true, authError = null, alipayStatusText = "正在向服务器请求支付宝授权…") }
+        viewModelScope.launch {
+            val (resp, err) = withContext(Dispatchers.IO) {
+                hostRequestWithError("telegram.server.alipayStart", JSONObject().put("endpoint", ep))
+            }
+            if (resp != null) {
+                val attemptId = resp.optString("attempt_id")
+                val loginUrl = resp.optString("login_url").ifBlank { resp.optString("auth_url") }
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        alipayAttemptId = attemptId,
+                        alipayLoginUrl = loginUrl,
+                        alipayStatusText = "请在支付宝完成授权后点击「检查状态」",
+                    )
+                }
+            } else {
+                _state.update { it.copy(isAuthenticating = false, authError = err ?: "无法发起支付宝登录") }
+            }
+        }
+    }
+
+    fun pollAlipayLogin() {
+        val attemptId = _state.value.alipayAttemptId ?: return
+        val ep = _state.value.serverEndpoint
+        _state.update { it.copy(isAuthenticating = true, authError = null) }
+        viewModelScope.launch {
+            val (resp, err) = withContext(Dispatchers.IO) {
+                hostRequestWithError(
+                    "telegram.server.alipayPoll",
+                    JSONObject().put("endpoint", ep).put("attemptId", attemptId),
+                )
+            }
+            if (resp != null) {
+                val status = resp.optString("status")
+                if (status == "complete" || status == "completed") {
+                    prefs.edit().putBoolean("offline_local_mode", false).apply()
+                    _state.update {
+                        it.copy(
+                            isAuthenticating = false,
+                            isAuthenticated = true,
+                            offlineLocalMode = false,
+                            alipayStatusText = "支付宝登录成功",
+                        )
+                    }
+                    refreshAllFromHost()
+                } else {
+                    _state.update { it.copy(isAuthenticating = false, alipayStatusText = "当前状态：$status（等待确认）") }
+                }
+            } else {
+                _state.update { it.copy(isAuthenticating = false, authError = err ?: "轮询支付宝状态失败") }
+            }
+        }
+    }
+
+    fun enterOfflineLocalMode() {
+        prefs.edit().putBoolean("offline_local_mode", true).apply()
+        _state.update {
+            it.copy(
+                offlineLocalMode = true,
+                authError = null,
+                syncStatusLabel = "信息（本地）",
+            )
+        }
+    }
+
+    fun signOutToAuthWizard() {
+        disconnectServerWebSocket()
+        prefs.edit().putBoolean("offline_local_mode", false).apply()
+        viewModelScope.launch(Dispatchers.IO) {
+            hostRequestOrNull("telegram.server.logout")
+        }
+        currentServerUserId = null
+        _state.update {
+            buildCleanInitialState().copy(
+                serverEndpoint = it.serverEndpoint,
+                themeSettings = it.themeSettings,
+                passcodeConfigured = it.passcodeConfigured,
+                biometricUnlockEnabled = it.biometricUnlockEnabled,
+                toastBanner = "已退出当前账号",
+            )
+        }
+    }
+
+    fun addContactByUsername(username: String, kind: String = "user") {
+        val clean = username.trim().trimStart('@')
+        if (clean.isEmpty()) return
+        if (!_state.value.isAuthenticated) {
+            val id = "direct-$clean"
+            val chat = TelegramChatItem(
+                id = id,
+                title = "@$clean",
+                subtitle = if (kind == "bot") "本地机器人会话" else "本地联系人会话",
+                preview = "",
+                time = nowTimeLabel(),
+                kind = ConversationKind.DIRECT,
+                isBot = kind == "bot",
+                username = "@$clean",
+            )
+            _state.update { cur ->
+                cur.copy(
+                    chats = sortTelegramChats(listOf(chat) + cur.chats.filterNot { it.id == id }),
+                    subScreen = TelegramSubScreen.CHAT,
+                    activeChatId = id,
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            val (resp, err) = withContext(Dispatchers.IO) {
+                hostRequestWithError(
+                    "telegram.server.addContact",
+                    JSONObject().put("username", clean).put("kind", kind),
+                )
+            }
+            if (resp != null) {
+                val chatId = resp.optLong("chat_id").takeIf { it > 0L }?.toString()
+                    ?: resp.optJSONObject("chat")?.optLong("id")?.takeIf { it > 0L }?.toString()
+                refreshAllFromHost()
+                if (chatId != null) {
+                    openChat(chatId)
+                } else {
+                    postBanner("已添加 @$clean")
+                }
+            } else {
+                postBanner("添加联系人失败：${err ?: "未知错误"}")
+            }
+        }
+    }
+
+    private fun fetchServerMessagesForChat(chatId: String, numericId: Long) {
+        viewModelScope.launch {
+            val resp = withContext(Dispatchers.IO) {
+                hostRequestOrNull("telegram.server.getMessages", JSONObject().put("chatId", numericId))
+            } ?: return@launch
+            val arr = resp.optJSONArray("messages") ?: return@launch
+            val myUid = currentServerUserId
+            val parsed = buildList {
+                for (i in 0 until arr.length()) {
+                    val m = arr.optJSONObject(i) ?: continue
+                    val rawText = m.optString("text", m.optString("content", ""))
+                    if (rawText.isBlank()) continue
+                    val id = m.optLong("id").takeIf { it > 0L }?.toString()
+                        ?: m.optString("message_id", "srv-$i")
+                    val senderIdNum = m.optLong("sender_id", -1L)
+                    val isOutgoing = (myUid != null && senderIdNum == myUid) || m.optBoolean("is_outgoing", false)
+                    val senderName = m.optString("sender_name").ifBlank {
+                        if (isOutgoing) _state.value.activeAccount?.displayName ?: "我" else "对方"
+                    }
+                    val tsMs = m.optLong("created_at_ms").takeIf { it > 0L }
+                        ?: (m.optLong("timestamp").takeIf { it > 0L }?.let { if (it < 10_000_000_000L) it * 1000L else it })
+                        ?: System.currentTimeMillis()
+                    val (plain, ents) = TelegramEntitiesEngine.parseMarkdownAndAutoEntities(rawText)
+                    add(
+                        TelegramMessageItem(
+                            id = id,
+                            conversationId = chatId,
+                            senderId = if (senderIdNum > 0L) senderIdNum.toString() else senderName,
+                            senderName = senderName,
+                            text = plain,
+                            entities = ents,
+                            outgoing = isOutgoing,
+                            time = nowTimeLabel(tsMs),
+                            deliveryState = "read",
+                        ),
+                    )
+                }
+            }
+            _state.update { cur ->
+                cur.copy(messagesByChat = cur.messagesByChat + (chatId to parsed))
+            }
+        }
+    }
+
+    private fun parseServerChats(resp: JSONObject?): List<TelegramChatItem> {
+        val arr = resp?.optJSONArray("chats") ?: return emptyList()
+        return buildList {
+            for (i in 0 until arr.length()) {
+                val c = arr.optJSONObject(i) ?: continue
+                val id = c.optLong("id").takeIf { it > 0L }?.toString()
+                    ?: c.optString("chat_id").ifBlank { continue }
+                val title = c.optString("title")
+                    .ifBlank { c.optString("peer_name") }
+                    .ifBlank { c.optString("username") }
+                    .ifBlank { "会话 #$id" }
+                val kindRaw = c.optString("kind", c.optString("chat_type", "direct")).lowercase()
+                val kind = when {
+                    kindRaw.contains("channel") -> ConversationKind.CHANNEL
+                    kindRaw.contains("group") -> ConversationKind.GROUP
+                    kindRaw.contains("secret") -> ConversationKind.SECRET
+                    kindRaw.contains("saved") -> ConversationKind.SAVED_MESSAGES
+                    else -> ConversationKind.DIRECT
+                }
+                val isBot = c.optBoolean("is_bot", false) || kindRaw.contains("bot")
+                val preview = c.optString("last_message_text")
+                    .ifBlank { c.optString("preview") }
+                val tsMs = c.optLong("last_message_at_ms").takeIf { it > 0L }
+                    ?: c.optLong("updated_at_ms").takeIf { it > 0L }
+                    ?: System.currentTimeMillis()
+                add(
+                    TelegramChatItem(
+                        id = id,
+                        title = title,
+                        subtitle = c.optString("subtitle").ifBlank {
+                            c.optString("username").takeIf { it.isNotBlank() }?.let { "@${it.trimStart('@')}" } ?: kind.label
+                        },
+                        preview = preview,
+                        time = nowTimeLabel(tsMs),
+                        kind = kind,
+                        unreadCount = c.optInt("unread_count", 0),
+                        isPinned = c.optBoolean("is_pinned", false),
+                        isMuted = c.optBoolean("is_muted", false),
+                        isArchived = c.optBoolean("is_archived", false),
+                        isBot = isBot,
+                        username = c.optString("username").ifBlank { null },
+                        online = c.optBoolean("online", false),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun mergeServerChats(existing: List<TelegramChatItem>, serverChats: List<TelegramChatItem>): List<TelegramChatItem> {
+        val byId = LinkedHashMap<String, TelegramChatItem>()
+        serverChats.forEach { byId[it.id] = it }
+        existing.forEach { local ->
+            if (!byId.containsKey(local.id) && local.id.toLongOrNull() == null) {
+                byId[local.id] = local
+            }
+        }
+        return byId.values.toList()
+    }
+
+    private fun connectServerWebSocket(endpoint: String, token: String) {
+        disconnectServerWebSocket()
+        val clean = endpoint.trim().trimEnd('/')
+        val wsBase = when {
+            clean.startsWith("https://") -> "wss://" + clean.removePrefix("https://")
+            clean.startsWith("http://") -> "ws://" + clean.removePrefix("http://")
+            else -> "ws://$clean"
+        }
+        val req = Request.Builder().url("$wsBase/api/v1/ws?token=$token").build()
+        serverWebSocket = wsHttpClient.newWebSocket(
+            req,
+            object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    _state.update { it.copy(serverWsConnected = true, syncStatusLabel = "信息") }
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    runCatching {
+                        val obj = JSONObject(text)
+                        val chatId = obj.optLong("chat_id").takeIf { it > 0L }?.toString()
+                            ?: obj.optJSONObject("message")?.optLong("chat_id")?.takeIf { it > 0L }?.toString()
+                        val msgText = obj.optString("text").ifBlank {
+                            obj.optJSONObject("message")?.optString("text").orEmpty()
+                        }
+                        if (!chatId.isNullOrBlank() && msgText.isNotBlank()) {
+                            val activeId = _state.value.activeChatId
+                            if (activeId == chatId) {
+                                chatId.toLongOrNull()?.let { fetchServerMessagesForChat(chatId, it) }
+                            } else {
+                                refreshAllFromHost()
+                            }
+                        }
+                    }
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    _state.update { it.copy(serverWsConnected = false) }
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    _state.update { it.copy(serverWsConnected = false) }
+                }
+            },
+        )
+    }
+
+    private fun disconnectServerWebSocket() {
+        runCatching { serverWebSocket?.close(1000, "client_disconnect") }
+        serverWebSocket = null
+        _state.update { it.copy(serverWsConnected = false) }
+    }
+
     override fun onCleared() {
+        disconnectServerWebSocket()
         recordingTimerJob?.cancel()
         audioProgressJob?.cancel()
         callTimerJob?.cancel()
@@ -3114,457 +3695,30 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
         super.onCleared()
     }
 
-    private fun buildInitialSeedState(): TelegramUiState {
-        val nowLabel = DateFormat.getTimeInstance(DateFormat.SHORT).format(Date())
-        val accounts = listOf(
-            TelegramAccount(
-                id = "acc-primary",
-                slotIndex = 0,
-                displayName = "全球法布施 · 主账号",
-                username = "@fabushi_master",
-                phone = "+86 138 0013 8000",
-                bio = "GPUI-Telegram Android v2.0 · Mika 本机智能操控",
-                isActive = true,
-            ),
-            TelegramAccount(
-                id = "acc-dev",
-                slotIndex = 1,
-                displayName = "Mahayana DevOps",
-                username = "@mahayana_ops",
-                phone = "+1 415 890 2048",
-                bio = "Rust JNI & Hermes Cloud Fleet",
-                unreadCount = 3,
-                isActive = false,
-            ),
-        )
-
-        val stories = listOf(
-            TelegramStoryItem("story-me", "acc-primary", "我的动态", "acc-primary", "点亮全球 240 国祈福心灯 🪔", "全球法布施 v2.0 正式上线", 0, isMine = true, viewed = false, viewCount = 42),
-            TelegramStoryItem("story-mika", "bot-mika-phone", "Mika 智控", "bot-mika-phone", "支持无障碍 + 无线 ADB + 虚拟副屏后台操控手机", "Mika 手机操控引擎就绪", 1, viewed = false, viewCount = 318),
-            TelegramStoryItem("story-dharma", "channel-dharma", "全球法布施", "channel-dharma", "今日已有 128 万盏心灯在五大洲点亮", "十方光明共修坛城", 2, viewed = false, viewCount = 1280),
-            TelegramStoryItem("story-hermes", "chat-hermes-lab", "Hermes Studio", "chat-hermes-lab", "/moa 多模型辩论与 Magpie 48 通道免订阅网关", "Hermes 6-Tab 工作室", 3, viewed = true, viewCount = 509),
-        )
-
-        val chats = listOf(
-            TelegramChatItem(
-                id = "saved-messages",
-                title = "收藏夹 (Saved Messages)",
-                subtitle = "云端加密跨端笔记与文件箱",
-                preview = "📌 常用快捷口令：/mika /dharma /wallet /moa",
-                time = nowLabel,
-                kind = ConversationKind.SAVED_MESSAGES,
-                isPinned = true,
-                pinnedMessageIds = listOf("msg-saved-1"),
-            ),
-            TelegramChatItem(
-                id = "bot-mika-phone",
-                title = "Mika 手机操控智能体",
-                subtitle = "机器人 · @MikaPhoneBot · 本机自动化",
-                preview = "🤖 发送自然语言指令即可自动操控手机 App、网页与沙箱",
-                time = nowLabel,
-                kind = ConversationKind.DIRECT,
-                unreadCount = 1,
-                isPinned = true,
-                isVerified = true,
-                isBot = true,
-                isCompanionGhost = true,
-                online = true,
-                username = "@MikaPhoneBot",
-            ),
-            TelegramChatItem(
-                id = "channel-dharma",
-                title = "全球法布施 · 官方广播频道",
-                subtitle = "官方认证频道 · 128,400 位订阅者",
-                preview = "🪷 3D 地球 240 国供灯与摩尼转经轮现已原生融合",
-                time = nowLabel,
-                kind = ConversationKind.CHANNEL,
-                unreadCount = 2,
-                isPinned = true,
-                isVerified = true,
-                subscriberCount = 128_400,
-                miniAppPluginId = "global-dharma",
-                pinnedMessageIds = listOf("msg-dharma-1"),
-            ),
-            TelegramChatItem(
-                id = "group-gpui-dev",
-                title = "GPUI-Telegram × Mika 架构群",
-                subtitle = "超级话题群组 · 1,024 位成员 · 48 人在线",
-                preview = "#mika-agent: VirtualDisplay 后台执行与 16KB 对齐验证通过！",
-                time = nowLabel,
-                kind = ConversationKind.GROUP,
-                unreadCount = 3,
-                isForum = true,
-                memberCount = 1024,
-            ),
-            TelegramChatItem(
-                id = "bot-botfather",
-                title = "BotFather",
-                subtitle = "官方机器人之父 · @BotFather",
-                preview = "使用 /newbot 创建新机器人，或配置 WebMCP 小程序菜单按钮",
-                time = nowLabel,
-                kind = ConversationKind.DIRECT,
-                isVerified = true,
-                isBot = true,
-                online = true,
-                username = "@BotFather",
-            ),
-            TelegramChatItem(
-                id = "chat-hermes-lab",
-                title = "Hermes & Magpie AI 实验室",
-                subtitle = "多模型智能体 · 支持 /moa 与 <60ms 语音打断",
-                preview = "已连接 48 个 AI 供应商预设与 Rosetta 协议转换网关",
-                time = nowLabel,
-                kind = ConversationKind.DIRECT,
-                isBot = true,
-                isCompanionGhost = true,
-                online = true,
-                username = "@HermesStudioBot",
-            ),
-            TelegramChatItem(
-                id = "secret-bodhi",
-                title = "🔒 觉行禅师 (加密私聊)",
-                subtitle = "端到端加密 · X3DH + Double Ratchet",
-                preview = "🔐 阅后即焚已开启 · 点击顶部校验 4-Emoji 指纹",
-                time = nowLabel,
-                kind = ConversationKind.SECRET,
-                isSecretChat = true,
-                secretVerified = true,
-                secretFingerprintSeed = "x3dh-bodhi-master-2026",
-                ttlSeconds = 86_400,
-                online = true,
-            ),
-            TelegramChatItem(
-                id = "archived-legacy",
-                title = "早期版本构建通知归档",
-                subtitle = "通知频道 · 已静音归档",
-                preview = "v1.2.0 历史归档记录",
-                time = "昨天",
-                kind = ConversationKind.CHANNEL,
-                isMuted = true,
-                isArchived = true,
-                subscriberCount = 512,
-            ),
-        )
-
-        val forumTopics = mapOf(
-            "group-gpui-dev" to listOf(
-                TelegramForumTopic("topic-all", "group-gpui-dev", "综合讨论 General", "💬", 0xFF2AABEEL, unreadCount = 1, isPinned = true, lastPreview = "Telegram 1:1 Compose 主题引擎上线"),
-                TelegramForumTopic("topic-rust", "group-gpui-dev", "Rust JNI 宿主内核", "🦀", 0xFFE67E22L, unreadCount = 1, lastPreview = "SQLite WAL + X3DH + 16KB 页对齐"),
-                TelegramForumTopic("topic-mika", "group-gpui-dev", "Mika 手机操控融合", "🤖", 0xFF2ECC71L, unreadCount = 1, lastPreview = "无障碍 + 无线 ADB + Alpine 沙箱"),
-                TelegramForumTopic("topic-dharma", "group-gpui-dev", "全球法布施小程序", "🪷", 0xFFF59E0BL, lastPreview = "240 国 3D 正交地球仪与转经轮物理"),
-            ),
-        )
-
-        val (savedPlain, savedEnts) = TelegramEntitiesEngine.parseMarkdownAndAutoEntities(
-            "欢迎使用 **GPUI-Telegram × Mika 统一安卓客户端 v2.0** 🙏\n" +
-                "- 支持 __斜体__、++下划线++、~~删除线~~ 与点击揭晓 ||端到端零知识剧透遮罩||\n" +
-                "- 快捷指令：`/mika 打开设置检查网络` · `/dharma` · `/wallet` · `/moa`\n" +
-                "- 开源仓库：[fabushi-android](https://github.com/fabu-android/fabushi-android) #TelegramParity",
-        )
-        val (codePlain, codeEnts) = TelegramEntitiesEngine.parseMarkdownAndAutoEntities(
-            "```rust\npub extern \"system\" fn Java_com_ombhrum_fabushi_core_MahayanaHost_nativeDispatch(\n    env: JNIEnv, _class: JObject, handle: jlong, req: JString\n) -> jstring\n```",
-        )
-
-        val messages = mapOf(
-            "saved-messages" to listOf(
-                TelegramMessageItem(
-                    id = "msg-saved-1",
-                    conversationId = "saved-messages",
-                    senderId = "acc-primary",
-                    senderName = "我",
-                    text = savedPlain,
-                    entities = savedEnts,
-                    outgoing = true,
-                    time = nowLabel,
-                    pinned = true,
-                    reactions = listOf(ChatReaction("🔥", 2, true), ChatReaction("🙏", 1, false)),
-                ),
-                TelegramMessageItem(
-                    id = "msg-saved-code",
-                    conversationId = "saved-messages",
-                    senderId = "acc-primary",
-                    senderName = "我",
-                    text = codePlain,
-                    entities = codeEnts,
-                    outgoing = true,
-                    time = nowLabel,
-                ),
-                TelegramMessageItem(
-                    id = "msg-saved-voice",
-                    conversationId = "saved-messages",
-                    senderId = "acc-primary",
-                    senderName = "我",
-                    text = "🎙 语音备忘录 (12s)",
-                    contentType = "voice",
-                    outgoing = true,
-                    time = nowLabel,
-                    durationSeconds = 12,
-                    waveformBars = TelegramWaveformCodec.syntheticSpeechBars("saved-voice-note"),
-                ),
-            ),
-            "bot-mika-phone" to listOf(
-                TelegramMessageItem(
-                    id = "msg-mika-welcome",
-                    conversationId = "bot-mika-phone",
-                    senderId = "bot-mika-phone",
-                    senderName = "Mika 手机操控智能体",
-                    text = "🤖 你好！我是深度融合进 Telegram 的 **Mika 本机手机操控智能体**。\n\n具备完整能力：\n1. 无障碍多屏 UI 树提取 + 离线中英 MLKit OCR\n2. 无线 ADB 本机配对 + UID 2000 Binder 虚拟副屏后台操控\n3. 磁吸悬浮胶囊 + 支付/敏感操作一次性人工确认门控 (ConfirmationGate)\n4. 多标签无头浏览器 CDP + Alpine proot Linux 容器终端",
-                    entities = TelegramEntitiesEngine.parseMarkdownAndAutoEntities(
-                        "🤖 你好！我是深度融合进 Telegram 的 **Mika 本机手机操控智能体**。\n\n具备完整能力：\n1. 无障碍多屏 UI 树提取 + 离线中英 MLKit OCR\n2. 无线 ADB 本机配对 + UID 2000 Binder 虚拟副屏后台操控\n3. 磁吸悬浮胶囊 + 支付/敏感操作一次性人工确认门控 (ConfirmationGate)\n4. 多标签无头浏览器 CDP + Alpine proot Linux 容器终端",
-                    ).second,
-                    outgoing = false,
-                    time = nowLabel,
-                    inlineKeyboard = listOf(
-                        InlineKeyboardRow(
-                            listOf(
-                                InlineKeyboardButtonModel("mk-1", "📱 打开 Mika 操控中心", InlineKeyboardButtonKind.MIKA_ACTION, "open_workspace"),
-                                InlineKeyboardButtonModel("mk-2", "🔍 自检本机权限状态", InlineKeyboardButtonKind.MIKA_ACTION, "运行 12 项手机操控环境自检"),
-                            ),
-                        ),
-                        InlineKeyboardRow(
-                            listOf(
-                                InlineKeyboardButtonModel("mk-3", "🌐 后台网页摘要演示", InlineKeyboardButtonKind.MIKA_ACTION, "使用内置 CDP 浏览器抓取今日科技要闻并总结"),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-            "channel-dharma" to listOf(
-                TelegramMessageItem(
-                    id = "msg-dharma-1",
-                    conversationId = "channel-dharma",
-                    senderId = "channel-dharma",
-                    senderName = "全球法布施 · 官方频道",
-                    text = "🪷 全球法布施 2.0 现已内置 3D 240 国地球供养坛城与物理惯性摩尼转经轮！点击下方按钮即刻进入共修，或在评论区随喜回向。",
-                    outgoing = false,
-                    time = nowLabel,
-                    pinned = true,
-                    viewsCount = 48_920,
-                    commentsCount = 2,
-                    reactions = listOf(ChatReaction("🙏", 328, true), ChatReaction("🪷", 196, false), ChatReaction("❤️", 142, false)),
-                    inlineKeyboard = listOf(
-                        InlineKeyboardRow(
-                            listOf(
-                                InlineKeyboardButtonModel("dh-open", "🌍 打开 3D 地球坛城与禅房", InlineKeyboardButtonKind.MINI_APP, "global-dharma"),
-                                InlineKeyboardButtonModel("dh-ton", "💎 TON 功德金库", InlineKeyboardButtonKind.CALLBACK, "open:wallet"),
-                            ),
-                        ),
-                    ),
-                ),
-                TelegramMessageItem(
-                    id = "msg-dharma-quiz",
-                    conversationId = "channel-dharma",
-                    senderId = "channel-dharma",
-                    senderName = "全球法布施 · 官方频道",
-                    text = "📊 每日般若问答",
-                    contentType = "poll",
-                    outgoing = false,
-                    time = nowLabel,
-                    viewsCount = 19_400,
-                    commentsCount = 1,
-                    poll = TelegramPollModel(
-                        question = "《华严经·普贤行愿品》云：「诸供养中，何者为最？」",
-                        options = listOf(
-                            TelegramPollOption("opt-1", "七宝珍奇供养", 128),
-                            TelegramPollOption("opt-2", "法供养最（如说修行、利益众生）", 1_420, isCorrect = true),
-                            TelegramPollOption("opt-3", "香花伎乐供养", 96),
-                        ),
-                        isAnonymous = true,
-                        isQuiz = true,
-                        correctOptionId = "opt-2",
-                        explanation = "《普贤行愿品》开示：诸供养中，法供养最！所谓如说修行供养、利益众生供养、不离菩提心供养。",
-                    ),
-                ),
-            ),
-            "group-gpui-dev" to listOf(
-                TelegramMessageItem(
-                    id = "msg-grp-1",
-                    conversationId = "group-gpui-dev",
-                    senderId = "peer-rust",
-                    senderName = "Mahayana Rust Maintainer",
-                    text = "🦀 `libmahayana_app_host.so` 已开启 `-Wl,-z,max-page-size=16384`，完全满足 Android 15/16/17 16KB 页对齐要求！",
-                    entities = listOf(MessageEntity(MessageEntityType.CODE, 3, 24), MessageEntity(MessageEntityType.CODE, 31, 25)),
-                    outgoing = false,
-                    time = nowLabel,
-                    topicId = "topic-rust",
-                    reactions = listOf(ChatReaction("🎉", 12, true), ChatReaction("⚡", 8, false)),
-                ),
-                TelegramMessageItem(
-                    id = "msg-grp-round",
-                    conversationId = "group-gpui-dev",
-                    senderId = "peer-mika",
-                    senderName = "Mika Core Lead",
-                    text = "⭕ 圆形视频演示：VirtualDisplay 后台画中画实测 (9s)",
-                    contentType = "videoNote",
-                    outgoing = false,
-                    time = nowLabel,
-                    durationSeconds = 9,
-                    topicId = "topic-mika",
-                ),
-            ),
-            "bot-botfather" to listOf(
-                TelegramMessageItem(
-                    id = "msg-bf-init",
-                    conversationId = "bot-botfather",
-                    senderId = "bot-botfather",
-                    senderName = "BotFather",
-                    text = "我是 BotFather，所有 Telegram 与 Fabushi AI 机器人的管理中枢。\n发送 /newbot 创建新机器人，或点击下方打开可视化机器人创建台。",
-                    entities = listOf(MessageEntity(MessageEntityType.BOT_COMMAND, 36, 7)),
-                    outgoing = false,
-                    time = nowLabel,
-                    inlineKeyboard = listOf(
-                        InlineKeyboardRow(
-                            listOf(InlineKeyboardButtonModel("bf-open", "🤖 打开可视化 Bot 创建工作室", InlineKeyboardButtonKind.CALLBACK, "open:botfather")),
-                        ),
-                    ),
-                ),
-            ),
-            "chat-hermes-lab" to listOf(
-                TelegramMessageItem(
-                    id = "msg-hermes-init",
-                    conversationId = "chat-hermes-lab",
-                    senderId = "chat-hermes-lab",
-                    senderName = "Hermes AI Studio",
-                    text = "✨ Hermes 6-Tab Sovereign Agent 与 Magpie 48+ 供应商网关已就绪！\n试试发送 `/moa 如何设计高可靠端云一体 Agent？` 或点击右上角体验 **<60ms VAD 全双工语音对话球**。",
-                    outgoing = false,
-                    time = nowLabel,
-                    inlineKeyboard = listOf(
-                        InlineKeyboardRow(
-                            listOf(
-                                InlineKeyboardButtonModel("hm-1", "🧠 Hermes 6-Tab 工作室", InlineKeyboardButtonKind.CALLBACK, "open:hermes"),
-                                InlineKeyboardButtonModel("hm-2", "🪶 Magpie 网关控制台", InlineKeyboardButtonKind.CALLBACK, "open:magpie"),
-                                InlineKeyboardButtonModel("hm-3", "🖥 云电脑 Workbench", InlineKeyboardButtonKind.CALLBACK, "open:computer"),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-            "secret-bodhi" to listOf(
-                TelegramMessageItem(
-                    id = "msg-sec-seed",
-                    conversationId = "secret-bodhi",
-                    senderId = "secret-bodhi",
-                    senderName = "觉行禅师",
-                    text = "🔐 此对话受 X3DH (X25519 + Ed25519) 与 Double Ratchet 棘轮协议端到端保护，服务器不留存任何明文或私钥。",
-                    outgoing = false,
-                    time = nowLabel,
-                    ttlSeconds = 86_400,
-                ),
-            ),
-        )
-
-        val comments = mapOf(
-            "msg-dharma-1" to listOf(
-                TelegramMessageItem("cmt-1", "channel-dharma", "u1", "新加坡莲友", "随喜赞叹！3D 地球转动非常丝滑，已经点亮新加坡和尼泊尔的心灯 🙏", outgoing = false, time = nowLabel),
-                TelegramMessageItem("cmt-2", "channel-dharma", "u2", "Kyoto Practitioner", "摩尼转经轮的物理惯性手感太棒了，嗡嘛呢呗美吽！☸️", outgoing = false, time = nowLabel),
-            ),
-        )
-
+    /**
+     * Zero-fake-data initial state: contains strictly static composer picker palettes
+     * (slash hints, emoji packs) and empty collections until hydrated from real
+     * `gpui_telegram_server` or local SQLite persistence.
+     */
+    private fun buildCleanInitialState(): TelegramUiState {
         val stickerPacks = listOf(
             StickerPackModel("pack-dharma", "莲华禅心贴纸", true, listOf("🪷", "🙏", "☸️", "🪔", "✨", "🕊️", "🌕", "🍵", "🧘", "📿", "🏔️", "🌈")),
             StickerPackModel("pack-cyber", "极客 AI 助手", true, listOf("🤖", "🦀", "⚡", "🚀", "💎", "🛡️", "🧠", "🛰️", "🔥", "🎯", "🎉", "👀")),
-            StickerPackModel("pack-animals", "Telegram 萌宠", true, listOf("🐶", "🐱", "🐼", "🦊", "🦄", "🐧", "🦉", "🐬", "🦋", "🐢", "🦁", "🐨")),
+            StickerPackModel("pack-animals", "表情包", true, listOf("🐶", "🐱", "🐼", "🦊", "🦄", "🐧", "🦉", "🐬", "🦋", "🐢", "🦁", "🐨")),
         )
-
-        val gifs = listOf(
-            GifItemModel("gif-lotus", "金莲盛开 · 吉祥祈福", "🪷✨", 0xFFD99B26L),
-            GifItemModel("gif-rocket", "Rust 极速编译发射", "🦀🚀", 0xFF2AABEEL),
-            GifItemModel("gif-mika", "Mika 手机自动操控中", "📱🤖", 0xFF2ECC71L),
-            GifItemModel("gif-party", "全量测试 100% 通过", "🎉🏆", 0xFF8E44ADL),
-        )
-
         val slashCommands = listOf(
             SlashCommandSuggestion("/mika", "调用 Mika 本机手机智能体自动执行跨 App 任务", "@MikaPhoneBot"),
-            SlashCommandSuggestion("/newbot", "通过 @BotFather 创建新机器人与小程序菜单", "@BotFather"),
+            SlashCommandSuggestion("/newbot", "打开 BotFather 创建机器人或 Coding Agent Bot", "@BotFather"),
             SlashCommandSuggestion("/moa", "启动 Hermes Mixture-of-Agents 多模型协同推理", "@HermesStudioBot"),
-            SlashCommandSuggestion("/dharma", "打开全球法布施 · 3D 240 国地球供灯与禅房转经轮", "@GlobalDharmaBot"),
-            SlashCommandSuggestion("/wallet", "打开自托管 TON 钱包、Stars 与 TonConnect 签名器"),
-            SlashCommandSuggestion("/hermes", "打开 Hermes 6-Tab 智能体工作室"),
-            SlashCommandSuggestion("/magpie", "打开 Magpie 48+ 供应商免订阅网关控制台"),
-            SlashCommandSuggestion("/computer", "打开多设备云电脑与 Action Bus 风险管控台"),
+            SlashCommandSuggestion("/dharma", "打开全球法布施小程序", "@GlobalDharmaBot"),
+            SlashCommandSuggestion("/wallet", "打开自托管 TON 钱包"),
+            SlashCommandSuggestion("/hermes", "打开 Hermes 智能体工作室"),
+            SlashCommandSuggestion("/magpie", "打开 Magpie AI 网关控制台"),
+            SlashCommandSuggestion("/computer", "打开多设备云电脑与 UU-Remote 控制台"),
         )
-
-        val tonWallet = TonWalletUiState(
-            transactions = listOf(
-                TonTransactionItem("tx-1", "in", "收到功德回向赞赏", "UQDr...9kP2", "+25.00 TON", "TON", "今天 09:42", "随喜全球法布施开源"),
-                TonTransactionItem("tx-2", "in", "Telegram Stars 激励入账", "Fragment Stars", "+1,200 ⭐", "STARS", "昨天 21:15", "小程序创作者分成"),
-                TonTransactionItem("tx-3", "stake", "Tonstakers 流动性质押收益", "tsTON Pool", "+0.18 TON", "TON", "昨天 08:00", "APY 4.25%"),
-            ),
-            collectibles = listOf(
-                TonCollectibleItem("nft-1", "@fabushi.ton", "TON DNS Domains", 45.0, "🌐"),
-                TonCollectibleItem("nft-2", "十方光明金莲 #001", "Global Dharma SBT", 18.8, "🪷", isGift = true),
-                TonCollectibleItem("nft-3", "+888 0820 2026", "Anonymous Telegram Numbers", 160.0, "📱"),
-                TonCollectibleItem("nft-4", "璀璨蓝星礼物盒", "Telegram Star Gifts", 5.2, "🎁", isGift = true),
-            ),
-        )
-
-        val hermesStudio = HermesStudioUiState(
-            sessions = listOf(
-                HermesSessionItem("hermes-main", "Android 端云融合架构主会话", "Anthropic", "claude-4.6-sonnet", turnCount = 6, lastOutput = "已完成 SQLite WAL + Signal E2EE + Mika 无障碍桥接规划。"),
-                HermesSessionItem("hermes-moa", "MoA 多模型安全审计分叉", "OpenRouter", "moa/3-models", parentBranchId = "hermes-main", turnCount = 3, lastOutput = "ConfirmationGate 支付安全门控零绕过验证通过。"),
-            ),
-            skills = listOf(
-                HermesSkillItem("sk-mika", "mika-phone-bridge", "Android Device", "通过 Telegram 与自然语言安全调度 Mika 无障碍/ADB/沙箱任务", true),
-                HermesSkillItem("sk-tg", "telegram-rich-ops", "Messaging", "管理群组话题、频道统计、投票测验与内联键盘", true),
-                HermesSkillItem("sk-ton", "ton-boc-signer", "Web3 / TON", "构建 TON Cell/BOC 并执行 TonConnect 交易沙箱预演", true),
-                HermesSkillItem("sk-dharma", "dharma-tripitaka", "Culture", "大藏经检索、心经/金刚经注疏与正念共修引导", true),
-                HermesSkillItem("sk-code", "rust-kotlin-architect", "Engineering", "JNI 边界、Compose 性能与 R8 混淆规则审查", true),
-            ),
-            cronJobs = listOf(
-                HermesCronItem("cron-1", "晨间正念共修与日程简报", "0 7 * * *", "汇总今日待办并推送一段《金刚经》早课法语至收藏夹", true),
-                HermesCronItem("cron-2", "Magpie 通道健康巡检", "*/30 * * * *", "检测已配置供应商延迟与免费额度剩余比例", true),
-            ),
-            kanbanCards = listOf(
-                HermesKanbanCard("kb-1", "验证 16KB ELF 页对齐", "Rust Agent", KanbanColumn.DONE),
-                HermesKanbanCard("kb-2", "240 国 3D 地球仪弧线渲染", "UI Agent", KanbanColumn.DONE),
-                HermesKanbanCard("kb-3", "Mika 跨应用自动化回归", "Mika Agent", KanbanColumn.IN_PROGRESS),
-                HermesKanbanCard("kb-4", "发布 v2.0.0 GitHub 签名包", "Release Agent", KanbanColumn.REVIEW),
-            ),
-            approvals = listOf(
-                HermesApprovalRequest("ap-1", "computer.executeOp", "在云端沙箱节点执行 `docker ps -a` 状态巡检", ActionRiskTier.R2_MEDIUM, "approved"),
-                HermesApprovalRequest("ap-2", "wallet.sendTon", "向外部地址转出 10.0 TON（需人工二次确认）", ActionRiskTier.R4_CRITICAL, "pending"),
-            ),
-        )
-
-        val cloudComputer = CloudComputerUiState(
-            nodes = listOf(
-                ComputerNodeItem("node-local-android", "本机 Android 终端 (Mika Runtime)", ComputerNodeKind.LOCAL_DEVICE, "Android 16 · arm64-v8a · Alpine proot", true, 16, "7.4 / 16.0 GB", leaseOwner = "Mika-Local-Session"),
-                ComputerNodeItem("node-cloud-gpu", "Fabushi Cloud GPU Workstation", ComputerNodeKind.CLOUD_SERVER, "Ubuntu 24.04 LTS · NVIDIA L40S", true, 34, "28.1 / 64.0 GB"),
-                ComputerNodeItem("node-sandbox-ephemeral", "Hermes Zero-Trust MicroVM", ComputerNodeKind.CLOUD_SANDBOX, "Firecracker Alpine 3.21 · Ephemeral", true, 6, "0.4 / 4.0 GB"),
-            ),
-            actionBusTools = listOf(
-                ActionBusSchemaItem("fabushi.app.snapshot", "App MCP", ActionRiskTier.R0_READ, "读取应用内稳定语义组件快照", "{ limit?: int } -> Snapshot"),
-                ActionBusSchemaItem("mika.ui.tapElement", "Phone Control", ActionRiskTier.R1_LOW, "在无障碍树或虚拟副屏点击目标元素", "{ nodeId: string, pace: 'balanced' }"),
-                ActionBusSchemaItem("sandbox.execCommand", "Alpine Sandbox", ActionRiskTier.R2_MEDIUM, "在本机 proot 容器内运行受限 Python/Node 脚本", "{ cmd: string, timeoutMs: int }"),
-                ActionBusSchemaItem("telegram.sendExternal", "Messaging", ActionRiskTier.R3_HIGH, "向外部群组或公开频道发送正式通知", "{ chatId: string, text: string }"),
-                ActionBusSchemaItem("wallet.broadcastBoc", "TON Wallet", ActionRiskTier.R4_CRITICAL, "签名并广播不可逆链上资产转账 (强制人工确认)", "{ to: string, amountNano: long }"),
-            ),
-            globalTasks = listOf(
-                GlobalTaskItem("gt-1", "跨端同步 PTS 差量消息与索引重建", "node-local-android", GlobalTaskFsmState.COMPLETED, 100, "SQLite WAL + FTS5 索引就绪"),
-                GlobalTaskItem("gt-2", "云端渲染全球功德周报可视化图表", "node-cloud-gpu", GlobalTaskFsmState.RUNNING, 68, "正在聚合 240 国心灯数据"),
-                GlobalTaskItem("gt-3", "自动批量归档逾期账单回执", "node-sandbox-ephemeral", GlobalTaskFsmState.AWAITING_APPROVAL, 40, "等待 R3 风险门控人工放行"),
-            ),
-        )
-
-        val callHistory = listOf(
-            CallHistoryEntry("ch-1", "GPUI-Telegram × Mika 架构群", "group-gpui-dev", isVideo = true, outgoing = true, timeLabel = "今天 10:15", durationLabel = "18:42"),
-            CallHistoryEntry("ch-2", "觉行禅师 (加密通话)", "secret-bodhi", isVideo = false, outgoing = false, timeLabel = "昨天 20:30", durationLabel = "06:15"),
-        )
-
         return TelegramUiState(
-            accounts = accounts,
-            stories = stories,
-            chats = chats,
-            topicsByChat = forumTopics,
-            messagesByChat = messages,
-            discussionCommentsByMessage = comments,
             stickerPacks = stickerPacks,
-            gifCatalog = gifs,
             slashCommands = slashCommands,
-            tonWallet = tonWallet,
-            hermesStudio = hermesStudio,
-            cloudComputer = cloudComputer,
-            callHistory = callHistory,
         )
     }
 }

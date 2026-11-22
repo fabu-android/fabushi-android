@@ -200,8 +200,8 @@ impl MahayanaAndroidHost {
                 "platform": "android",
                 "protocolVersion": "2",
                 "runtimeVersion": if self.test_mode { "2.0.0-test" } else { "2.0.0" },
-                "desktopParityVersion": "1.6.2",
-                "desktopParityCommit": "9542524",
+                "desktopParityVersion": "1.6.5",
+                "desktopParityCommit": "db06f9c",
                 "engine": "mahayana-gpui-telegram-mika",
                 "sqliteWal": true
             })),

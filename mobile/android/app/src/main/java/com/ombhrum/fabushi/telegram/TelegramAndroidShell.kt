@@ -118,6 +118,23 @@ fun TelegramAndroidShell(
                     onVerifyPin = telegramViewModel::verifyPasscode,
                     onBiometricSuccess = telegramViewModel::unlockViaBiometricSuccess,
                 )
+            } else if (!state.isAuthenticated && !state.offlineLocalMode) {
+                TelegramAuthWizardScreen(
+                    serverEndpoint = state.serverEndpoint,
+                    isAuthenticating = state.isAuthenticating,
+                    authError = state.authError,
+                    alipayLoginUrl = state.alipayLoginUrl,
+                    alipayStatusText = state.alipayStatusText,
+                    emailCodeSentNotice = state.emailCodeSentNotice,
+                    onUpdateServerEndpoint = telegramViewModel::updateDesktopServerEndpoint,
+                    onPasswordLogin = telegramViewModel::loginWithPassword,
+                    onPasswordRegister = telegramViewModel::registerWithPassword,
+                    onSendEmailCode = telegramViewModel::sendEmailVerificationCode,
+                    onEmailRegister = telegramViewModel::registerWithEmail,
+                    onStartAlipayLogin = telegramViewModel::startAlipayLogin,
+                    onPollAlipayLogin = telegramViewModel::pollAlipayLogin,
+                    onEnterOfflineLocalMode = telegramViewModel::enterOfflineLocalMode,
+                )
             } else {
                 ModalNavigationDrawer(
                     drawerState = drawerState,
@@ -229,6 +246,9 @@ fun TelegramAndroidShell(
                                         onMuteChat = telegramViewModel::toggleMuteChat,
                                         onToggleUnreadChat = telegramViewModel::toggleUnreadChat,
                                         onRequestCreateKind = { kind -> pendingCreateKind = kind },
+                                        onAddContact = telegramViewModel::addContactByUsername,
+                                        onSignOut = telegramViewModel::signOutToAuthWizard,
+                                        onNavigateSubScreen = { target -> telegramViewModel.navigateTo(target) },
                                     )
                                 }
 

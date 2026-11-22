@@ -141,20 +141,20 @@ Deliver a **100% real-data, zero-fake-data** Android client consolidated across 
 | Requirement / AC | Status | Evidence / reason |
 | --- | --- | --- |
 | R1 | passed | Created active 17-section Spec `docs/specs/desktop-v1-6-5-zero-fake-data-and-apple-uiux.md` grounded in `bhrumom/gpui-telegram@db06f9c` (`v1.6.5`) prior to implementation. |
-| R2 | pending | |
-| R3 | pending | |
-| R4 | pending | |
-| R5 | pending | |
-| R6 | pending | |
-| R7 | pending | |
-| R8 | pending | |
-| AC-1 | passed | Spec created with all 17 sections prior to product changes. |
-| AC-2 | pending | |
-| AC-3 | pending | |
-| AC-4 | pending | |
-| AC-5 | pending | |
-| AC-6 | pending | |
-| AC-7 | pending | |
-| AC-8 | pending | |
+| R2 | passed | Consolidated all remote branches onto `feat/v1.6.5-zero-fake-data-and-apple-uiux`: real code merge of PR #4 (`codex/dandelion-capability-contract-20261019`, bringing `MiniAppWebMcpSurface.kt` lifecycle revocation & `MiniAppWebMcpSurfaceTest.kt`) + history consolidation of PR #2 (`docs/end-to-end-development-lifecycle-20260922`) and legacy Grok-0.18 branches (`spec/grok-bot-018-android-parity*`, `interaction-r115-validation`). |
+| R3 | passed | Removed all 450+ lines of hardcoded fake accounts, stories, chats, messages, comments, polls, TON balances/txs/NFTs, Global Dharma fake counters/leaderboard, Magpie fake totals, RemoteAssist fake codes, Hermes fake sessions/kanban/approvals, Cloud Computer fake GPU/MicroVM nodes/tasks, and fake call history from `TelegramViewModel.kt` and `TelegramModels.kt`; fixed `restorePersistedSettings()` defaults to `APPLE_DAY` + `SOLID_MINIMAL` (18dp, 15sp). |
+| R4 | passed | Implemented real desktop `gpui_telegram_server` `/api/v1/*` HTTP RPCs in `mahayana_android_host/src/telegram_ext.rs` (default `http://34.46.77.133:8080`, SQLite session persistence, `login`, `register`, `sendEmailCode`, `registerEmail`, `alipayStart`, `alipayPoll`, `me`, `logout`, `listChats`, `getMessages`, `sendMessage`, `addContact`, `createChat`, `searchMessages`) plus live OkHttp WebSocket (`/api/v1/ws?token=...`) in `TelegramViewModel.kt`. |
+| R5 | passed | Added desktop-aligned `TelegramAuthWizardScreen.kt` (Apple Messages card, Password Login / Register / Email OTP / Alipay tabs, editable server URL pill, real error display, explicit offline local mode) and gated `TelegramAndroidShell.kt` on `!state.isAuthenticated && !state.offlineLocalMode`. |
+| R6 | passed | Upgraded `TelegramHomeScreen.kt` (Apple translucent top bar, inline pill search bar, 3-column Pinned Chats circular avatar grid with stable anti-flicker ordering, clean empty state, desktop-aligned bottom nav bar), `TelegramChatScreen.kt` (desktop `v1.6.5` centered glass contact header `stage_bars.rs` parity), and `TelegramComposer.kt` (desktop `v1.6.0` circular `+` attach + 20dp pill input + embedded `#007AFF` `↑` send button). |
+| R7 | passed | Updated `feature.info` in `mahayana_android_host/src/lib.rs` to `desktopParityVersion = "1.6.5"`, `desktopParityCommit = "db06f9c"`; integrated PR #4 WebMCP background lifecycle revocation and explicit error propagation. |
+| R8 | passed | Passed Rust workspace tests (93/93: `gpui_telegram_proto` 19, `magpie_gateway` 28, `desktop_v1_6_2_parity_tests` 6, `host_integration_tests` 40), 16KB ELF build (`arm64-v8a` 8.9M & `x86_64` 8.3M `PT_LOAD=0x4000`), `:app:testDebugUnitTest` (22/22), `:mika-agent:testDebugUnitTest` (2,900/2,900), `:mika-core:test` (3,922 tests, 0 failures), `:app:assembleDebug`, and mandatory daemon/artifact cleanup (`jps -l`: zero daemons; `free -h`: 7.1Gi available). |
+| AC-1 | passed | All 17 Spec sections completed with truthful compliance evidence. |
+| AC-2 | passed | All 6 remote branch histories consolidated; PR #4 `MiniAppWebMcpSurfaceTest` passed inside `:app:testDebugUnitTest`. |
+| AC-3 | passed | `DesktopV162ParityTest::zeroFakeDataInDefaultUiModelsAndAppleMessagesDefaultTheme` passed verifying zero fake data and `APPLE_DAY`/`SOLID_MINIMAL` defaults. |
+| AC-4 | passed | Both Rust `test_real_gpui_telegram_server_api_v1_client_loopback` and JNI `jniHostExercisesDesktopV165...` passed against live loopback `/api/v1/*` servers. |
+| AC-5 | passed | `TelegramAuthWizardScreen` compiled and wired as the unauthenticated entry gate in `TelegramAndroidShell`. |
+| AC-6 | passed | `TelegramHomeScreen`, `TelegramChatScreen`, and `TelegramComposer` compiled cleanly and assembled into `app-debug.apk` with Apple Messages v1.6.5 UI/UX. |
+| AC-7 | passed | Verified `desktopParityVersion == "1.6.5"` and `desktopParityCommit == "db06f9c"` in both Rust and JNI tests. |
+| AC-8 | passed | Full Rust + 16KB NDK + Gradle verification succeeded and post-test cleanup confirmed via `jps -l`, `free -h`, and clean `git status -sb`. |
 
 Allowed final statuses: `passed`, `blocked`, `not-applicable`.
