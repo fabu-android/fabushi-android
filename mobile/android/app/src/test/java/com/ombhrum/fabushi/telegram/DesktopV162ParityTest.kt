@@ -34,19 +34,19 @@ class DesktopV162ParityTest {
         val day = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_DAY))
         assertFalse(day.isDark)
         assertTrue(day.isAppleStyle)
-        assertEquals(Color(0xFF007AFF), day.primaryAccent)
-        assertEquals(Color(0xFF2C95FF), day.outgoingBubbleTop)
-        assertEquals(Color(0xFF007AFF), day.outgoingBubbleBottom)
+        assertEquals(Color(0xFF126FD4), day.primaryAccent)
+        assertEquals(Color(0xFF1E86FC), day.outgoingBubbleTop)
+        assertEquals(Color(0xFF126FD4), day.outgoingBubbleBottom)
         assertEquals(Color(0xFFFFFFFF), day.outgoingText)
-        assertEquals(Color(0xFFE9E9EB), day.incomingBubble)
+        assertEquals(Color(0xFFF1F1F1), day.incomingBubble)
 
         val night = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_NIGHT))
         assertTrue(night.isDark)
         assertTrue(night.isAppleStyle)
         assertEquals(Color(0xFF0A84FF), night.primaryAccent)
-        assertEquals(Color(0xFF1E8FFF), night.outgoingBubbleTop)
-        assertEquals(Color(0xFF0A84FF), night.outgoingBubbleBottom)
-        assertEquals(Color(0xFF262629), night.incomingBubble)
+        assertEquals(Color(0xFF1884FC), night.outgoingBubbleTop)
+        assertEquals(Color(0xFF116DD2), night.outgoingBubbleBottom)
+        assertEquals(Color(0xFF1F1F1F), night.incomingBubble)
 
         val tinted = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_TINTED))
         assertTrue(tinted.isDark)
@@ -257,7 +257,7 @@ class DesktopV162ParityTest {
                 java.net.ServerSocket(0).use { srv ->
                     val port = srv.localPort
                     val thread = Thread {
-                        repeat(3) {
+                        repeat(4) {
                             srv.accept().use { sock ->
                                 val reqLine = sock.getInputStream().bufferedReader().readLine().orEmpty()
                                 val body = when {

@@ -140,13 +140,19 @@ fun TelegramAndroidShell(
                     alipayLoginUrl = state.alipayLoginUrl,
                     alipayStatusText = state.alipayStatusText,
                     emailCodeSentNotice = state.emailCodeSentNotice,
+                    hasPendingTwoFactor = !state.pendingTwoFactorChallengeToken.isNullOrBlank(),
+                    pendingTwoFactorHint = state.pendingTwoFactorHint,
                     onUpdateServerEndpoint = telegramViewModel::updateDesktopServerEndpoint,
                     onPasswordLogin = telegramViewModel::loginWithPassword,
                     onPasswordRegister = telegramViewModel::registerWithPassword,
+                    onSubmitTwoFactor = telegramViewModel::submitTwoFactorCloudPassword,
+                    onCancelTwoFactor = telegramViewModel::cancelTwoFactorChallenge,
                     onSendEmailCode = telegramViewModel::sendEmailVerificationCode,
                     onEmailRegister = telegramViewModel::registerWithEmail,
                     onStartAlipayLogin = telegramViewModel::startAlipayLogin,
-                    onPollAlipayLogin = telegramViewModel::pollAlipayLogin,
+                    onPollAlipayLogin = { telegramViewModel.pollAlipayLogin(silent = false) },
+                    onToggleTheme = telegramViewModel::toggleAuthThemeMode,
+                    onToggleLanguage = telegramViewModel::toggleAuthLanguage,
                     onEnterOfflineLocalMode = telegramViewModel::enterOfflineLocalMode,
                 )
                 return@CompositionLocalProvider
@@ -155,8 +161,7 @@ fun TelegramAndroidShell(
             val showBottomTabBar = when (state.subScreen) {
                 TelegramSubScreen.HOME,
                 TelegramSubScreen.CONTACTS,
-                TelegramSubScreen.BOTFATHER,
-                TelegramSubScreen.CLOUD_COMPUTER -> true
+                TelegramSubScreen.BOTFATHER -> true
                 TelegramSubScreen.SETTINGS -> state.settingsPage == TelegramSettingsPage.OVERVIEW
                 else -> false
             }
@@ -165,10 +170,10 @@ fun TelegramAndroidShell(
                 TelegramSubScreen.CONTACTS -> AppleShellTab.CONTACTS
                 TelegramSubScreen.BOTFATHER,
                 TelegramSubScreen.HERMES_STUDIO,
-                TelegramSubScreen.MAGPIE_GATEWAY -> AppleShellTab.AGENTS
-                TelegramSubScreen.CLOUD_COMPUTER,
-                TelegramSubScreen.MIKA_WORKSPACE -> AppleShellTab.REMOTE
-                TelegramSubScreen.SETTINGS -> AppleShellTab.SETTINGS
+                TelegramSubScreen.MIKA_WORKSPACE,
+                TelegramSubScreen.CLOUD_COMPUTER -> AppleShellTab.AGENTS
+                TelegramSubScreen.SETTINGS,
+                TelegramSubScreen.MAGPIE_GATEWAY -> AppleShellTab.SETTINGS
                 else -> AppleShellTab.MESSAGES
             }
 
@@ -272,6 +277,14 @@ fun TelegramAndroidShell(
                                         onSendMessage = { text, silent, sched, ttl ->
                                             telegramViewModel.sendComposerMessage(activeChat.id, text, silent, sched, ttl)
                                         },
+                                        onStartBotChat = { telegramViewModel.startBotChat(activeChat.id) },
+                                        onOpenMiniApp = { pluginId ->
+                                            if (pluginId == "global_dharma" || pluginId == "fabushi-global-dharma") {
+                                                telegramViewModel.navigateTo(TelegramSubScreen.GLOBAL_DHARMA)
+                                            } else {
+                                                onOpenMiniAppPluginId(pluginId)
+                                            }
+                                        },
                                         onRetryFailedMessage = { msgId ->
                                             telegramViewModel.retryFailedMessage(activeChat.id, msgId)
                                         },
@@ -369,7 +382,23 @@ fun TelegramAndroidShell(
                                     contacts = state.serverContacts,
                                     chats = state.chats,
                                     isAuthenticated = state.isAuthenticated,
-                                    onOpenChat = { id -> telegramViewModel.openChat(id) },
+                                    onOpenContact = { contact ->
+                                        val existingChat = contact.chatId?.toString()?.let { cid ->
+                                            state.chats.firstOrNull { it.id == cid }
+                                        } ?: state.chats.firstOrNull { it.peerUserId == contact.userId }
+                                        val resolvedId = existingChat?.id ?: contact.chatId?.toString()
+                                        if (resolvedId != null) {
+                                            telegramViewModel.openChat(
+                                                chatId = resolvedId,
+                                                provisionalTitle = contact.displayName.ifBlank { contact.username },
+                                                provisionalUsername = contact.username,
+                                                provisionalPeerUserId = contact.userId,
+                                                provisionalBio = contact.bio.ifBlank { null },
+                                            )
+                                        } else {
+                                            telegramViewModel.addContactByUsername(contact.username.ifBlank { contact.displayName })
+                                        }
+                                    },
                                     onAddContact = { username -> telegramViewModel.addContactByUsername(username) },
                                     onDeleteContact = { uid -> telegramViewModel.deleteContact(uid) },
                                     onRefreshContacts = telegramViewModel::refreshContacts,
@@ -378,87 +407,47 @@ fun TelegramAndroidShell(
                                 )
                             }
 
-                            TelegramSubScreen.BOTFATHER -> {
+                            TelegramSubScreen.BOTFATHER,
+                            TelegramSubScreen.HERMES_STUDIO -> {
                                 BotFatherWorkspaceScreen(
                                     existingBots = state.chats.filter { it.isBot },
                                     fabushiBots = state.fabushiBots,
-                                    codingBots = state.codingAgentBots,
-                                    codingProbes = state.codingAgentProbes,
-                                    lastCreatedBotToken = state.lastCreatedBotToken,
-                                    magpieState = state.magpieGateway,
-                                    hermesState = state.hermesStudio,
-                                    isAuthenticated = state.isAuthenticated,
-                                    onCreateBot = telegramViewModel::createCompanionBot,
-                                    onBotFatherNlCreate = { prompt -> telegramViewModel.botfatherNlCreate(prompt) },
-                                    onCreateCodingAgentBot = telegramViewModel::createCodingAgentBot,
-                                    onCycleCodingPermission = telegramViewModel::cycleCodingAgentPermission,
-                                    onProbeCodingAgents = telegramViewModel::probeCodingAgents,
-                                    onRefreshBots = telegramViewModel::refreshServerBots,
-                                    onOpenBotChat = { id -> telegramViewModel.openChat(id) },
-                                    onSetMagpieStrategy = telegramViewModel::setMagpieStrategy,
-                                    onConfigureMagpieProvider = { id, key -> telegramViewModel.configureMagpieProvider(id, key) },
-                                    onImportMagpieEnvOrUri = telegramViewModel::importMagpieEnvOrUri,
-                                    onTestMagpiePiiMask = telegramViewModel::testMagpiePiiMask,
-                                    onSyncModelsDev = telegramViewModel::syncModelsDevCatalog,
-                                    onScanLocalSubscriptions = telegramViewModel::scanLocalSubscriptions,
-                                    onSelectHermesTab = telegramViewModel::selectHermesTab,
-                                    onBranchHermesSession = telegramViewModel::branchHermesSession,
-                                    onRunHermesMoa = telegramViewModel::runHermesMoaPrompt,
-                                    onUpdateHermesSoul = telegramViewModel::updateHermesSoul,
-                                    onToggleHermesSkill = telegramViewModel::toggleHermesSkill,
-                                    onExecuteHermesTerminal = telegramViewModel::executeHermesTerminal,
-                                    onAddHermesCron = telegramViewModel::addHermesCronJob,
-                                    onAdvanceHermesKanban = telegramViewModel::advanceKanbanCard,
-                                    onDecideHermesApproval = telegramViewModel::decideHermesApproval,
-                                    onBack = { telegramViewModel.navigateTo(TelegramSubScreen.HOME) },
-                                )
-                            }
-
-                            TelegramSubScreen.CLOUD_COMPUTER -> {
-                                CloudComputerWorkbenchScreen(
-                                    computerState = state.cloudComputer,
                                     mikaSnapshot = state.mikaSnapshot,
-                                    serverEndpoint = state.serverEndpoint,
+                                    lastCreatedBotToken = state.lastCreatedBotToken,
                                     isAuthenticated = state.isAuthenticated,
-                                    onSelectNode = telegramViewModel::selectComputerNode,
-                                    onAcquireLease = telegramViewModel::acquireCuaLease,
-                                    onEmergencyTakeover = telegramViewModel::emergencyHumanTakeover,
-                                    onExecuteOp = telegramViewModel::executeComputerOp,
-                                    onAdvanceTask = telegramViewModel::advanceGlobalTaskFsm,
+                                    onOpenBot = telegramViewModel::openBotChat,
+                                    onOpenBotChat = { id -> telegramViewModel.openChat(id) },
+                                    onOpenBotByUsername = { u, name, desc ->
+                                        telegramViewModel.openBotByUsername(username = u, displayName = name, description = desc)
+                                    },
                                     onOpenMikaWorkspace = { telegramViewModel.navigateTo(TelegramSubScreen.MIKA_WORKSPACE) },
-                                    onRefreshAll = {
-                                        telegramViewModel.refreshMikaSnapshot()
-                                        telegramViewModel.refreshComputers()
-                                        telegramViewModel.refreshRemoteAssist()
-                                        telegramViewModel.refreshRemoteSessions()
-                                        telegramViewModel.refreshMcpGrants()
+                                    onCreateBot = { name, desc, handle ->
+                                        telegramViewModel.createFabushiBot(
+                                            displayName = name,
+                                            username = handle,
+                                            description = desc,
+                                            openAfterCreate = true,
+                                        )
                                     },
-                                    onToggleRemoteAssist = telegramViewModel::toggleRemoteAssist,
-                                    onResetAssistCode = telegramViewModel::resetRemoteAssistCode,
-                                    onUpdateAssistCode = telegramViewModel::updateRemoteAssistCode,
-                                    onStartRemoteAssist = telegramViewModel::startRemoteAssist,
-                                    onDisconnectRemoteSession = telegramViewModel::disconnectRemoteSession,
-                                    onDisconnectAllRemoteSessions = telegramViewModel::disconnectAllRemoteSessions,
-                                    onUpdateStreamSettings = telegramViewModel::updateRemoteStreamSettings,
-                                    onUpsertCloudComputer = { name, host, port, user, authMethod, secret, verify ->
-                                        telegramViewModel.upsertCloudComputer(name, host, port, user, authMethod, secret, null, verify)
+                                    onBotFatherNlCreate = { prompt ->
+                                        telegramViewModel.botfatherNlCreate(prompt = prompt, openAfterCreate = true)
                                     },
-                                    onPatchComputerPolicy = { nodeId, pol ->
-                                        telegramViewModel.patchComputerPolicy(nodeId, runPolicy = pol)
-                                    },
-                                    onTestComputer = telegramViewModel::testComputer,
-                                    onDeleteComputer = telegramViewModel::deleteComputer,
-                                    onIssueMcpGrant = telegramViewModel::issueRemoteMcpGrant,
-                                    onRevokeMcpGrant = telegramViewModel::revokeRemoteMcpGrant,
+                                    onRefreshBots = telegramViewModel::refreshServerBots,
                                     onBack = { telegramViewModel.navigateTo(TelegramSubScreen.HOME) },
                                 )
                             }
 
-                            TelegramSubScreen.SETTINGS -> {
+                            TelegramSubScreen.SETTINGS,
+                            TelegramSubScreen.MAGPIE_GATEWAY -> {
+                                val effectiveState = if (state.subScreen == TelegramSubScreen.MAGPIE_GATEWAY) {
+                                    state.copy(settingsPage = TelegramSettingsPage.AI_PROVIDERS)
+                                } else state
                                 TelegramSettingsScreen(
-                                    state = state,
+                                    state = effectiveState,
                                     updateState = updateState,
-                                    onSelectPage = telegramViewModel::openSettingsPage,
+                                    onSelectPage = { p ->
+                                        telegramViewModel.navigateTo(TelegramSubScreen.SETTINGS, p)
+                                    },
                                     onUpdateProfile = telegramViewModel::updateProfile,
                                     onUpdateTheme = telegramViewModel::updateThemeSettings,
                                     onConfigurePasscode = telegramViewModel::configurePasscode,
@@ -472,6 +461,9 @@ fun TelegramAndroidShell(
                                     onConfigureServerEndpoint = telegramViewModel::configureServerEndpoint,
                                     onOpenTonWallet = { telegramViewModel.navigateTo(TelegramSubScreen.TON_WALLET) },
                                     onOpenGlobalDharma = { telegramViewModel.navigateTo(TelegramSubScreen.GLOBAL_DHARMA) },
+                                    onSetMagpieStrategy = telegramViewModel::setMagpieStrategy,
+                                    onConfigureAiProvider = { id, key -> telegramViewModel.configureMagpieProvider(id, key) },
+                                    onSyncModelsDev = telegramViewModel::syncModelsDevCatalog,
                                     onCheckForUpdates = onCheckForUpdates,
                                     onDownloadAndInstallUpdate = onDownloadAndInstallUpdate,
                                     onInitSplitKeyVault = telegramViewModel::initSplitKeyVault,
@@ -512,45 +504,17 @@ fun TelegramAndroidShell(
                                 )
                             }
 
-                            TelegramSubScreen.HERMES_STUDIO -> {
-                                HermesStudioScreen(
-                                    hermesState = state.hermesStudio,
-                                    onSelectTab = telegramViewModel::selectHermesTab,
-                                    onBranchSession = telegramViewModel::branchHermesSession,
-                                    onRunMoa = telegramViewModel::runHermesMoaPrompt,
-                                    onUpdateSoul = telegramViewModel::updateHermesSoul,
-                                    onToggleSkill = telegramViewModel::toggleHermesSkill,
-                                    onExecuteTerminal = telegramViewModel::executeHermesTerminal,
-                                    onAddCron = telegramViewModel::addHermesCronJob,
-                                    onAdvanceKanban = telegramViewModel::advanceKanbanCard,
-                                    onDecideApproval = telegramViewModel::decideHermesApproval,
-                                    onBack = { telegramViewModel.navigateTo(TelegramSubScreen.BOTFATHER) },
-                                )
-                            }
-
-                            TelegramSubScreen.MAGPIE_GATEWAY -> {
-                                MagpieGatewayScreen(
-                                    gatewayState = state.magpieGateway,
-                                    onSetStrategy = telegramViewModel::setMagpieStrategy,
-                                    onConfigureProvider = { id, key -> telegramViewModel.configureMagpieProvider(id, key) },
-                                    onImportEnvOrUri = telegramViewModel::importMagpieEnvOrUri,
-                                    onTestPiiMask = telegramViewModel::testMagpiePiiMask,
-                                    onSyncModelsDev = telegramViewModel::syncModelsDevCatalog,
-                                    onScanLocalSubscriptions = telegramViewModel::scanLocalSubscriptions,
-                                    onBack = { telegramViewModel.navigateTo(TelegramSubScreen.BOTFATHER) },
-                                )
-                            }
-
-                            TelegramSubScreen.MIKA_WORKSPACE -> {
+                            TelegramSubScreen.MIKA_WORKSPACE,
+                            TelegramSubScreen.CLOUD_COMPUTER -> {
                                 if (mikaWorkspaceContent != null) {
                                     mikaWorkspaceContent {
-                                        telegramViewModel.navigateTo(TelegramSubScreen.CLOUD_COMPUTER)
+                                        telegramViewModel.navigateTo(TelegramSubScreen.BOTFATHER)
                                     }
                                 } else {
                                     BuiltInMikaControlFallbackScreen(
                                         snapshot = state.mikaSnapshot,
                                         onRefresh = telegramViewModel::refreshMikaSnapshot,
-                                        onBack = { telegramViewModel.navigateTo(TelegramSubScreen.CLOUD_COMPUTER) },
+                                        onBack = { telegramViewModel.navigateTo(TelegramSubScreen.BOTFATHER) },
                                     )
                                 }
                             }
@@ -563,7 +527,7 @@ fun TelegramAndroidShell(
                         }
                     }
 
-                    // Persistent Translucent 5-Tab Apple iOS Bottom Bar (crisp vector icons ONLY, zero emojis!)
+                    // Persistent 4-Tab Mobile Bottom Bar (Desktop v1.6.9 aligned — zero desktop Remote tab)
                     if (showBottomTabBar) {
                         ApplePersistentBottomTabBar(
                             activeTab = activeTab,
@@ -573,7 +537,6 @@ fun TelegramAndroidShell(
                                     AppleShellTab.MESSAGES -> telegramViewModel.navigateTo(TelegramSubScreen.HOME)
                                     AppleShellTab.CONTACTS -> telegramViewModel.navigateTo(TelegramSubScreen.CONTACTS)
                                     AppleShellTab.AGENTS -> telegramViewModel.navigateTo(TelegramSubScreen.BOTFATHER)
-                                    AppleShellTab.REMOTE -> telegramViewModel.navigateTo(TelegramSubScreen.CLOUD_COMPUTER)
                                     AppleShellTab.SETTINGS -> telegramViewModel.navigateTo(
                                         TelegramSubScreen.SETTINGS,
                                         TelegramSettingsPage.OVERVIEW,
@@ -630,7 +593,7 @@ fun TelegramAndroidShell(
                 state.toastBanner?.let { banner ->
                     Surface(
                         shape = RoundedCornerShape(14.dp),
-                        color = if (palette.isDark) Color(0xEE303238) else Color(0xEE1D1D1F),
+                        color = if (palette.isDark) Color(0xEE2C2C2E) else Color(0xEE1C1C1C),
                         shadowElevation = 8.dp,
                         modifier = Modifier
                             .align(Alignment.BottomCenter)
@@ -663,7 +626,7 @@ private fun ApplePersistentBottomTabBar(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(palette.topBarBackground.copy(alpha = 0.94f))
+            .background(palette.topBarBackground.copy(alpha = 0.96f))
             .navigationBarsPadding()
             .testTag("apple-bottom-nav-bar"),
     ) {
@@ -679,7 +642,6 @@ private fun ApplePersistentBottomTabBar(
                 Triple(AppleShellTab.MESSAGES, TelegramGlyph.CHAT_BUBBLE, strings.tabMessages),
                 Triple(AppleShellTab.CONTACTS, TelegramGlyph.CONTACTS, strings.tabContacts),
                 Triple(AppleShellTab.AGENTS, TelegramGlyph.BOT_ROBOT, strings.tabAgents),
-                Triple(AppleShellTab.REMOTE, TelegramGlyph.CLOUD_COMPUTER, strings.tabRemote),
                 Triple(AppleShellTab.SETTINGS, TelegramGlyph.SETTINGS_GEAR, strings.tabSettings),
             )
             items.forEach { (tab, glyph, label) ->
@@ -733,7 +695,7 @@ private fun TelegramContactsScreen(
     contacts: List<ServerContactItem>,
     chats: List<TelegramChatItem>,
     isAuthenticated: Boolean,
-    onOpenChat: (String) -> Unit,
+    onOpenContact: (ServerContactItem) -> Unit,
     onAddContact: (String) -> Unit,
     onDeleteContact: (String) -> Unit,
     onRefreshContacts: () -> Unit,
@@ -852,12 +814,7 @@ private fun TelegramContactsScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable {
-                                    val chatId = c.chatId?.toString()
-                                        ?: chats.firstOrNull { it.peerUserId == c.userId }?.id
-                                    if (chatId != null) onOpenChat(chatId)
-                                    else onAddContact(c.username.ifBlank { c.displayName })
-                                }
+                                .clickable { onOpenContact(c) }
                                 .padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

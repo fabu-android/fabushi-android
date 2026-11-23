@@ -111,6 +111,83 @@ fun resolvePeerNameColor(peerSeed: String, palette: TelegramPalette): Color {
     }
 }
 
+/**
+ * Desktop v1.6.9 9-hue per-bot chromatic identity (`tdesktop_palette.rs::bot_hue_colors`).
+ */
+@Immutable
+data class BotHueColors(
+    val bubbleFill: Color,
+    val bubbleTop: Color,
+    val pillBg: Color,
+    val pillText: Color,
+)
+
+private val BOT_HUE_RING = listOf(
+    "blue", "purple", "cyan", "green", "orange", "magenta", "red", "yellow", "brown",
+)
+
+fun botHueNameForId(id: Long): String {
+    val idx = ((id xor (id ushr 32)).toInt() and 0x7FFFFFFF) % BOT_HUE_RING.size
+    return BOT_HUE_RING[idx]
+}
+
+fun isTintedBotHue(hueName: String?): Boolean {
+    val lower = hueName?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
+    return lower.isNotEmpty() && lower !in setOf("black", "gray", "grey", "neutral", "default")
+}
+
+fun resolveBotHueColors(hueName: String?, isDark: Boolean): BotHueColors {
+    val raw = hueName?.trim()?.lowercase(java.util.Locale.ROOT).orEmpty()
+    val (fill, top, pillBg, pillText) = when (raw) {
+        "red", "danger", "rose", "crimson" -> if (isDark) {
+            listOf(Color(0xFFCF2B35), Color(0xFFE03E47), Color(0xFF36191C), Color(0xFFFF6463))
+        } else {
+            listOf(Color(0xFFC82532), Color(0xFFDB3845), Color(0xFFFFEAEC), Color(0xFFCD2834))
+        }
+        "green", "success", "emerald", "mint" -> if (isDark) {
+            listOf(Color(0xFF0E9F5A), Color(0xFF18B469), Color(0xFF162E22), Color(0xFF00BA69))
+        } else {
+            listOf(Color(0xFF0D9655), Color(0xFF18AA64), Color(0xFFE7F9F0), Color(0xFF00854A))
+        }
+        "yellow", "warn", "amber", "gold" -> if (isDark) {
+            listOf(Color(0xFFC8770C), Color(0xFFDA881B), Color(0xFF352815), Color(0xFFE28600))
+        } else {
+            listOf(Color(0xFFC2730B), Color(0xFFD58319), Color(0xFFFEF4E7), Color(0xFFAA6300))
+        }
+        "orange", "coral" -> if (isDark) {
+            listOf(Color(0xFFCD5309), Color(0xFFDF661C), Color(0xFF362115), Color(0xFFFE6600))
+        } else {
+            listOf(Color(0xFFD2550A), Color(0xFFE5681E), Color(0xFFFFF0E7), Color(0xFFC14C00))
+        }
+        "cyan", "teal", "aqua" -> if (isDark) {
+            listOf(Color(0xFF0E9886), Color(0xFF19AD9A), Color(0xFF162D2A), Color(0xFF00B7A2))
+        } else {
+            listOf(Color(0xFF0D9381), Color(0xFF18A794), Color(0xFFE7F8F6), Color(0xFF008273))
+        }
+        "purple", "violet", "lavender", "indigo" -> if (isDark) {
+            listOf(Color(0xFF7845D7), Color(0xFF8A59E5), Color(0xFF271F39), Color(0xFFA582FF))
+        } else {
+            listOf(Color(0xFF7442D1), Color(0xFF8656DF), Color(0xFFF4EEFE), Color(0xFF7547D0))
+        }
+        "magenta", "pink", "fuchsia" -> if (isDark) {
+            listOf(Color(0xFFCF297E), Color(0xFFE13D91), Color(0xFF361A28), Color(0xFFFF55A4))
+        } else {
+            listOf(Color(0xFFC82779), Color(0xFFDA3B8C), Color(0xFFFEEBF5), Color(0xFFC62378))
+        }
+        "brown", "bronze", "earth" -> if (isDark) {
+            listOf(Color(0xFF8C5D31), Color(0xFF9E6E41), Color(0xFF2A221B), Color(0xFFC59E7D))
+        } else {
+            listOf(Color(0xFF86592E), Color(0xFF986A3E), Color(0xFFF5F0EB), Color(0xFF996B42))
+        }
+        else -> if (isDark) {
+            listOf(Color(0xFF116DD2), Color(0xFF1884FC), Color(0xFF162639), Color(0xFF4D9BFF))
+        } else {
+            listOf(Color(0xFF126FD4), Color(0xFF1E86FC), Color(0xFFE7F2FF), Color(0xFF0B6DD3))
+        }
+    }
+    return BotHueColors(bubbleFill = fill, bubbleTop = top, pillBg = pillBg, pillText = pillText)
+}
+
 @Immutable
 data class TelegramThemeSettings(
     val preset: TelegramThemePreset = TelegramThemePreset.APPLE_DAY,
@@ -218,115 +295,119 @@ data class TelegramPalette(
 fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
     return when (settings.preset) {
         TelegramThemePreset.APPLE_DAY -> TelegramPalette(
+            // Desktop v1.6.9 `sand-light` 4-step elevation ladder:
+            // Sidebar/Grouped `#F5F5F5` -> Chrome `#FCFCFC` -> Stage `#FFFFFF` -> Input/Hover `#F1F1F1`
             isDark = false,
-            topBarBackground = Color(0xFFFFFFFF),
-            topBarContent = Color(0xFF1D1D1F),
-            topBarSubtitle = Color(0xFF86868B),
-            drawerHeaderStart = Color(0xFF2C95FF),
-            drawerHeaderEnd = Color(0xFF007AFF),
+            topBarBackground = Color(0xFFFCFCFC),
+            topBarContent = Color(0xFF1C1C1C),
+            topBarSubtitle = Color(0xFF636366),
+            drawerHeaderStart = Color(0xFF1E86FC),
+            drawerHeaderEnd = Color(0xFF126FD4),
             appBackground = Color(0xFFFFFFFF),
             surfaceColor = Color(0xFFFFFFFF),
-            elevatedSurface = Color(0xFFF3F3F5),
-            primaryAccent = Color(0xFF007AFF),
-            outgoingBubble = Color(0xFF007AFF),
-            incomingBubble = Color(0xFFE9E9EB),
+            elevatedSurface = Color(0xFFF1F1F1),
+            primaryAccent = Color(0xFF126FD4),
+            outgoingBubble = Color(0xFF126FD4),
+            incomingBubble = Color(0xFFF1F1F1),
             outgoingText = Color(0xFFFFFFFF),
-            incomingText = Color(0xFF1D1D1F),
+            incomingText = Color(0xFF1C1C1C),
             outgoingMeta = Color(0xFFE5F2FF),
-            incomingMeta = Color(0xFF8E8E93),
-            checkMarkColor = Color(0xFF007AFF),
-            unreadBadgeActive = Color(0xFF007AFF),
+            incomingMeta = Color(0xFF7A7A80),
+            checkMarkColor = Color(0xFF0B6DD3),
+            unreadBadgeActive = Color(0xFF126FD4),
             unreadBadgeMuted = Color(0xFFC7C7CC),
-            secretGreen = Color(0xFF34C759),
-            destructiveRed = Color(0xFFFF3B30),
+            secretGreen = Color(0xFF10AB61),
+            destructiveRed = Color(0xFFE72E3B),
             goldMerit = Color(0xFFD99B26),
-            linkColor = Color(0xFF007AFF),
-            codeBackground = Color(0xFFE6E8EB),
-            dividerColor = Color.Black.copy(alpha = 0.07f),
-            primaryText = Color(0xFF1D1D1F),
-            secondaryText = Color(0xFF86868B),
-            hintText = Color(0xFFAEAEB2),
+            linkColor = Color(0xFF0B6DD3),
+            codeBackground = Color(0xFFF1F1F4),
+            dividerColor = Color(0xFF1C1C1C).copy(alpha = 0.08f),
+            primaryText = Color(0xFF1C1C1C),
+            secondaryText = Color(0xFF636366),
+            hintText = Color(0xFF8E8E93),
             wallpaperStart = Color(0xFFFFFFFF),
             wallpaperEnd = Color(0xFFFFFFFF),
-            doodleTint = Color(0x12007AFF),
+            doodleTint = Color(0x12126FD4),
             settings = settings,
             isAppleStyle = true,
-            outgoingBubbleTop = Color(0xFF2C95FF),
-            outgoingBubbleBottom = Color(0xFF007AFF),
-            groupedBackground = Color(0xFFF2F2F7),
-            accentHover = Color(0xFF0062CC),
-            inputBg = Color(0xFFF3F3F5),
-            cardBg = Color(0xFFF7F7F8),
+            outgoingBubbleTop = Color(0xFF1E86FC),
+            outgoingBubbleBottom = Color(0xFF126FD4),
+            groupedBackground = Color(0xFFF5F5F5),
+            accentHover = Color(0xFF0B5DB8),
+            inputBg = Color(0xFFF1F1F1),
+            cardBg = Color(0xFFFFFFFF),
             modalBg = Color(0xFFFFFFFF),
-            hoverBg = Color(0xFFE8E8ED),
-            borderColor = Color(0xFFE5E5EA),
-            servicePillBg = Color(0xFFF2F2F7),
-            servicePillFg = Color(0xFF8E8E93),
-            codeForeground = Color(0xFF1D1D1F),
+            hoverBg = Color(0xFFF1F1F1),
+            borderColor = Color(0xFFE5E5E7),
+            servicePillBg = Color(0xFFF1F1F1),
+            servicePillFg = Color(0xFF7A7A80),
+            codeForeground = Color(0xFF1C1C1C),
             outgoingCheckMarkColor = Color(0xFFFFFFFF),
             outgoingLinkColor = Color(0xFFFFFFFF),
             outgoingReplyBarColor = Color(0xFFFFFFFF),
             outgoingReactionTextColor = Color(0xFFFFFFFF),
-            topBarActionColor = Color(0xFF007AFF),
-            searchCursorColor = Color(0xFF007AFF),
-            selectedPillBackground = Color(0xFF007AFF),
+            topBarActionColor = Color(0xFF126FD4),
+            searchCursorColor = Color(0xFF126FD4),
+            selectedPillBackground = Color(0xFF126FD4),
             selectedPillContent = Color(0xFFFFFFFF),
             unreadBadgeContent = Color(0xFFFFFFFF),
-            unreadBadgeMutedContent = Color(0xFF1D1D1F),
+            unreadBadgeMutedContent = Color(0xFF1C1C1C),
             outgoingCodeBg = Color(0x33000000),
             outgoingSubCardBg = Color.Black.copy(alpha = 0.20f),
             outgoingSubCardSelectedBg = Color.Black.copy(alpha = 0.30f),
             approveActionBg = Color(0xFF1A7F37),
             approveActionContent = Color.White,
-            statusGreenText = Color(0xFF146C2E),
+            statusGreenText = Color(0xFF0E7C47),
         )
 
         TelegramThemePreset.APPLE_NIGHT -> TelegramPalette(
+            // Desktop v1.6.9 `sand-dark` 4-step elevation ladder:
+            // Sidebar/Grouped `#0E0E0E` -> Chrome `#121212` -> Stage `#161616` -> Elevated `#1F1F1F` (hover `#2C2C2C`)
             isDark = true,
-            topBarBackground = Color(0xFF1E1E1E),
-            topBarContent = Color(0xFFF5F5F7),
-            topBarSubtitle = Color(0xFF98989D),
-            drawerHeaderStart = Color(0xFF1E8FFF),
-            drawerHeaderEnd = Color(0xFF0A84FF),
-            appBackground = Color(0xFF1E1E1E),
-            surfaceColor = Color(0xFF242426),
-            elevatedSurface = Color(0xFF2A2A2D),
+            topBarBackground = Color(0xFF121212),
+            topBarContent = Color(0xFFF5F5F5),
+            topBarSubtitle = Color(0xFFA3A3A8),
+            drawerHeaderStart = Color(0xFF1884FC),
+            drawerHeaderEnd = Color(0xFF116DD2),
+            appBackground = Color(0xFF161616),
+            surfaceColor = Color(0xFF1F1F1F),
+            elevatedSurface = Color(0xFF2C2C2C),
             primaryAccent = Color(0xFF0A84FF),
-            outgoingBubble = Color(0xFF0A84FF),
-            incomingBubble = Color(0xFF262629),
+            outgoingBubble = Color(0xFF116DD2),
+            incomingBubble = Color(0xFF1F1F1F),
             outgoingText = Color(0xFFFFFFFF),
-            incomingText = Color(0xFFF5F5F7),
+            incomingText = Color(0xFFF5F5F5),
             outgoingMeta = Color(0xFFD6EBFF),
-            incomingMeta = Color(0xFF8E8E93),
-            checkMarkColor = Color(0xFF0A84FF),
+            incomingMeta = Color(0xFF8A8A8E),
+            checkMarkColor = Color(0xFF4D9BFF),
             unreadBadgeActive = Color(0xFF0A84FF),
             unreadBadgeMuted = Color(0xFF48484A),
-            secretGreen = Color(0xFF30D158),
-            destructiveRed = Color(0xFFFF453A),
+            secretGreen = Color(0xFF00BA69),
+            destructiveRed = Color(0xFFFF6463),
             goldMerit = Color(0xFFF5B841),
-            linkColor = Color(0xFF409CFF),
-            codeBackground = Color(0xFF2C2C2E),
-            dividerColor = Color.White.copy(alpha = 0.08f),
-            primaryText = Color(0xFFF5F5F7),
-            secondaryText = Color(0xFF98989D),
-            hintText = Color(0xFF636366),
-            wallpaperStart = Color(0xFF1E1E1E),
-            wallpaperEnd = Color(0xFF1E1E1E),
+            linkColor = Color(0xFF4D9BFF),
+            codeBackground = Color(0xFF242424),
+            dividerColor = Color.White.copy(alpha = 0.10f),
+            primaryText = Color(0xFFF5F5F5),
+            secondaryText = Color(0xFFA3A3A8),
+            hintText = Color(0xFF76767C),
+            wallpaperStart = Color(0xFF161616),
+            wallpaperEnd = Color(0xFF161616),
             doodleTint = Color(0x160A84FF),
             settings = settings,
             isAppleStyle = true,
-            outgoingBubbleTop = Color(0xFF1E8FFF),
-            outgoingBubbleBottom = Color(0xFF0A84FF),
-            groupedBackground = Color(0xFF000000),
-            accentHover = Color(0xFF2994FF),
-            inputBg = Color(0xFF2A2A2D),
-            cardBg = Color(0xFF262629),
-            modalBg = Color(0xFF242426),
-            hoverBg = Color(0xFF2C2C2E),
-            borderColor = Color(0xFF38383A),
-            servicePillBg = Color(0xFF2C2C2E),
-            servicePillFg = Color(0xFF8E8E93),
-            codeForeground = Color(0xFFE5E5EA),
+            outgoingBubbleTop = Color(0xFF1884FC),
+            outgoingBubbleBottom = Color(0xFF116DD2),
+            groupedBackground = Color(0xFF0E0E0E),
+            accentHover = Color(0xFF1884FC),
+            inputBg = Color(0xFF1F1F1F),
+            cardBg = Color(0xFF1F1F1F),
+            modalBg = Color(0xFF1F1F1F),
+            hoverBg = Color(0xFF2C2C2C),
+            borderColor = Color(0xFF2C2C2C),
+            servicePillBg = Color(0xFF2C2C2C),
+            servicePillFg = Color(0xFF9E9EA4),
+            codeForeground = Color(0xFFE8E8EC),
             outgoingCheckMarkColor = Color(0xFFFFFFFF),
             outgoingLinkColor = Color(0xFFFFFFFF),
             outgoingReplyBarColor = Color(0xFFFFFFFF),
@@ -342,7 +423,7 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             outgoingSubCardSelectedBg = Color.Black.copy(alpha = 0.30f),
             approveActionBg = Color(0xFF1A7F37),
             approveActionContent = Color.White,
-            statusGreenText = Color(0xFF30D158),
+            statusGreenText = Color(0xFF00BA69),
         )
 
         TelegramThemePreset.APPLE_TINTED -> TelegramPalette(

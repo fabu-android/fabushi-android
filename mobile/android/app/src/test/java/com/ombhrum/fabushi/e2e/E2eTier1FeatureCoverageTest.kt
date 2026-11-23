@@ -1527,31 +1527,34 @@ class E2eTier1FeatureCoverageTest {
     // =========================================================================
 
     @Test
-    fun e2e_t1_f1_resolveTelegramPaletteExactDesktopV166HexTokensAndZeroDim() {
+    fun e2e_t1_f1_resolveTelegramPaletteExactDesktopV169HexTokensAndZeroDim() {
         val defaults = TelegramThemeSettings()
         assertEquals(0, defaults.wallpaperDimPercent)
 
         val day = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_DAY))
+        assertEquals(Color(0xFFF5F5F5), day.groupedBackground)
+        assertEquals(Color(0xFFFCFCFC), day.topBarBackground)
         assertEquals(Color(0xFFFFFFFF), day.appBackground)
-        assertEquals(Color(0xFFFFFFFF), day.topBarBackground)
-        assertEquals(Color(0xFF007AFF), day.primaryAccent)
-        assertEquals(Color(0xFF2C95FF), day.outgoingBubbleTop)
-        assertEquals(Color(0xFF007AFF), day.outgoingBubbleBottom)
+        assertEquals(Color(0xFF126FD4), day.primaryAccent)
+        assertEquals(Color(0xFF1E86FC), day.outgoingBubbleTop)
+        assertEquals(Color(0xFF126FD4), day.outgoingBubbleBottom)
         assertEquals(Color(0xFFFFFFFF), day.outgoingText)
-        assertEquals(Color(0xFFE9E9EB), day.incomingBubble)
-        assertEquals(Color(0xFF1D1D1F), day.incomingText)
-        assertEquals(Color(0xFF86868B), day.secondaryText)
-        assertEquals(Color(0xFFFF3B30), day.destructiveRed)
-        assertEquals(Color(0xFF34C759), day.secretGreen)
+        assertEquals(Color(0xFFF1F1F1), day.incomingBubble)
+        assertEquals(Color(0xFF1C1C1C), day.incomingText)
+        assertEquals(Color(0xFF636366), day.secondaryText)
+        assertEquals(Color(0xFFE72E3B), day.destructiveRed)
+        assertEquals(Color(0xFF10AB61), day.secretGreen)
 
         val night = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_NIGHT))
-        assertEquals(Color(0xFF1E1E1E), night.appBackground)
+        assertEquals(Color(0xFF0E0E0E), night.groupedBackground)
+        assertEquals(Color(0xFF121212), night.topBarBackground)
+        assertEquals(Color(0xFF161616), night.appBackground)
         assertEquals(Color(0xFF0A84FF), night.primaryAccent)
-        assertEquals(Color(0xFF1E8FFF), night.outgoingBubbleTop)
-        assertEquals(Color(0xFF0A84FF), night.outgoingBubbleBottom)
-        assertEquals(Color(0xFF262629), night.incomingBubble)
-        assertEquals(Color(0xFFF5F5F7), night.incomingText)
-        assertEquals(Color(0xFF98989D), night.secondaryText)
+        assertEquals(Color(0xFF1884FC), night.outgoingBubbleTop)
+        assertEquals(Color(0xFF116DD2), night.outgoingBubbleBottom)
+        assertEquals(Color(0xFF1F1F1F), night.incomingBubble)
+        assertEquals(Color(0xFFF5F5F5), night.incomingText)
+        assertEquals(Color(0xFFA3A3A8), night.secondaryText)
 
         val tinted = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_TINTED))
         assertEquals(Color(0xFF181C22), tinted.appBackground)
@@ -1610,9 +1613,9 @@ class E2eTier1FeatureCoverageTest {
     }
 
     @Test
-    fun e2e_t1_f4_appleShellTabFiveTabsAndPinnedChatsGridHelper() {
+    fun e2e_t1_f4_appleShellTabFourTabsAndPinnedChatsGridHelper() {
         assertEquals(
-            listOf(AppleShellTab.MESSAGES, AppleShellTab.CONTACTS, AppleShellTab.AGENTS, AppleShellTab.REMOTE, AppleShellTab.SETTINGS),
+            listOf(AppleShellTab.MESSAGES, AppleShellTab.CONTACTS, AppleShellTab.AGENTS, AppleShellTab.SETTINGS),
             AppleShellTab.entries,
         )
         fun chat(id: String, pinned: Boolean) = TelegramChatItem(

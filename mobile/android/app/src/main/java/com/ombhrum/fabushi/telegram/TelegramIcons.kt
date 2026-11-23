@@ -1111,9 +1111,19 @@ fun TelegramAvatar(
         )
         return
     }
+    if (kind == ConversationKind.GROUP) {
+        CompositeGroupAvatar(
+            idSeed = idSeed,
+            title = title,
+            size = size,
+            surfaceCutout = palette.appBackground,
+            modifier = modifier,
+        )
+        return
+    }
 
     val pair = if (kind == ConversationKind.SAVED_MESSAGES) {
-        Color(0xFF2C95FF) to Color(0xFF007AFF)
+        Color(0xFF1E86FC) to Color(0xFF126FD4)
     } else {
         DesktopV166PeerAvatarGradients[(idSeed.hashCode() and 0x7FFFFFFF) % DesktopV166PeerAvatarGradients.size]
     }
@@ -1174,3 +1184,90 @@ fun TelegramAvatar(
         }
     }
 }
+
+/**
+ * Desktop v1.6.9 composite overlapping mini-circle avatar for group chats (`grok_bot_interaction_spec.md`).
+ * Renders 3 staggered circular tiles with surface-matched cutout rings.
+ */
+@Composable
+fun CompositeGroupAvatar(
+    idSeed: String,
+    title: String,
+    size: Dp = 52.dp,
+    surfaceCutout: Color = LocalTelegramPalette.current.appBackground,
+    modifier: Modifier = Modifier,
+) {
+    val seedHash = idSeed.hashCode() and 0x7FFFFFFF
+    val gradients = DesktopV166PeerAvatarGradients
+    val p0 = gradients[seedHash % gradients.size]
+    val p1 = gradients[(seedHash + 2) % gradients.size]
+    val p2 = gradients[(seedHash + 4) % gradients.size]
+
+    val words = title.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+    val c0 = words.getOrNull(0)?.take(1)?.uppercase() ?: "G"
+    val c1 = words.getOrNull(1)?.take(1)?.uppercase()
+        ?: words.getOrNull(0)?.drop(1)?.take(1)?.uppercase()?.ifBlank { "P" }
+        ?: "P"
+    val c2 = words.getOrNull(2)?.take(1)?.uppercase() ?: "#"
+
+    val tileSize = size * 0.56f
+    val ringWidth = (size.value * 0.045f).coerceIn(1.2f, 2.2f).dp
+
+    Box(modifier = modifier.size(size)) {
+        // Top-left back tile
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .size(tileSize)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(p1.first, p1.second)))
+                .border(ringWidth, surfaceCutout, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = c1,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = (tileSize.value * 0.42f).sp,
+                maxLines = 1,
+            )
+        }
+        // Top-right middle tile
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .size(tileSize * 0.90f)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(p2.first, p2.second)))
+                .border(ringWidth, surfaceCutout, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = c2,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = (tileSize.value * 0.36f).sp,
+                maxLines = 1,
+            )
+        }
+        // Bottom-center front hero tile
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .size(tileSize * 1.04f)
+                .clip(CircleShape)
+                .background(Brush.linearGradient(listOf(p0.first, p0.second)))
+                .border(ringWidth, surfaceCutout, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = c0,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = (tileSize.value * 0.44f).sp,
+                maxLines = 1,
+            )
+        }
+    }
+}
+

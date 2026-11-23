@@ -313,7 +313,7 @@ fn test_uu_remote_assist_stream_settings_extended_ops_and_mcp_oauth_grants() {
     let addr = listener.local_addr().unwrap();
     let server_url = format!("http://{addr}");
     let srv = thread::spawn(move || {
-        for _ in 0..10 {
+        for _ in 0..11 {
             let (mut stream, _) = match listener.accept() {
                 Ok(s) => s,
                 Err(_) => break,
@@ -576,7 +576,7 @@ fn test_real_gpui_telegram_server_api_v1_client_loopback() {
     let server_url = format!("http://{addr}");
 
     let handle = thread::spawn(move || {
-        for _ in 0..5 {
+        for _ in 0..6 {
             let (mut stream, _) = match listener.accept() {
                 Ok(s) => s,
                 Err(_) => break,

@@ -12,6 +12,7 @@ import android.util.Base64
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
@@ -28,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -117,6 +119,8 @@ fun TelegramChatScreen(
     onSetReplyTarget: (TelegramMessageItem?) -> Unit,
     onSetEditTarget: (TelegramMessageItem?) -> Unit,
     onSendMessage: (text: String, silent: Boolean, scheduledAtMs: Long?, overrideTtl: Int?) -> Unit,
+    onStartBotChat: () -> Unit = {},
+    onOpenMiniApp: (String) -> Unit = {},
     onRetryFailedMessage: (String) -> Unit,
     onLoadOlderMessages: () -> Unit,
     onToggleReaction: (String, String) -> Unit,
@@ -725,23 +729,94 @@ fun TelegramChatScreen(
                 TelegramHairlineDivider()
             }
 
+            val isUnstartedBot = chat.isBot &&
+                filteredMessages.isEmpty() &&
+                !state.inChatSearchActive &&
+                chat.id !in state.startedBotChatIds
+
             // 3. Monochrome Apple iOS Message Stage (weight(1f))
             TelegramChatWallpaperBackground(modifier = Modifier.weight(1f)) {
                 if (timelineItems.isEmpty()) {
-                    Box(
-                        modifier = Modifier.fillMaxSize().padding(32.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = palette.servicePillBg,
+                    if (isUnstartedBot) {
+                        val botDescription = matchingFabushiBot?.description?.takeIf { it.isNotBlank() }
+                            ?: chat.peerBio?.takeIf { it.isNotBlank() }
+                            ?: chat.subtitle.takeIf { it.isNotBlank() }
+                            ?: if (strings.isEnglish) {
+                                "Tap START below to initialize this bot and view its available commands."
+                            } else {
+                                "点击下方「开始」唤醒机器人并查看可用指令与能力。"
+                            }
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp, vertical = 24.dp),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            Text(
-                                text = strings.noMessagesYet,
-                                color = palette.servicePillFg,
-                                fontSize = 13.sp,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                            )
+                            Surface(
+                                shape = RoundedCornerShape(18.dp),
+                                color = palette.cardBg,
+                                border = BorderStroke(0.5.dp, palette.borderColor),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .widthIn(max = 360.dp)
+                                    .testTag("bot-what-can-i-do-card"),
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 22.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    TelegramAvatar(
+                                        idSeed = chat.id,
+                                        title = chat.title,
+                                        size = 64.dp,
+                                        isBot = true,
+                                        avatarShape = matchingFabushiBot?.avatarShape ?: chat.avatarShape,
+                                        avatarColor = matchingFabushiBot?.avatarColor ?: chat.avatarColor,
+                                    )
+                                    Text(
+                                        text = strings.botWhatCanIDo,
+                                        color = palette.primaryText,
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    Text(
+                                        text = chat.title,
+                                        color = palette.primaryText,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    )
+                                    chat.username?.takeIf { it.isNotBlank() }?.let { uname ->
+                                        Text(
+                                            text = if (uname.startsWith("@")) uname else "@$uname",
+                                            color = palette.primaryAccent,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium,
+                                        )
+                                    }
+                                    Text(
+                                        text = botDescription,
+                                        color = palette.secondaryText,
+                                        fontSize = 13.sp,
+                                        lineHeight = 19.sp,
+                                    )
+                                }
+                            }
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(32.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = palette.servicePillBg,
+                            ) {
+                                Text(
+                                    text = strings.noMessagesYet,
+                                    color = palette.servicePillFg,
+                                    fontSize = 13.sp,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                                )
+                            }
                         }
                     }
                 } else {
@@ -859,32 +934,60 @@ fun TelegramChatScreen(
                 }
             }
 
-            // 4. Floating Apple Capsule Composer (zero embedded TelegramBottomSheet!)
-            TelegramComposer(
-                chat = chat,
-                draftText = chat.draftText,
-                replyTarget = state.replyTarget,
-                editTarget = state.editTarget,
-                recordingState = state.recordingState,
-                slashCommands = state.slashCommands,
-                stickerPacks = state.stickerPacks,
-                gifCatalog = state.gifCatalog,
-                onDraftChange = onUpdateDraft,
-                onClearReplyOrEdit = {
-                    onSetReplyTarget(null)
-                    onSetEditTarget(null)
-                },
-                onSendMessage = onSendMessage,
-                onSendSticker = onSendSticker,
-                onSendGif = onSendGif,
-                onOpenAttachmentSheet = { onSetAttachmentSheetOpen(true) },
-                onToggleRecordMode = onToggleRecordMode,
-                onStartRecording = onStartRecording,
-                onPermissionDenied = onToast,
-                onDragRecording = onDragRecording,
-                onCancelRecording = onCancelRecording,
-                onFinishRecording = onFinishRecording,
-            )
+            // 4. Desktop v1.6.9 Pre-Start Bot Bar OR Floating Apple Capsule Composer
+            if (isUnstartedBot) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(palette.appBackground)
+                        .navigationBarsPadding(),
+                ) {
+                    TelegramHairlineDivider()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp)
+                            .clickable(onClick = onStartBotChat)
+                            .testTag("bot-start-bar"),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = strings.botStartAction,
+                            color = palette.primaryAccent,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.6.sp,
+                        )
+                    }
+                }
+            } else {
+                TelegramComposer(
+                    chat = chat,
+                    draftText = chat.draftText,
+                    replyTarget = state.replyTarget,
+                    editTarget = state.editTarget,
+                    recordingState = state.recordingState,
+                    slashCommands = state.slashCommands,
+                    stickerPacks = state.stickerPacks,
+                    gifCatalog = state.gifCatalog,
+                    onDraftChange = onUpdateDraft,
+                    onClearReplyOrEdit = {
+                        onSetReplyTarget(null)
+                        onSetEditTarget(null)
+                    },
+                    onSendMessage = onSendMessage,
+                    onSendSticker = onSendSticker,
+                    onSendGif = onSendGif,
+                    onOpenAttachmentSheet = { onSetAttachmentSheetOpen(true) },
+                    onOpenMiniApp = onOpenMiniApp,
+                    onToggleRecordMode = onToggleRecordMode,
+                    onStartRecording = onStartRecording,
+                    onPermissionDenied = onToast,
+                    onDragRecording = onDragRecording,
+                    onCancelRecording = onCancelRecording,
+                    onFinishRecording = onFinishRecording,
+                )
+            }
         }
 
         // ====================================================================
@@ -1248,11 +1351,19 @@ private fun AppleMessageRow(
 
             // Bubble + Floating 26dp Tapbacks wrapper
             Box(modifier = Modifier.widthIn(min = 44.dp, max = 304.dp)) {
+                val outgoingBotHue = if (outgoing && chat.isBot && chat.kind == ConversationKind.DIRECT) {
+                    chat.avatarColor?.takeIf { isTintedBotHue(it) }?.let { resolveBotHueColors(it, palette.isDark) }
+                } else {
+                    null
+                }
+                val resolvedOutgoingBrush = outgoingBotHue?.let {
+                    Brush.verticalGradient(listOf(it.bubbleTop, it.bubbleFill))
+                } ?: palette.outgoingBubbleBrush
                 val bubbleModifier = Modifier
                     .padding(top = if (message.reactions.isNotEmpty()) 10.dp else 0.dp)
                     .clip(bubbleShape)
                     .let { base ->
-                        if (outgoing) base.background(palette.outgoingBubbleBrush)
+                        if (outgoing) base.background(resolvedOutgoingBrush)
                         else base.background(palette.incomingBubble)
                     }
                     .combinedClickable(

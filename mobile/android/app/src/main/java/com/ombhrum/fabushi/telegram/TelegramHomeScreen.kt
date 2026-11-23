@@ -1112,16 +1112,17 @@ private fun AppleChatListRow(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                val previewText = when {
-                    !chat.typingLabel.isNullOrBlank() -> chat.typingLabel
-                    liveBotStatus != null -> liveBotStatus
-                    chat.draftText.isNotBlank() -> (if (strings.isEnglish) "Draft: " else "草稿：") + chat.draftText
-                    else -> chat.preview.ifBlank { strings.noMessagesYet }
+                val previewSpec = resolveConversationPreview(chat, strings)
+                val previewText = if (previewSpec.prefix != null) {
+                    previewSpec.prefix + previewSpec.body
+                } else {
+                    previewSpec.body
                 }
-                val previewColor = when {
-                    !chat.typingLabel.isNullOrBlank() || liveBotStatus != null -> palette.primaryAccent
-                    chat.draftText.isNotBlank() -> palette.destructiveRed
-                    else -> palette.secondaryText
+                val previewColor = when (previewSpec.tier) {
+                    ConversationPreviewTier.PENDING_ACTION -> palette.goldMerit
+                    ConversationPreviewTier.DRAFT -> palette.destructiveRed
+                    ConversationPreviewTier.LIVE_ACTIVITY -> palette.primaryAccent
+                    ConversationPreviewTier.MESSAGE -> palette.secondaryText
                 }
                 Text(
                     text = previewText,

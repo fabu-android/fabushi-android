@@ -79,6 +79,7 @@ enum class TelegramSettingsPage(val title: String, val subtitle: String) {
     POWER_SAVING("省电与动效管理", "低电量阈值、贴纸与壁纸动态效果"),
     LANGUAGE_TRANSLATE("语言与即时翻译", "多语言界面与聊天消息一键翻译"),
     STARS_WALLET("Telegram Stars 与 TON 钱包", "Stars 余额、礼物藏品与链上资产"),
+    AI_PROVIDERS("AI 模型与供应商", "配置 OpenAI / Anthropic / Gemini / DeepSeek 等 API Key"),
     PROXY_SERVER("代理与服务器节点", "gpui_telegram_server 同步端点与 SOCKS5/MTProto"),
 }
 
@@ -100,6 +101,8 @@ data class TelegramUiState(
     val offlineLocalMode: Boolean = false,
     val isAuthenticating: Boolean = false,
     val authError: String? = null,
+    val pendingTwoFactorChallengeToken: String? = null,
+    val pendingTwoFactorHint: String? = null,
     val alipayAttemptId: String? = null,
     val alipayLoginUrl: String? = null,
     val alipayStatusText: String? = null,
@@ -137,6 +140,7 @@ data class TelegramUiState(
     val activeTopicId: String? = null,
     val topicsByChat: Map<String, List<TelegramForumTopic>> = emptyMap(),
     val messagesByChat: Map<String, List<TelegramMessageItem>> = emptyMap(),
+    val startedBotChatIds: Set<String> = emptySet(),
     val pinnedBannerIndexByChat: Map<String, Int> = emptyMap(),
     val inChatSearchActive: Boolean = false,
     val inChatSearchQuery: String = "",
@@ -197,6 +201,7 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
     @Volatile private var wsShouldReconnect: Boolean = false
     @Volatile private var wsReconnectAttempt: Int = 0
     @Volatile private var wsReconnectJob: Job? = null
+    @Volatile private var alipayAutoPollJob: Job? = null
     @Volatile private var currentServerUserId: Long? = null
     private val wsConnectCounter = AtomicInteger(0)
     private val mikaStepCounter = AtomicInteger(0)
@@ -747,6 +752,11 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                             next = next.copy(
                                 fabushiBots = serverBotsParsed!!,
                                 codingAgentBots = codingFromBots,
+                                chats = syncFabushiBotsToChats(next.chats, serverBotsParsed!!),
+                            )
+                        } else if (next.fabushiBots.isNotEmpty() && next.chats.isNotEmpty()) {
+                            next = next.copy(
+                                chats = syncFabushiBotsToChats(next.chats, next.fabushiBots),
                             )
                         }
 
@@ -1900,12 +1910,58 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
     // Opening & Creating Conversations (Group, Channel, Secret Chat, Direct)
     // ------------------------------------------------------------------------
 
-    fun openChat(chatId: String, topicId: String? = null) {
+    fun openChat(
+        chatId: String,
+        topicId: String? = null,
+        provisionalTitle: String? = null,
+        provisionalUsername: String? = null,
+        provisionalIsBot: Boolean = false,
+        provisionalAvatarShape: String? = null,
+        provisionalAvatarColor: String? = null,
+        provisionalPeerUserId: Long? = null,
+        provisionalBio: String? = null,
+    ) {
         val targetChat = _state.value.chats.firstOrNull { it.id == chatId }
         val hadUnread = (targetChat?.unreadCount ?: 0) > 0
+        val nowMs = System.currentTimeMillis()
         _state.update { current ->
-            val updatedChats = current.chats.map {
-                if (it.id == chatId) it.copy(unreadCount = 0, markedUnread = false) else it
+            val exists = current.chats.any { it.id == chatId }
+            val updatedChats = if (exists) {
+                current.chats.map {
+                    if (it.id == chatId) {
+                        it.copy(
+                            unreadCount = 0,
+                            markedUnread = false,
+                            isBot = it.isBot || provisionalIsBot,
+                            avatarShape = it.avatarShape ?: provisionalAvatarShape,
+                            avatarColor = it.avatarColor ?: provisionalAvatarColor,
+                            peerUserId = it.peerUserId ?: provisionalPeerUserId,
+                            peerBio = it.peerBio ?: provisionalBio,
+                            username = it.username ?: provisionalUsername,
+                        )
+                    } else it
+                }
+            } else {
+                val cleanHandle = provisionalUsername?.trim()?.trimStart('@')?.takeIf { it.isNotBlank() }
+                val fallbackTitle = provisionalTitle?.trim()?.takeIf { it.isNotBlank() }
+                    ?: cleanHandle
+                    ?: if (provisionalIsBot) "Bot" else "Chat #$chatId"
+                val provisional = TelegramChatItem(
+                    id = chatId,
+                    title = fallbackTitle,
+                    subtitle = cleanHandle?.let { "@$it" } ?: "",
+                    preview = provisionalBio?.trim().orEmpty(),
+                    time = nowTimeLabel(nowMs),
+                    kind = ConversationKind.DIRECT,
+                    isBot = provisionalIsBot,
+                    username = cleanHandle?.let { "@$it" },
+                    avatarShape = provisionalAvatarShape,
+                    avatarColor = provisionalAvatarColor,
+                    peerUserId = provisionalPeerUserId,
+                    peerBio = provisionalBio?.trim()?.takeIf { it.isNotEmpty() },
+                    lastMessageAtMs = nowMs,
+                )
+                sortTelegramChats(listOf(provisional) + current.chats)
             }
             current.copy(
                 subScreen = TelegramSubScreen.CHAT,
@@ -1924,6 +1980,248 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
             fetchServerMessagesForChat(chatId, numericId, markReadAfterLoad = hadUnread)
             fetchPinnedMessages(chatId, numericId)
             fetchServerDraft(chatId)
+        }
+    }
+
+    /**
+     * Desktop-aligned resilient bot entry (`R5 / AC-5`):
+     * Clicking ANY bot (owned, official, Mini App with `companionChatId == null`, or newly created)
+     * opens its conversation immediately without silent no-ops or bouncing back to HOME.
+     */
+    fun openBotChat(bot: FabushiBotItem) {
+        val currentChats = _state.value.chats
+        val existing = currentChats.firstOrNull { ch ->
+            (bot.companionChatId != null && ch.id == bot.companionChatId.toString()) ||
+                (bot.botUserId > 0L && ch.peerUserId == bot.botUserId) ||
+                matchesBotUsername(ch.username, bot.username)
+        }
+        if (existing != null) {
+            openChat(
+                chatId = existing.id,
+                provisionalTitle = bot.displayName.ifBlank { existing.title },
+                provisionalUsername = bot.username.ifBlank { existing.username },
+                provisionalIsBot = true,
+                provisionalAvatarShape = bot.avatarShape.ifBlank { existing.avatarShape },
+                provisionalAvatarColor = bot.avatarColor.ifBlank { existing.avatarColor },
+                provisionalPeerUserId = bot.botUserId.takeIf { it > 0L } ?: existing.peerUserId,
+                provisionalBio = bot.description.ifBlank { existing.peerBio },
+            )
+            return
+        }
+        val cid = bot.companionChatId?.takeIf { it > 0L }?.toString()
+        if (cid != null) {
+            openChat(
+                chatId = cid,
+                provisionalTitle = bot.displayName.ifBlank { bot.username },
+                provisionalUsername = bot.username,
+                provisionalIsBot = true,
+                provisionalAvatarShape = bot.avatarShape.ifBlank { null },
+                provisionalAvatarColor = bot.avatarColor.ifBlank { null },
+                provisionalPeerUserId = bot.botUserId.takeIf { it > 0L },
+                provisionalBio = bot.description.ifBlank { null },
+            )
+            return
+        }
+        openBotByUsername(
+            username = bot.username,
+            displayName = bot.displayName.ifBlank { bot.username },
+            description = bot.description,
+            botUserId = bot.botUserId.takeIf { it > 0L },
+            avatarShape = bot.avatarShape.ifBlank { null },
+            avatarColor = bot.avatarColor.ifBlank { null },
+        )
+    }
+
+    /**
+     * Opens a bot chat by `@username` (e.g., `@BotFather` or an official bot with `companionChatId == null`).
+     * Immediately opens a provisional chat (<16ms UI response) and idempotently materializes the real
+     * server DM via `POST /api/v1/contacts/add` (`is_bot = true`), migrating the chat ID transparently.
+     */
+    fun openBotByUsername(
+        username: String,
+        displayName: String = "",
+        description: String = "",
+        botUserId: Long? = null,
+        avatarShape: String? = null,
+        avatarColor: String? = null,
+    ) {
+        val clean = username.trim().trimStart('@')
+        if (clean.isBlank()) return
+        val existing = _state.value.chats.firstOrNull { ch ->
+            (botUserId != null && botUserId > 0L && ch.peerUserId == botUserId) ||
+                matchesBotUsername(ch.username, clean)
+        }
+        if (existing != null) {
+            openChat(
+                chatId = existing.id,
+                provisionalTitle = displayName.ifBlank { existing.title },
+                provisionalUsername = clean,
+                provisionalIsBot = true,
+                provisionalAvatarShape = avatarShape ?: existing.avatarShape,
+                provisionalAvatarColor = avatarColor ?: existing.avatarColor,
+                provisionalPeerUserId = botUserId ?: existing.peerUserId,
+                provisionalBio = description.ifBlank { existing.peerBio },
+            )
+            return
+        }
+
+        val provisionalId = "bot:${clean.lowercase(java.util.Locale.ROOT)}"
+        val title = displayName.trim().ifBlank { clean }
+        openChat(
+            chatId = provisionalId,
+            provisionalTitle = title,
+            provisionalUsername = clean,
+            provisionalIsBot = true,
+            provisionalAvatarShape = avatarShape,
+            provisionalAvatarColor = avatarColor,
+            provisionalPeerUserId = botUserId,
+            provisionalBio = description.trim().ifBlank { null },
+        )
+
+        if (!_state.value.isAuthenticated) return
+        val capturedGen = generationFence.currentGeneration
+        chatsEpoch.incrementAndGet()
+        viewModelScope.launch {
+            val payload = JSONObject()
+                .put("username", clean)
+                .put("firstName", title)
+                .put("isBot", true)
+                .put("kind", "bot")
+            val result = withContext(Dispatchers.IO) {
+                hostRequestResult("telegram.server.addContact", payload)
+            }
+            if (!generationFence.isCurrent(capturedGen)) return@launch
+            result.onSuccess { resp ->
+                val resolvedChatId = resp.optLong("chat_id").takeIf { it > 0L }?.toString()
+                    ?: resp.optJSONObject("chat")?.optLong("id")?.takeIf { it > 0L }?.toString()
+                    ?: return@onSuccess
+                val nowMs = System.currentTimeMillis()
+                _state.update { cur ->
+                    val existingReal = cur.chats.firstOrNull { it.id == resolvedChatId }
+                    val provChat = cur.chats.firstOrNull { it.id == provisionalId }
+                    val migratedChat = (existingReal ?: provChat ?: TelegramChatItem(
+                        id = resolvedChatId,
+                        title = title,
+                        subtitle = "@$clean",
+                        preview = description.trim(),
+                        time = nowTimeLabel(nowMs),
+                        kind = ConversationKind.DIRECT,
+                        isBot = true,
+                        username = "@$clean",
+                        lastMessageAtMs = nowMs,
+                    )).copy(
+                        id = resolvedChatId,
+                        title = title.ifBlank { existingReal?.title ?: clean },
+                        isBot = true,
+                        username = "@$clean",
+                        avatarShape = avatarShape ?: existingReal?.avatarShape ?: provChat?.avatarShape,
+                        avatarColor = avatarColor ?: existingReal?.avatarColor ?: provChat?.avatarColor,
+                        peerUserId = botUserId ?: existingReal?.peerUserId ?: provChat?.peerUserId,
+                        peerBio = description.trim().ifBlank { existingReal?.peerBio ?: provChat?.peerBio },
+                    )
+                    val remaining = cur.chats.filterNot { it.id == provisionalId || it.id == resolvedChatId }
+                    val nextMsgs = cur.messagesByChat.toMutableMap().apply {
+                        val provMsgs = remove(provisionalId)
+                        if (!provMsgs.isNullOrEmpty() && get(resolvedChatId).isNullOrEmpty()) {
+                            put(resolvedChatId, provMsgs.map { it.copy(conversationId = resolvedChatId) })
+                        }
+                    }
+                    val nextStarted = if (provisionalId in cur.startedBotChatIds) {
+                        (cur.startedBotChatIds - provisionalId) + resolvedChatId
+                    } else cur.startedBotChatIds
+                    val nextBots = cur.fabushiBots.map { b ->
+                        if (matchesBotUsername(b.username, clean) && b.companionChatId == null) {
+                            b.copy(companionChatId = resolvedChatId.toLongOrNull())
+                        } else b
+                    }
+                    cur.copy(
+                        chats = sortTelegramChats(listOf(migratedChat) + remaining),
+                        messagesByChat = nextMsgs,
+                        startedBotChatIds = nextStarted,
+                        fabushiBots = nextBots,
+                        activeChatId = if (cur.activeChatId == provisionalId) resolvedChatId else cur.activeChatId,
+                    )
+                }
+                resolvedChatId.toLongOrNull()?.let { numId ->
+                    fetchServerMessagesForChat(resolvedChatId, numId, markReadAfterLoad = false)
+                    fetchPinnedMessages(resolvedChatId, numId)
+                    fetchServerDraft(resolvedChatId)
+                }
+            }.onFailure { err ->
+                if (isUnauthorizedError(err)) {
+                    handleUnauthorizedSession(err.message ?: "HTTP 401", capturedGen)
+                } else {
+                    postBanner("连接机器人 @$clean 失败：${err.message ?: "网络异常"}")
+                }
+            }
+        }
+    }
+
+    /**
+     * Desktop-aligned bot pre-start activation (`R5 / AC-6`):
+     * Marks the bot chat as started and sends `/start`.
+     */
+    fun startBotChat(chatId: String) {
+        _state.update { it.copy(startedBotChatIds = it.startedBotChatIds + chatId) }
+        val active = _state.value.chats.firstOrNull { it.id == chatId }
+        if (chatId.startsWith("bot:") && active != null && _state.value.isAuthenticated) {
+            val clean = active.username?.trimStart('@').orEmpty().ifBlank { chatId.removePrefix("bot:") }
+            val capturedGen = generationFence.currentGeneration
+            viewModelScope.launch {
+                val resp = withContext(Dispatchers.IO) {
+                    hostRequestResult(
+                        "telegram.server.addContact",
+                        JSONObject()
+                            .put("username", clean)
+                            .put("firstName", active.title.ifBlank { clean })
+                            .put("isBot", true)
+                            .put("kind", "bot"),
+                    )
+                }.getOrNull()
+                if (!generationFence.isCurrent(capturedGen)) return@launch
+                val realId = resp?.optLong("chat_id")?.takeIf { it > 0L }?.toString()
+                    ?: resp?.optJSONObject("chat")?.optLong("id")?.takeIf { it > 0L }?.toString()
+                if (realId != null) {
+                    _state.update { cur ->
+                        val updated = cur.chats.map { if (it.id == chatId) it.copy(id = realId) else it }
+                        cur.copy(
+                            chats = updated,
+                            startedBotChatIds = (cur.startedBotChatIds - chatId) + realId,
+                            activeChatId = if (cur.activeChatId == chatId) realId else cur.activeChatId,
+                        )
+                    }
+                    sendComposerMessage(realId, "/start", silent = false, scheduledAtMs = null, overrideTtlSeconds = null)
+                } else {
+                    sendComposerMessage(chatId, "/start", silent = false, scheduledAtMs = null, overrideTtlSeconds = null)
+                }
+            }
+        } else {
+            sendComposerMessage(chatId, "/start", silent = false, scheduledAtMs = null, overrideTtlSeconds = null)
+        }
+    }
+
+    private fun syncFabushiBotsToChats(
+        chats: List<TelegramChatItem>,
+        bots: List<FabushiBotItem>,
+    ): List<TelegramChatItem> {
+        if (chats.isEmpty() || bots.isEmpty()) return chats
+        return chats.map { ch ->
+            val matched = bots.firstOrNull { b ->
+                (b.companionChatId != null && ch.id == b.companionChatId.toString()) ||
+                    (b.botUserId > 0L && ch.peerUserId == b.botUserId) ||
+                    matchesBotUsername(ch.username, b.username)
+            }
+            if (matched != null) {
+                ch.copy(
+                    isBot = true,
+                    avatarShape = matched.avatarShape.ifBlank { ch.avatarShape },
+                    avatarColor = matched.avatarColor.ifBlank { ch.avatarColor },
+                    botExecutionState = matched.executionState.ifBlank { ch.botExecutionState },
+                    peerUserId = matched.botUserId.takeIf { it > 0L } ?: ch.peerUserId,
+                    peerBio = matched.description.ifBlank { ch.peerBio },
+                    username = ch.username ?: matched.username.takeIf { it.isNotBlank() }?.let { "@${it.trimStart('@')}" },
+                )
+            } else ch
         }
     }
 
@@ -4649,6 +4947,7 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                     else cur.copy(
                         fabushiBots = merged,
                         codingAgentBots = merged.mapNotNull { it.codingAgent },
+                        chats = syncFabushiBotsToChats(cur.chats, merged),
                     )
                 }
             }
@@ -4720,6 +5019,7 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
         preferredModel: String? = null,
         approvalMode: String? = null,
         codingAgent: JSONObject? = null,
+        openAfterCreate: Boolean = false,
     ) {
         val cleanName = displayName.trim()
         if (cleanName.isBlank()) return
@@ -4748,9 +5048,11 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
             result.onSuccess { resp ->
                 val token = resp.optNonNullString("bot_token").ifBlank { resp.optNonNullString("token") }.ifBlank { null }
                 val botObj = resp.optJSONObject("bot") ?: resp
-                val botItem = parseFabushiBotDto(botObj, isFabushi = true)
+                val parsedItem = parseFabushiBotDto(botObj, isFabushi = true)
                 val companionChatId = resp.optLong("companion_chat_id").takeIf { it > 0L }
                     ?: botObj.optLong("companion_chat_id").takeIf { it > 0L }
+                    ?: parsedItem?.companionChatId
+                val botItem = parsedItem?.copy(companionChatId = companionChatId ?: parsedItem.companionChatId)
                 _state.update { cur ->
                     val nextBots = if (botItem != null) {
                         listOf(botItem) + cur.fabushiBots.filterNot { it.botUserId == botItem.botUserId }
@@ -4775,6 +5077,7 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                                     avatarShape = botItem.avatarShape,
                                     avatarColor = botItem.avatarColor,
                                     peerUserId = botItem.botUserId,
+                                    peerBio = botItem.description.ifBlank { null },
                                     lastMessageAtMs = nowMs,
                                 ),
                             ) + cur.chats,
@@ -4787,6 +5090,9 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                         lastCreatedBotToken = token,
                         toastBanner = "已创建智能体「${botItem?.displayName ?: cleanName}」",
                     )
+                }
+                if (openAfterCreate && botItem != null) {
+                    openBotChat(botItem)
                 }
             }.onFailure { err ->
                 if (isUnauthorizedError(err)) {
@@ -4895,7 +5201,12 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun botfatherNlCreate(prompt: String, avatarShape: String? = null, avatarColor: String? = null) {
+    fun botfatherNlCreate(
+        prompt: String,
+        avatarShape: String? = null,
+        avatarColor: String? = null,
+        openAfterCreate: Boolean = false,
+    ) {
         val clean = prompt.trim()
         if (clean.isBlank()) return
         if (!_state.value.isAuthenticated) {
@@ -4915,7 +5226,11 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
             result.onSuccess { resp ->
                 val token = resp.optNonNullString("bot_token").ifBlank { resp.optNonNullString("token") }.ifBlank { null }
                 val botObj = resp.optJSONObject("bot") ?: resp
-                val botItem = parseFabushiBotDto(botObj, isFabushi = true)
+                val parsedItem = parseFabushiBotDto(botObj, isFabushi = true)
+                val companionChatId = resp.optLong("companion_chat_id").takeIf { it > 0L }
+                    ?: botObj.optLong("companion_chat_id").takeIf { it > 0L }
+                    ?: parsedItem?.companionChatId
+                val botItem = parsedItem?.copy(companionChatId = companionChatId ?: parsedItem.companionChatId)
                 _state.update { cur ->
                     cur.copy(
                         fabushiBots = if (botItem != null) listOf(botItem) + cur.fabushiBots.filterNot { it.botUserId == botItem.botUserId } else cur.fabushiBots,
@@ -4924,6 +5239,9 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                     )
                 }
                 refreshServerBots()
+                if (openAfterCreate && botItem != null) {
+                    openBotChat(botItem)
+                }
             }.onFailure { err ->
                 if (isUnauthorizedError(err)) {
                     handleUnauthorizedSession(err.message ?: "HTTP 401", capturedGen)
@@ -6374,11 +6692,50 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    fun toggleAuthThemeMode() {
+        updateThemeSettings { cur ->
+            val nextPreset = if (cur.isDarkEffective) TelegramThemePreset.APPLE_DAY else TelegramThemePreset.APPLE_NIGHT
+            cur.copy(preset = nextPreset)
+        }
+    }
+
+    fun toggleAuthLanguage() {
+        val nextLang = if (isEnglishLanguage(_state.value.uiLanguage)) "zh-CN" else "en-US"
+        updateLanguageAndTranslate(
+            language = nextLang,
+            showTranslateButton = _state.value.showTranslateButton,
+            autoTranslate = _state.value.autoTranslateChannels,
+        )
+    }
+
+    private fun formatFriendlyAuthError(raw: String?, fallbackZh: String, fallbackEn: String): String {
+        val english = isEnglishLanguage(_state.value.uiLanguage)
+        val msg = raw?.trim().orEmpty()
+        if (msg.isBlank()) return if (english) fallbackEn else fallbackZh
+        return when {
+            msg.contains("HTTP 401") || msg.contains("invalid_credentials", ignoreCase = true) ->
+                if (english) "Invalid username or password (401)" else "用户名或密码不正确，请检查后重试"
+            msg.contains("HTTP 409") || msg.contains("user_already_exists", ignoreCase = true) ->
+                if (english) "This username or email is already registered (409)" else "该用户名或邮箱已被注册，请直接登录"
+            msg.contains("SERVER_UNREACHABLE") ->
+                if (english) "Cannot reach server. Please check network or server URL." else "无法连接服务器，请检查网络或服务器地址"
+            else -> msg
+        }
+    }
+
     fun loginWithPassword(username: String, password: String) {
         // H1: Advance generationFence BEFORE writing new credentials so stale in-flight 401s cannot wipe the new token
         generationFence.advance()
+        alipayAutoPollJob?.cancel()
         val ep = _state.value.serverEndpoint
-        _state.update { it.copy(isAuthenticating = true, authError = null) }
+        _state.update {
+            it.copy(
+                isAuthenticating = true,
+                authError = null,
+                pendingTwoFactorChallengeToken = null,
+                pendingTwoFactorHint = null,
+            )
+        }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 hostRequestResult(
@@ -6387,6 +6744,70 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                         .put("endpoint", ep)
                         .put("username", username)
                         .put("password", password)
+                        .put("deviceName", "Fabushi Android (${Build.MODEL ?: "Android"})"),
+                )
+            }
+            result.onSuccess { resp ->
+                if (resp.optBoolean("requires_2fa", false)) {
+                    val chal = resp.optNonNullString("challenge_token")
+                    val hint = resp.optNullableString("hint")
+                    _state.update {
+                        it.copy(
+                            isAuthenticating = false,
+                            isAuthenticated = false,
+                            pendingTwoFactorChallengeToken = chal.ifBlank { null },
+                            pendingTwoFactorHint = hint,
+                            authError = null,
+                        )
+                    }
+                    return@onSuccess
+                }
+                generationFence.advance()
+                clearInFlightGuards()
+                chatPtsMap.clear()
+                prefs.edit().putBoolean("offline_local_mode", false).apply()
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        isAuthenticated = true,
+                        offlineLocalMode = false,
+                        pendingTwoFactorChallengeToken = null,
+                        pendingTwoFactorHint = null,
+                        authError = null,
+                        toastBanner = "已登录 ${resp.optNonNullString("username", username)}",
+                    )
+                }
+                refreshAllFromHost()
+            }.onFailure { err ->
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        isAuthenticated = false,
+                        authError = formatFriendlyAuthError(
+                            err.message,
+                            "登录失败，请检查服务器地址与账号密码",
+                            "Sign in failed. Please check server URL and credentials.",
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    fun submitTwoFactorCloudPassword(cloudPassword: String) {
+        val challengeToken = _state.value.pendingTwoFactorChallengeToken?.takeIf { it.isNotBlank() } ?: return
+        if (cloudPassword.isBlank()) return
+        generationFence.advance()
+        val ep = _state.value.serverEndpoint
+        _state.update { it.copy(isAuthenticating = true, authError = null) }
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                hostRequestResult(
+                    "telegram.server.verifyTwoFactor",
+                    JSONObject()
+                        .put("endpoint", ep)
+                        .put("challengeToken", challengeToken)
+                        .put("cloudPassword", cloudPassword)
                         .put("deviceName", "Fabushi Android (${Build.MODEL ?: "Android"})"),
                 )
             }
@@ -6400,8 +6821,10 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                         isAuthenticating = false,
                         isAuthenticated = true,
                         offlineLocalMode = false,
+                        pendingTwoFactorChallengeToken = null,
+                        pendingTwoFactorHint = null,
                         authError = null,
-                        toastBanner = "已登录 ${resp.optNonNullString("username", username)}",
+                        toastBanner = "两步验证通过，已登录 ${resp.optNonNullString("username")}",
                     )
                 }
                 refreshAllFromHost()
@@ -6410,17 +6833,40 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                     it.copy(
                         isAuthenticating = false,
                         isAuthenticated = false,
-                        authError = err.message ?: "登录失败，请检查服务器地址与账号密码",
+                        authError = formatFriendlyAuthError(
+                            err.message,
+                            "两步验证密码不正确，请重试",
+                            "Incorrect two-factor cloud password.",
+                        ),
                     )
                 }
             }
         }
     }
 
+    fun cancelTwoFactorChallenge() {
+        _state.update {
+            it.copy(
+                pendingTwoFactorChallengeToken = null,
+                pendingTwoFactorHint = null,
+                authError = null,
+                isAuthenticating = false,
+            )
+        }
+    }
+
     fun registerWithPassword(username: String, password: String, firstName: String) {
         generationFence.advance()
+        alipayAutoPollJob?.cancel()
         val ep = _state.value.serverEndpoint
-        _state.update { it.copy(isAuthenticating = true, authError = null) }
+        _state.update {
+            it.copy(
+                isAuthenticating = true,
+                authError = null,
+                pendingTwoFactorChallengeToken = null,
+                pendingTwoFactorHint = null,
+            )
+        }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 hostRequestResult(
@@ -6453,7 +6899,11 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                     it.copy(
                         isAuthenticating = false,
                         isAuthenticated = false,
-                        authError = err.message ?: "注册失败，请检查服务器响应",
+                        authError = formatFriendlyAuthError(
+                            err.message,
+                            "注册失败，请检查服务器响应",
+                            "Registration failed.",
+                        ),
                     )
                 }
             }
@@ -6482,6 +6932,7 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
 
     fun registerWithEmail(email: String, code: String, username: String, password: String, firstName: String) {
         generationFence.advance()
+        alipayAutoPollJob?.cancel()
         val ep = _state.value.serverEndpoint
         _state.update { it.copy(isAuthenticating = true, authError = null) }
         viewModelScope.launch {
@@ -6494,7 +6945,8 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                         .put("code", code)
                         .put("username", username)
                         .put("password", password)
-                        .put("firstName", firstName.ifBlank { username }),
+                        .put("firstName", firstName.ifBlank { username })
+                        .put("deviceName", "Fabushi Android (${Build.MODEL ?: "Android"})"),
                 )
             }
             result.onSuccess {
@@ -6513,12 +6965,18 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                 }
                 refreshAllFromHost()
             }.onFailure { err ->
-                _state.update { it.copy(isAuthenticating = false, authError = err.message ?: "邮箱注册失败") }
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        authError = formatFriendlyAuthError(err.message, "邮箱注册失败", "Email registration failed."),
+                    )
+                }
             }
         }
     }
 
     fun startAlipayLogin() {
+        alipayAutoPollJob?.cancel()
         val ep = _state.value.serverEndpoint
         _state.update { it.copy(isAuthenticating = true, authError = null, alipayStatusText = "正在向服务器请求支付宝授权…") }
         viewModelScope.launch {
@@ -6527,26 +6985,52 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
             }
             result.onSuccess { resp ->
                 val attemptId = resp.optNonNullString("attempt_id")
-                val loginUrl = resp.optNonNullString("login_url").ifBlank { resp.optNonNullString("auth_url") }
+                val loginUrl = resp.optNonNullString("login_url")
+                    .ifBlank { resp.optNonNullString("auth_url") }
+                    .ifBlank { resp.optNonNullString("qr_payload") }
                 _state.update {
                     it.copy(
                         isAuthenticating = false,
                         alipayAttemptId = attemptId,
                         alipayLoginUrl = loginUrl,
-                        alipayStatusText = "请在支付宝完成授权后点击「检查状态」",
+                        alipayStatusText = "请使用支付宝扫码或点击链接授权（自动检测状态中…）",
                     )
                 }
+                if (attemptId.isNotBlank()) {
+                    startAlipayAutoPolling(attemptId)
+                }
             }.onFailure { err ->
-                _state.update { it.copy(isAuthenticating = false, authError = err.message ?: "无法发起支付宝登录") }
+                _state.update {
+                    it.copy(
+                        isAuthenticating = false,
+                        authError = formatFriendlyAuthError(err.message, "无法发起支付宝登录", "Unable to start Alipay login."),
+                    )
+                }
             }
         }
     }
 
-    fun pollAlipayLogin() {
+    private fun startAlipayAutoPolling(attemptId: String) {
+        alipayAutoPollJob?.cancel()
+        alipayAutoPollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(2500L)
+                val cur = _state.value
+                if (cur.isAuthenticated || cur.alipayAttemptId != attemptId) break
+                pollAlipayLogin(silent = true)
+            }
+        }
+    }
+
+    fun pollAlipayLogin(silent: Boolean = false) {
         val attemptId = _state.value.alipayAttemptId ?: return
-        generationFence.advance()
+        if (!silent) {
+            generationFence.advance()
+        }
         val ep = _state.value.serverEndpoint
-        _state.update { it.copy(isAuthenticating = true, authError = null) }
+        if (!silent) {
+            _state.update { it.copy(isAuthenticating = true, authError = null) }
+        }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 hostRequestResult(
@@ -6558,6 +7042,7 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                 val status = resp.optNonNullString("status")
                 when (status.lowercase()) {
                     "complete", "completed" -> {
+                        alipayAutoPollJob?.cancel()
                         generationFence.advance()
                         clearInFlightGuards()
                         chatPtsMap.clear()
@@ -6567,12 +7052,14 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                                 isAuthenticating = false,
                                 isAuthenticated = true,
                                 offlineLocalMode = false,
+                                alipayAttemptId = null,
                                 alipayStatusText = "支付宝登录成功",
                             )
                         }
                         refreshAllFromHost()
                     }
                     "expired", "cancelled", "failed" -> {
+                        alipayAutoPollJob?.cancel()
                         _state.update {
                             it.copy(
                                 isAuthenticating = false,
@@ -6583,10 +7070,16 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
                         }
                     }
                     else -> {
-                        _state.update { it.copy(isAuthenticating = false, alipayStatusText = "当前状态：$status（等待确认）") }
+                        _state.update {
+                            it.copy(
+                                isAuthenticating = false,
+                                alipayStatusText = "等待支付宝确认中 ($status)…",
+                            )
+                        }
                     }
                 }
             }.onFailure { err ->
+                alipayAutoPollJob?.cancel()
                 _state.update {
                     it.copy(
                         isAuthenticating = false,
@@ -6599,11 +7092,14 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun enterOfflineLocalMode() {
+        alipayAutoPollJob?.cancel()
         prefs.edit().putBoolean("offline_local_mode", true).apply()
         _state.update {
             it.copy(
                 offlineLocalMode = true,
                 authError = null,
+                pendingTwoFactorChallengeToken = null,
+                pendingTwoFactorHint = null,
                 syncStatusLabel = "信息（本地）",
             )
         }
@@ -6611,13 +7107,27 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
 
     fun signOutToAuthWizard() {
         generationFence.advance()
+        alipayAutoPollJob?.cancel()
         disconnectServerWebSocket()
         clearInFlightGuards()
         chatPtsMap.clear()
         currentServerUserId = null
         prefs.edit().putBoolean("offline_local_mode", false).apply()
-        // Synchronous local SQLite session clear (<1ms, zero network I/O) before emitting signed-out UI state
+        // Snapshot old token for best-effort async server revocation BEFORE synchronous local SQLite clear (<1ms)
+        val oldSession = hostRequestResult("telegram.server.session").getOrNull()
+        val oldEndpoint = oldSession?.optNonNullString("endpoint")?.ifBlank { null } ?: _state.value.serverEndpoint
+        val oldToken = oldSession?.optNonNullString("token")?.ifBlank { null }
+        val oldSessionId = oldSession?.optNullableString("sessionId")
         hostRequestResult("telegram.server.logout")
+        if (oldToken != null) {
+            viewModelScope.launch(Dispatchers.IO) {
+                val payload = JSONObject()
+                    .put("endpoint", oldEndpoint)
+                    .put("token", oldToken)
+                oldSessionId?.let { payload.put("sessionId", it) }
+                hostRequestResult("telegram.server.remoteLogout", payload)
+            }
+        }
         _state.update {
             buildCleanInitialState().copy(
                 serverEndpoint = it.serverEndpoint,
@@ -6667,22 +7177,41 @@ class TelegramViewModel(application: Application) : AndroidViewModel(application
         chatsEpoch.incrementAndGet()
         val capturedGen = generationFence.currentGeneration
         viewModelScope.launch {
+            val payload = JSONObject()
+                .put("username", clean)
+                .put("firstName", clean)
+                .put("kind", kind)
+            if (kind.equals("bot", ignoreCase = true)) {
+                payload.put("isBot", true)
+            }
             val result = withContext(Dispatchers.IO) {
-                hostRequestResult(
-                    "telegram.server.addContact",
-                    JSONObject().put("username", clean).put("kind", kind),
-                )
+                hostRequestResult("telegram.server.addContact", payload)
             }
             if (!generationFence.isCurrent(capturedGen)) return@launch
             result.onSuccess { resp ->
+                val chatObj = resp.optJSONObject("chat")
                 val chatId = resp.optLong("chat_id").takeIf { it > 0L }?.toString()
-                    ?: resp.optJSONObject("chat")?.optLong("id")?.takeIf { it > 0L }?.toString()
-                refreshAllFromHost()
+                    ?: chatObj?.optLong("id")?.takeIf { it > 0L }?.toString()
+                val resolvedTitle = chatObj?.optNonNullString("title")?.ifBlank { null }
+                    ?: resp.optNonNullString("first_name").ifBlank { null }
+                    ?: clean
+                val isBotPeer = kind.equals("bot", ignoreCase = true) ||
+                    chatObj?.optBoolean("is_bot", false) == true ||
+                    resp.optBoolean("is_bot", false)
+                val peerUid = chatObj?.optLong("peer_user_id")?.takeIf { it > 0L }
+                    ?: resp.optLong("user_id").takeIf { it > 0L }
                 if (chatId != null) {
-                    openChat(chatId)
+                    openChat(
+                        chatId = chatId,
+                        provisionalTitle = resolvedTitle,
+                        provisionalUsername = clean,
+                        provisionalIsBot = isBotPeer,
+                        provisionalPeerUserId = peerUid,
+                    )
                 } else {
                     postBanner("已添加 @$clean")
                 }
+                refreshAllFromHost()
             }.onFailure { err ->
                 if (isUnauthorizedError(err)) {
                     handleUnauthorizedSession(err.message ?: "HTTP 401", capturedGen)

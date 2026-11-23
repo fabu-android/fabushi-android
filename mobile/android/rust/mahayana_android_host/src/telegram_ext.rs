@@ -280,7 +280,8 @@ pub(crate) fn clear_server_session_and_caches(conn: &Connection) -> Result<(), S
          DELETE FROM tg_server_computers;
          DELETE FROM tg_server_remote_sessions;
          DELETE FROM tg_server_mcp_grants;
-         DELETE FROM tg_server_outbox;",
+         DELETE FROM tg_server_outbox;
+         UPDATE tg_accounts SET is_active = 0;",
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -1330,13 +1331,156 @@ pub fn handle_server_rpc(
             }))
         }),
 
-        "login" | "register" | "registerEmail" => {
+        "login" => {
             let ep = crate::with_db(db, |conn| {
                 init_schema(conn)?;
                 Ok(resolve_server_endpoint(conn, params))
             })?;
-            let username = param_str(params, &["username"])
+            let raw_username = param_str(params, &["username", "usernameOrEmail"])
+                .ok_or_else(|| "login requires 'username'".to_string())?;
+            let username = normalize_auth_identifier(raw_username);
+            if username.is_empty() {
+                return Err("login requires non-empty 'username'".to_string());
+            }
+            let password = params
+                .get("password")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "login requires 'password'".to_string())?;
+            let device_name =
+                param_str(params, &["deviceName", "device_name"]).unwrap_or("Fabushi Android");
+
+            // Step 1: Query Split-Key V2 KDF parameters (exact Desktop v1.6.9 parity)
+            let kdf_url = format!(
+                "{ep}/api/v1/auth/kdf-params?username={}",
+                url_encode_query(&username)
+            );
+            let kdf_res = desktop_http_json_ext("GET", &kdf_url, &HttpOptions::default(), None);
+
+            let (val, should_upgrade_v1) = match kdf_res {
+                Ok(ref kdf_resp)
+                    if kdf_resp.get("auth_version").and_then(Value::as_i64) == Some(2) =>
+                {
+                    let salt_b64 = kdf_resp
+                        .get("auth_salt_b64")
+                        .and_then(Value::as_str)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| {
+                            "Server returned auth_version=2 without auth_salt_b64".to_string()
+                        })?;
+                    let kdf_params = extract_kdf_params_from_value(
+                        kdf_resp.get("kdf_params").unwrap_or(&Value::Null),
+                    );
+                    let (auth_verifier_b64, _kek) =
+                        crate::user_vault::derive_split_key_v2_b64(password, salt_b64, kdf_params)?;
+                    let body = json!({
+                        "username": username,
+                        "password": "",
+                        "device_name": device_name,
+                        "auth_verifier_b64": auth_verifier_b64,
+                    });
+                    let resp = desktop_http_json_ext(
+                        "POST",
+                        &format!("{ep}/api/v1/auth/login"),
+                        &HttpOptions::default(),
+                        Some(body),
+                    )?;
+                    (resp, false)
+                }
+                Ok(ref kdf_resp) => {
+                    let is_explicit_v1 =
+                        kdf_resp.get("auth_version").and_then(Value::as_i64) == Some(1);
+                    let body = json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": device_name,
+                    });
+                    let resp = desktop_http_json_ext(
+                        "POST",
+                        &format!("{ep}/api/v1/auth/login"),
+                        &HttpOptions::default(),
+                        Some(body),
+                    )?;
+                    (resp, is_explicit_v1)
+                }
+                Err(ref e)
+                    if e.starts_with("HTTP 401:")
+                        || e.starts_with("HTTP 404:")
+                        || e.starts_with("HTTP 405:")
+                        || e.starts_with("HTTP 501:") =>
+                {
+                    let body = json!({
+                        "username": username,
+                        "password": password,
+                        "device_name": device_name,
+                    });
+                    let resp = desktop_http_json_ext(
+                        "POST",
+                        &format!("{ep}/api/v1/auth/login"),
+                        &HttpOptions::default(),
+                        Some(body),
+                    )?;
+                    (resp, false)
+                }
+                Err(err) => return Err(err),
+            };
+
+            // Step 2: Handle 2FA challenge without failing persist_server_session
+            if val.get("requires_2fa").and_then(Value::as_bool) == Some(true) {
+                return Ok(val);
+            }
+
+            crate::with_db(db, |conn| persist_server_session(conn, &ep, &val))?;
+
+            // Step 3: Silent best-effort V1 -> Split-Key V2 upgrade (matching Desktop v1.6.9)
+            if should_upgrade_v1 {
+                if let Some(tok) = val.get("token").and_then(Value::as_str).filter(|s| !s.is_empty())
+                {
+                    let fresh_salt = crate::user_vault::generate_split_key_salt_b64();
+                    let kdf_params = default_register_kdf_params(params);
+                    if let Ok((verifier_b64, _kek)) =
+                        crate::user_vault::derive_split_key_v2_b64(password, &fresh_salt, kdf_params)
+                    {
+                        let upgrade_body = json!({
+                            "old_password": password,
+                            "auth_salt_b64": fresh_salt,
+                            "auth_verifier_b64": verifier_b64,
+                            "kdf_params": {
+                                "m_cost_kib": kdf_params.m_cost_kib,
+                                "t_cost": kdf_params.t_cost,
+                                "p_cost": kdf_params.p_cost,
+                            },
+                        });
+                        let upgrade_opts = HttpOptions {
+                            bearer_token: Some(tok),
+                            read_timeout_secs: 8,
+                            ..HttpOptions::default()
+                        };
+                        let _ = desktop_http_json_ext(
+                            "POST",
+                            &format!("{ep}/api/v1/auth/upgrade-split-key"),
+                            &upgrade_opts,
+                            Some(upgrade_body),
+                        );
+                    }
+                }
+            }
+
+            Ok(val)
+        }
+
+        "register" | "registerEmail" => {
+            let ep = crate::with_db(db, |conn| {
+                init_schema(conn)?;
+                Ok(resolve_server_endpoint(conn, params))
+            })?;
+            let raw_username = param_str(params, &["username"])
                 .ok_or_else(|| format!("{submethod} requires 'username'"))?;
+            let username = normalize_auth_identifier(raw_username);
+            if username.is_empty() {
+                return Err(format!("{submethod} requires non-empty 'username'"));
+            }
             let password = params
                 .get("password")
                 .and_then(Value::as_str)
@@ -1344,49 +1488,111 @@ pub fn handle_server_rpc(
                 .ok_or_else(|| format!("{submethod} requires 'password'"))?;
             let device_name =
                 param_str(params, &["deviceName", "device_name"]).unwrap_or("Fabushi Android");
-            let first_name = param_str(params, &["firstName", "first_name"]).unwrap_or(username);
+            let first_name =
+                param_str(params, &["firstName", "first_name"]).unwrap_or(username.as_str());
 
-            let (path, body) = match submethod {
-                "login" => (
-                    "/api/v1/auth/login",
+            let salt_b64 = crate::user_vault::generate_split_key_salt_b64();
+            let kdf_params = default_register_kdf_params(params);
+            let (auth_verifier_b64, _kek) =
+                crate::user_vault::derive_split_key_v2_b64(password, &salt_b64, kdf_params)?;
+
+            let (path, v2_body, v1_body) = if submethod == "register" {
+                (
+                    "/api/v1/auth/register",
                     json!({
                         "username": username,
-                        "password": password,
+                        "first_name": first_name,
                         "device_name": device_name,
+                        "auto_welcome": false,
+                        "auth_version": 2,
+                        "auth_salt_b64": salt_b64,
+                        "auth_verifier_b64": auth_verifier_b64,
+                        "kdf_params": {
+                            "m_cost_kib": kdf_params.m_cost_kib,
+                            "t_cost": kdf_params.t_cost,
+                            "p_cost": kdf_params.p_cost,
+                        },
                     }),
-                ),
-                "register" => (
-                    "/api/v1/auth/register",
                     json!({
                         "username": username,
                         "password": password,
                         "first_name": first_name,
                         "device_name": device_name,
                     }),
-                ),
-                _ => {
-                    let email = param_str(params, &["email"])
-                        .ok_or_else(|| "registerEmail requires 'email'".to_string())?;
-                    let code = param_str(params, &["code"])
-                        .ok_or_else(|| "registerEmail requires 'code'".to_string())?;
-                    (
-                        "/api/v1/auth/email/register",
-                        json!({
-                            "email": email,
-                            "code": code,
-                            "username": username,
-                            "password": password,
-                            "first_name": first_name,
-                        }),
-                    )
-                }
+                )
+            } else {
+                let email = param_str(params, &["email"])
+                    .ok_or_else(|| "registerEmail requires 'email'".to_string())?;
+                let code = param_str(params, &["code"])
+                    .ok_or_else(|| "registerEmail requires 'code'".to_string())?;
+                (
+                    "/api/v1/auth/email/register",
+                    json!({
+                        "email": email,
+                        "code": code,
+                        "username": username,
+                        "first_name": first_name,
+                        "device_name": device_name,
+                        "auth_version": 2,
+                        "auth_salt_b64": salt_b64,
+                        "auth_verifier_b64": auth_verifier_b64,
+                        "kdf_params": {
+                            "m_cost_kib": kdf_params.m_cost_kib,
+                            "t_cost": kdf_params.t_cost,
+                            "p_cost": kdf_params.p_cost,
+                        },
+                    }),
+                    json!({
+                        "email": email,
+                        "code": code,
+                        "username": username,
+                        "password": password,
+                        "first_name": first_name,
+                        "device_name": device_name,
+                    }),
+                )
             };
 
+            let url = format!("{ep}{path}");
+            let val = match desktop_http_json_ext("POST", &url, &HttpOptions::default(), Some(v2_body))
+            {
+                Ok(v) => v,
+                Err(e) if is_legacy_v2_register_rejection(&e) => {
+                    desktop_http_json_ext("POST", &url, &HttpOptions::default(), Some(v1_body))?
+                }
+                Err(e) => return Err(e),
+            };
+            if val.get("requires_2fa").and_then(Value::as_bool) == Some(true) {
+                return Ok(val);
+            }
+            crate::with_db(db, |conn| persist_server_session(conn, &ep, &val))?;
+            Ok(val)
+        }
+
+        "verifyTwoFactor" => {
+            let ep = crate::with_db(db, |conn| {
+                init_schema(conn)?;
+                Ok(resolve_server_endpoint(conn, params))
+            })?;
+            let challenge_token = param_str(params, &["challengeToken", "challenge_token"])
+                .ok_or_else(|| "verifyTwoFactor requires 'challengeToken'".to_string())?;
+            let cloud_password = params
+                .get("cloudPassword")
+                .or_else(|| params.get("cloud_password"))
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| "verifyTwoFactor requires 'cloudPassword'".to_string())?;
+            let device_name =
+                param_str(params, &["deviceName", "device_name"]).unwrap_or("Fabushi Android");
             let val = desktop_http_json_ext(
                 "POST",
-                &format!("{ep}{path}"),
+                &format!("{ep}/api/v1/auth/2fa/verify"),
                 &HttpOptions::default(),
-                Some(body),
+                Some(json!({
+                    "challenge_token": challenge_token,
+                    "cloud_password": cloud_password,
+                    "device_name": device_name,
+                })),
             )?;
             crate::with_db(db, |conn| persist_server_session(conn, &ep, &val))?;
             Ok(val)
@@ -1469,6 +1675,41 @@ pub fn handle_server_rpc(
             clear_server_session_and_caches(conn)?;
             Ok(json!({ "loggedOut": true }))
         }),
+
+        "remoteLogout" => {
+            let ep = param_str(params, &["endpoint", "serverUrl"])
+                .map(|s| s.trim_end_matches('/').to_string())
+                .unwrap_or_else(|| {
+                    crate::with_db(db, |conn| Ok(resolve_server_endpoint(conn, params)))
+                        .unwrap_or_else(|_| DEFAULT_DESKTOP_SERVER_URL.to_string())
+                });
+            let token = param_str(params, &["token", "authToken"]).map(ToString::to_string);
+            let session_id = param_str(params, &["sessionId", "session_id"]).map(ToString::to_string);
+            let mut revoked = false;
+            if let Some(tok) = token.filter(|s| !s.is_empty()) {
+                let opts = HttpOptions {
+                    bearer_token: Some(&tok),
+                    read_timeout_secs: 4,
+                    ..HttpOptions::default()
+                };
+                if desktop_http_json_ext("POST", &format!("{ep}/api/v1/auth/logout"), &opts, Some(json!({}))).is_ok() {
+                    revoked = true;
+                } else if let Some(sid) = session_id.filter(|s| !s.is_empty()) {
+                    let encoded = url_encode_path_segment(&sid);
+                    if desktop_http_json_ext(
+                        "DELETE",
+                        &format!("{ep}/api/v1/auth/sessions/{encoded}"),
+                        &opts,
+                        None,
+                    )
+                    .is_ok()
+                    {
+                        revoked = true;
+                    }
+                }
+            }
+            Ok(json!({ "ok": true, "revoked": revoked }))
+        }
 
         "listSessions" => {
             let val = authed_http_json(db, params, "GET", "/api/v1/auth/sessions", None, None, 15)?;
@@ -2412,22 +2653,34 @@ pub fn handle_server_rpc(
                 return Err("addContact requires 'username' or 'phone'".to_string());
             }
             let mut body = Map::new();
-            if let Some(u) = username {
-                body.insert(
-                    "username".into(),
-                    Value::String(u.trim_start_matches('@').to_string()),
-                );
+            let clean_username = username.map(|u| u.trim().trim_start_matches('@').to_string());
+            if let Some(ref u) = clean_username {
+                body.insert("username".into(), Value::String(u.clone()));
             }
             if let Some(p) = phone {
                 body.insert("phone".into(), Value::String(p.to_string()));
             }
             insert_opt_str(&mut body, "first_name", params, &["firstName", "first_name"]);
+            if !body.contains_key("first_name") {
+                if let Some(ref u) = clean_username {
+                    body.insert("first_name".into(), Value::String(u.clone()));
+                }
+            }
             insert_opt_str(&mut body, "last_name", params, &["lastName", "last_name"]);
             insert_opt_str(&mut body, "bio", params, &["bio"]);
-            if let Some(kind) = param_str(params, &["kind"]) {
-                body.insert("kind".into(), Value::String(kind.to_string()));
-            } else if username.is_some() {
+            let is_bot_explicit = param_bool(params, &["isBot", "is_bot"]);
+            let kind = param_str(params, &["kind"]);
+            if let Some(k) = kind {
+                body.insert("kind".into(), Value::String(k.to_string()));
+            } else if is_bot_explicit == Some(true) {
+                body.insert("kind".into(), Value::String("bot".to_string()));
+            } else if clean_username.is_some() {
                 body.insert("kind".into(), Value::String("user".to_string()));
+            }
+            if let Some(is_bot) = is_bot_explicit {
+                body.insert("is_bot".into(), Value::Bool(is_bot));
+            } else if kind.map(|k| k.eq_ignore_ascii_case("bot")).unwrap_or(false) {
+                body.insert("is_bot".into(), Value::Bool(true));
             }
             authed_http_json(
                 db,
@@ -4455,3 +4708,73 @@ pub fn url_encode_path_segment(raw: &str) -> String {
     }
     out
 }
+
+/// Normalizes a login/register identifier: trims whitespace and strips leading `@` ONLY for
+/// `@username` handles while preserving email addresses (`alice@example.com`).
+pub fn normalize_auth_identifier(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some(rest) = trimmed.strip_prefix('@') {
+        if !rest.contains('@') {
+            return rest.trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn extract_kdf_params_from_value(
+    v: &Value,
+) -> gpui_telegram_proto::user_vault::Argon2KdfParamsDto {
+    let defaults = gpui_telegram_proto::user_vault::Argon2KdfParamsDto::default();
+    let m_cost_kib = v
+        .get("m_cost_kib")
+        .or_else(|| v.get("mCostKib"))
+        .and_then(Value::as_u64)
+        .map(|n| n as u32)
+        .unwrap_or(defaults.m_cost_kib);
+    let t_cost = v
+        .get("t_cost")
+        .or_else(|| v.get("tCost"))
+        .and_then(Value::as_u64)
+        .map(|n| n as u32)
+        .unwrap_or(defaults.t_cost);
+    let p_cost = v
+        .get("p_cost")
+        .or_else(|| v.get("pCost"))
+        .and_then(Value::as_u64)
+        .map(|n| n as u32)
+        .unwrap_or(defaults.p_cost);
+    gpui_telegram_proto::user_vault::Argon2KdfParamsDto {
+        m_cost_kib,
+        t_cost,
+        p_cost,
+    }
+}
+
+fn default_register_kdf_params(
+    params: &Value,
+) -> gpui_telegram_proto::user_vault::Argon2KdfParamsDto {
+    if let Some(obj) = params.get("kdfParams").or_else(|| params.get("kdf_params")) {
+        if obj.is_object() {
+            return extract_kdf_params_from_value(obj);
+        }
+    }
+    if std::env::var("FABUSHI_FAST_KDF_FOR_TESTS").as_deref() == Ok("1") {
+        return gpui_telegram_proto::user_vault::Argon2KdfParamsDto {
+            m_cost_kib: 4_096,
+            t_cost: 1,
+            p_cost: 1,
+        };
+    }
+    gpui_telegram_proto::user_vault::Argon2KdfParamsDto::default()
+}
+
+fn is_legacy_v2_register_rejection(err: &str) -> bool {
+    if !err.starts_with("HTTP 400:") {
+        return false;
+    }
+    let lower = err.to_ascii_lowercase();
+    lower.contains("auth_version")
+        || lower.contains("password")
+        || lower.contains("invalid_credentials")
+}
+

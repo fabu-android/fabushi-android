@@ -74,6 +74,9 @@ fun TelegramSettingsScreen(
     onConfigureServerEndpoint: (String, Boolean, String) -> Unit,
     onOpenTonWallet: () -> Unit,
     onOpenGlobalDharma: () -> Unit = {},
+    onSetMagpieStrategy: (MagpieRoutingStrategy) -> Unit = {},
+    onConfigureAiProvider: (String, String) -> Unit = { _, _ -> },
+    onSyncModelsDev: () -> Unit = {},
     onCheckForUpdates: () -> Unit,
     onDownloadAndInstallUpdate: () -> Unit,
     onInitSplitKeyVault: (String) -> Unit = {},
@@ -116,27 +119,36 @@ fun TelegramSettingsScreen(
                 backLabel = strings.settingsTitle,
                 onBack = { onSelectPage(TelegramSettingsPage.OVERVIEW) },
             )
-            SettingsSubPageContent(
-                page = page,
-                state = state,
-                onUpdateProfile = onUpdateProfile,
-                onUpdateTheme = onUpdateTheme,
-                onConfigurePasscode = onConfigurePasscode,
-                onDisablePasscode = onDisablePasscode,
-                onLockAppNow = onLockAppNow,
-                onClearLocalMediaCache = onClearLocalMediaCache,
-                onUpsertCustomFolder = onUpsertCustomFolder,
-                onDeleteCustomFolder = onDeleteCustomFolder,
-                onUpdatePowerAndNotifications = onUpdatePowerAndNotifications,
-                onUpdateLanguageAndTranslate = onUpdateLanguageAndTranslate,
-                onConfigureServerEndpoint = onConfigureServerEndpoint,
-                onOpenTonWallet = onOpenTonWallet,
-                onInitSplitKeyVault = onInitSplitKeyVault,
-                onRequestDeviceVaultSync = onRequestDeviceVaultSync,
-                onRefreshSessions = onRefreshSessions,
-                onRevokeSession = onRevokeSession,
-                onRevokeOtherSessions = onRevokeOtherSessions,
-            )
+            if (page == TelegramSettingsPage.AI_PROVIDERS) {
+                AiProvidersSettingsContent(
+                    gatewayState = state.magpieGateway,
+                    onSetStrategy = onSetMagpieStrategy,
+                    onConfigureProvider = onConfigureAiProvider,
+                    onSyncModelsDev = onSyncModelsDev,
+                )
+            } else {
+                SettingsSubPageContent(
+                    page = page,
+                    state = state,
+                    onUpdateProfile = onUpdateProfile,
+                    onUpdateTheme = onUpdateTheme,
+                    onConfigurePasscode = onConfigurePasscode,
+                    onDisablePasscode = onDisablePasscode,
+                    onLockAppNow = onLockAppNow,
+                    onClearLocalMediaCache = onClearLocalMediaCache,
+                    onUpsertCustomFolder = onUpsertCustomFolder,
+                    onDeleteCustomFolder = onDeleteCustomFolder,
+                    onUpdatePowerAndNotifications = onUpdatePowerAndNotifications,
+                    onUpdateLanguageAndTranslate = onUpdateLanguageAndTranslate,
+                    onConfigureServerEndpoint = onConfigureServerEndpoint,
+                    onOpenTonWallet = onOpenTonWallet,
+                    onInitSplitKeyVault = onInitSplitKeyVault,
+                    onRequestDeviceVaultSync = onRequestDeviceVaultSync,
+                    onRefreshSessions = onRefreshSessions,
+                    onRevokeSession = onRevokeSession,
+                    onRevokeOtherSessions = onRevokeOtherSessions,
+                )
+            }
         }
     }
 }
@@ -153,6 +165,7 @@ private fun localizedPageTitle(page: TelegramSettingsPage, strings: AppleUiStrin
     TelegramSettingsPage.POWER_SAVING -> strings.settingsPowerSaving
     TelegramSettingsPage.LANGUAGE_TRANSLATE -> strings.settingsLanguage
     TelegramSettingsPage.STARS_WALLET -> strings.settingsTonWallet
+    TelegramSettingsPage.AI_PROVIDERS -> strings.settingsAiProviders
     TelegramSettingsPage.PROXY_SERVER -> strings.settingsServerProxy
 }
 
@@ -396,6 +409,14 @@ private fun SettingsOverviewContent(
                     title = strings.settingsServerProxy,
                     trailingValue = state.serverEndpoint.removePrefix("http://").removePrefix("https://").take(22),
                     onClick = { onSelectPage(TelegramSettingsPage.PROXY_SERVER) },
+                )
+                SettingsRowDivider()
+                SettingsInsetRow(
+                    glyph = TelegramGlyph.HERMES_SPARK,
+                    badgeColor = Color(0xFF7845D7),
+                    title = strings.settingsAiProviders,
+                    trailingValue = state.magpieGateway.presets.count { it.configured }.takeIf { it > 0 }?.toString().orEmpty(),
+                    onClick = { onSelectPage(TelegramSettingsPage.AI_PROVIDERS) },
                 )
                 SettingsRowDivider()
                 SettingsInsetRow(
@@ -1229,6 +1250,7 @@ private fun SettingsSubPageContent(
                 }
             }
 
+            TelegramSettingsPage.AI_PROVIDERS,
             TelegramSettingsPage.OVERVIEW -> Unit
         }
     }

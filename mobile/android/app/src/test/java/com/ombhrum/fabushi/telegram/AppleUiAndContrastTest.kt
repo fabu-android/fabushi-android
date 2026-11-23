@@ -30,7 +30,7 @@ class AppleUiAndContrastTest {
     }
 
     @Test
-    fun desktopV166AppleTokensAndZeroDimDefault() {
+    fun desktopV169SandLightAndSandDarkTokensAndZeroDimDefault() {
         val defaults = TelegramThemeSettings()
         assertEquals(TelegramThemePreset.APPLE_DAY, defaults.preset)
         assertEquals(TelegramWallpaperStyle.SOLID_MINIMAL, defaults.wallpaperStyle)
@@ -40,32 +40,34 @@ class AppleUiAndContrastTest {
         val day = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_DAY))
         assertFalse(day.isDark)
         assertTrue(day.isAppleStyle)
+        assertEquals(Color(0xFFF5F5F5), day.groupedBackground)
+        assertEquals(Color(0xFFFCFCFC), day.topBarBackground)
         assertEquals(Color(0xFFFFFFFF), day.appBackground)
-        assertEquals(Color(0xFFF2F2F7), day.groupedBackground)
-        assertEquals(Color(0xFFFFFFFF), day.topBarBackground)
-        assertEquals(Color(0xFF1D1D1F), day.topBarContent)
-        assertEquals(Color(0xFF007AFF), day.primaryAccent)
-        assertEquals(Color(0xFF2C95FF), day.outgoingBubbleTop)
-        assertEquals(Color(0xFF007AFF), day.outgoingBubbleBottom)
+        assertEquals(Color(0xFFF1F1F1), day.incomingBubble)
+        assertEquals(Color(0xFF1C1C1C), day.topBarContent)
+        assertEquals(Color(0xFF1C1C1C), day.incomingText)
+        assertEquals(Color(0xFF636366), day.secondaryText)
+        assertEquals(Color(0xFF126FD4), day.primaryAccent)
+        assertEquals(Color(0xFF1E86FC), day.outgoingBubbleTop)
+        assertEquals(Color(0xFF126FD4), day.outgoingBubbleBottom)
         assertEquals(Color(0xFFFFFFFF), day.outgoingText)
-        assertEquals(Color(0xFFE5F2FF), day.outgoingMeta)
-        assertEquals(Color(0xFFE9E9EB), day.incomingBubble)
-        assertEquals(Color(0xFF1D1D1F), day.incomingText)
-        assertEquals(Color(0xFF86868B), day.secondaryText)
-        assertEquals(Color(0xFFFF3B30), day.destructiveRed)
-        assertEquals(Color(0xFF34C759), day.secretGreen)
+        assertEquals(Color(0xFFE72E3B), day.destructiveRed)
+        assertEquals(Color(0xFF10AB61), day.secretGreen)
 
         val night = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_NIGHT))
         assertTrue(night.isDark)
         assertTrue(night.isAppleStyle)
-        assertEquals(Color(0xFF1E1E1E), night.appBackground)
-        assertEquals(Color(0xFF000000), night.groupedBackground)
+        assertEquals(Color(0xFF0E0E0E), night.groupedBackground)
+        assertEquals(Color(0xFF121212), night.topBarBackground)
+        assertEquals(Color(0xFF161616), night.appBackground)
+        assertEquals(Color(0xFF1F1F1F), night.incomingBubble)
         assertEquals(Color(0xFF0A84FF), night.primaryAccent)
-        assertEquals(Color(0xFF1E8FFF), night.outgoingBubbleTop)
-        assertEquals(Color(0xFF0A84FF), night.outgoingBubbleBottom)
-        assertEquals(Color(0xFF262629), night.incomingBubble)
-        assertEquals(Color(0xFFF5F5F7), night.incomingText)
-        assertEquals(Color(0xFF98989D), night.secondaryText)
+        assertEquals(Color(0xFF1884FC), night.outgoingBubbleTop)
+        assertEquals(Color(0xFF116DD2), night.outgoingBubbleBottom)
+        assertEquals(Color(0xFFF5F5F5), night.incomingText)
+        assertEquals(Color(0xFFA3A3A8), night.secondaryText)
+        assertEquals(Color(0xFFFF6463), night.destructiveRed)
+        assertEquals(Color(0xFF00BA69), night.secretGreen)
 
         val tinted = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.APPLE_TINTED))
         assertTrue(tinted.isDark)
@@ -78,6 +80,60 @@ class AppleUiAndContrastTest {
 
         val classicGreen = resolveTelegramPalette(TelegramThemeSettings(preset = TelegramThemePreset.CLASSIC_GREEN))
         assertFalse(classicGreen.isAppleStyle)
+    }
+
+    @Test
+    fun desktopV169NineHueBotPaletteAndFourTierPreviewPriority() {
+        val hues = listOf("blue", "purple", "cyan", "green", "orange", "magenta", "red", "yellow", "brown")
+        for (hue in hues) {
+            assertTrue("Expected $hue to be tinted", isTintedBotHue(hue))
+            for (isDark in listOf(false, true)) {
+                val c = resolveBotHueColors(hue, isDark)
+                assertTrue(
+                    "White text contrast on $hue (dark=$isDark) fill must be >= 2.8",
+                    contrastRatio(Color.White, c.bubbleFill) >= 2.8,
+                )
+                assertTrue(
+                    "Pill text contrast on $hue (dark=$isDark) pillBg must be >= 3.0",
+                    contrastRatio(c.pillText, c.pillBg) >= 3.0,
+                )
+            }
+        }
+        assertFalse(isTintedBotHue("gray"))
+        assertFalse(isTintedBotHue("neutral"))
+        assertFalse(isTintedBotHue(""))
+        assertEquals(botHueNameForId(42L), botHueNameForId(42L))
+        assertTrue(botHueNameForId(42L) in hues)
+
+        val zh = resolveUiStrings("zh-CN")
+        val base = TelegramChatItem(
+            id = "b1",
+            title = "Bot",
+            subtitle = "",
+            preview = "Ordinary last message",
+            time = "10:00",
+            kind = ConversationKind.DIRECT,
+            isBot = true,
+            botExecutionState = "awaiting_approval",
+            botActivityDetail = "Approve shell_exec",
+            draftText = "unsent draft",
+        )
+        // Tier 1: PENDING_ACTION beats DRAFT, LIVE_ACTIVITY, and MESSAGE
+        val p1 = resolveConversationPreview(base, zh)
+        assertEquals(ConversationPreviewTier.PENDING_ACTION, p1.tier)
+        assertTrue(p1.body.contains("Approve shell_exec"))
+        // Tier 2: DRAFT beats LIVE_ACTIVITY and MESSAGE
+        val p2 = resolveConversationPreview(base.copy(botExecutionState = "running_tool", botActivityDetail = "read_file"), zh)
+        assertEquals(ConversationPreviewTier.DRAFT, p2.tier)
+        assertEquals("unsent draft", p2.body)
+        // Tier 3: LIVE_ACTIVITY beats MESSAGE
+        val p3 = resolveConversationPreview(base.copy(botExecutionState = "running_tool", botActivityDetail = "read_file", draftText = ""), zh)
+        assertEquals(ConversationPreviewTier.LIVE_ACTIVITY, p3.tier)
+        assertTrue(p3.body.contains("read_file"))
+        // Tier 4: MESSAGE fallback
+        val p4 = resolveConversationPreview(base.copy(botExecutionState = "idle", botActivityDetail = null, draftText = ""), zh)
+        assertEquals(ConversationPreviewTier.MESSAGE, p4.tier)
+        assertEquals("Ordinary last message", p4.body)
     }
 
     @Test
@@ -123,7 +179,6 @@ class AppleUiAndContrastTest {
                 AppleShellTab.MESSAGES,
                 AppleShellTab.CONTACTS,
                 AppleShellTab.AGENTS,
-                AppleShellTab.REMOTE,
                 AppleShellTab.SETTINGS,
             ),
             AppleShellTab.entries,
@@ -244,19 +299,21 @@ class AppleUiAndContrastTest {
         assertEquals("信息", zh.tabMessages)
         assertEquals("联系人", zh.tabContacts)
         assertEquals("智能体", zh.tabAgents)
-        assertEquals("远程", zh.tabRemote)
         assertEquals("设置", zh.tabSettings)
         assertEquals("退出登录", zh.signOut)
+        assertEquals("这个机器人能做什么？", zh.botWhatCanIDo)
+        assertEquals("开始", zh.botStartAction)
 
         val en = resolveUiStrings("en-US")
         assertTrue(en.isEnglish)
         assertEquals("Messages", en.tabMessages)
         assertEquals("Contacts", en.tabContacts)
-        assertEquals("Agents", en.tabAgents)
-        assertEquals("Remote", en.tabRemote)
+        assertEquals("Bots", en.tabAgents)
         assertEquals("Settings", en.tabSettings)
         assertEquals("Message", en.composerPlaceholder)
         assertEquals("Sign Out", en.signOut)
+        assertEquals("What can this bot do?", en.botWhatCanIDo)
+        assertEquals("START", en.botStartAction)
 
         assertNull(formatBotActivitySubtitle("idle", null, "zh-CN"))
         assertEquals("正在调用 shell_exec...", formatBotActivitySubtitle("running_tool", "shell_exec", "zh-CN"))

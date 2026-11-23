@@ -440,7 +440,7 @@ class E2eTier3PairwiseIntegrationTest {
                 awaitState(fix.vm) { it.themeSettings.preset == TelegramThemePreset.APPLE_NIGHT && it.uiLanguage == "en-US" }
 
                 val nightPalette = resolveTelegramPalette(fix.vm.state.value.themeSettings)
-                assertEquals(Color(0xFF1E1E1E), nightPalette.appBackground)
+                assertEquals(Color(0xFF161616), nightPalette.appBackground)
                 assertTrue(contrastRatio(nightPalette.primaryText, nightPalette.appBackground) >= 4.5)
                 assertEquals("Sign Out", resolveUiStrings(fix.vm.state.value.uiLanguage).signOut)
 

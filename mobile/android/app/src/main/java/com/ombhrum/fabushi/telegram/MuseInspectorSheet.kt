@@ -134,7 +134,6 @@ internal fun MuseInspectorSheet(
     var aboutExpanded by remember(chat.id) { mutableStateOf(true) }
     var quickCmdsExpanded by remember(chat.id) { mutableStateOf(true) }
     var agentConfigExpanded by remember(chat.id) { mutableStateOf(true) }
-    var boundComputerExpanded by remember(chat.id) { mutableStateOf(true) }
     var participantsExpanded by remember(chat.id) { mutableStateOf(true) }
 
     val isBotChat = chat.isBot || fabushiBot != null
@@ -443,7 +442,22 @@ internal fun MuseInspectorSheet(
 
             Spacer(Modifier.height(14.dp))
 
-            // 4-Tab Segmented Pill Bar (Profile, Members/Agent, Shared Media, Settings)
+            // Strict Desktop v1.6.9 Inspector Tabs (`R10`):
+            // - Group / Channel: Profile | Members | Media | Settings
+            // - Bot & 1v1 User:  Profile | Media | Settings (zero Members on 1v1, zero Bound Computer clutter)
+            val isGroupOrChannel = !isBotChat && (chat.kind == ConversationKind.GROUP || chat.kind == ConversationKind.CHANNEL)
+            val tabs = buildList {
+                add(MuseInspectorTab.PROFILE to (TelegramGlyph.INFO_CIRCLE to strings.inspectorProfile))
+                if (isGroupOrChannel) {
+                    add(MuseInspectorTab.MEMBERS_OR_AGENT to (TelegramGlyph.CONTACTS to strings.inspectorMembers))
+                }
+                add(MuseInspectorTab.SHARED_MEDIA to (TelegramGlyph.MEDIA_PHOTO to strings.inspectorSharedMedia))
+                add(MuseInspectorTab.SETTINGS to (TelegramGlyph.SETTINGS_GEAR to strings.inspectorSettings))
+            }
+            if (activeTab == MuseInspectorTab.MEMBERS_OR_AGENT && !isGroupOrChannel) {
+                activeTab = MuseInspectorTab.PROFILE
+            }
+
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = palette.inputBg,
@@ -455,21 +469,12 @@ internal fun MuseInspectorSheet(
                         .padding(3.dp),
                     horizontalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
-                    val tabs = listOf(
-                        MuseInspectorTab.PROFILE to (TelegramGlyph.INFO_CIRCLE to strings.inspectorProfile),
-                        MuseInspectorTab.MEMBERS_OR_AGENT to (
-                            (if (isBotChat) TelegramGlyph.BOT_ROBOT else TelegramGlyph.CONTACTS) to
-                                (if (isBotChat) strings.inspectorAgentComputers else strings.inspectorMembers)
-                            ),
-                        MuseInspectorTab.SHARED_MEDIA to (TelegramGlyph.MEDIA_PHOTO to strings.inspectorSharedMedia),
-                        MuseInspectorTab.SETTINGS to (TelegramGlyph.SETTINGS_GEAR to strings.inspectorSettings),
-                    )
                     tabs.forEach { (tab, iconLabel) ->
                         val selected = activeTab == tab
                         Surface(
                             shape = RoundedCornerShape(9.dp),
                             color = if (selected) palette.modalBg else Color.Transparent,
-                            shadowElevation = if (selected) 1.dp else 0.dp,
+                            shadowElevation = if (selected && !palette.isDark) 1.dp else 0.dp,
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(9.dp))
@@ -577,10 +582,14 @@ internal fun MuseInspectorSheet(
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Column(modifier = Modifier.padding(8.dp)) {
-                                    listOf("/help" to "查看能力与帮助", "/status" to "查看运行状态", "/reset" to "重置当前会话").forEach { (cmd, desc) ->
+                                    listOf(
+                                        "/start" to (if (strings.isEnglish) "Start or restart bot" else "开始 / 重启机器人"),
+                                        "/help" to (if (strings.isEnglish) "Show available capabilities" else "查看能力与帮助"),
+                                        "/status" to (if (strings.isEnglish) "Check current status" else "查看运行状态"),
+                                    ).forEach { (cmd, desc) ->
                                         MuseIconRow(
                                             glyph = TelegramGlyph.BOT_ROBOT,
-                                            badgeColor = Color(0xFF34C759),
+                                            badgeColor = palette.secretGreen,
                                             title = cmd,
                                             subtitle = desc,
                                             onClick = {
@@ -592,148 +601,99 @@ internal fun MuseInspectorSheet(
                                 }
                             }
                         }
+
+                        if (fabushiBot != null && botIdKey.isNotBlank()) {
+                            Spacer(Modifier.height(12.dp))
+                            MuseCollapsibleHeader(
+                                title = if (strings.isEnglish) "Bot Configuration" else "智能体配置",
+                                expanded = agentConfigExpanded,
+                                onToggle = { agentConfigExpanded = !agentConfigExpanded },
+                            )
+                            if (agentConfigExpanded) {
+                                Surface(
+                                    shape = RoundedCornerShape(12.dp),
+                                    color = palette.cardBg,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        MuseIconRow(
+                                            glyph = TelegramGlyph.HERMES_SPARK,
+                                            badgeColor = Color(0xFF7845D7),
+                                            title = if (strings.isEnglish) "Model & Approval" else "模型与审批策略",
+                                            subtitle = "${fabushiBot.preferredModel.ifBlank { "默认" }} · ${fabushiBot.approvalMode.ifBlank { "ask" }}",
+                                            onClick = { editingBotConfig = !editingBotConfig },
+                                        )
+                                        if (editingBotConfig) {
+                                            OutlinedTextField(
+                                                value = draftModel,
+                                                onValueChange = { draftModel = it },
+                                                label = { Text("Preferred Model") },
+                                                singleLine = true,
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    focusedTextColor = palette.primaryText,
+                                                    unfocusedTextColor = palette.primaryText,
+                                                    cursorColor = palette.searchCursorColor,
+                                                ),
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                listOf("ask", "auto_edit", "full_access").forEach { mode ->
+                                                    val sel = draftApproval == mode
+                                                    Surface(
+                                                        shape = RoundedCornerShape(8.dp),
+                                                        color = if (sel) palette.selectedPillBackground else palette.inputBg,
+                                                        modifier = Modifier
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .clickable { draftApproval = mode },
+                                                    ) {
+                                                        Text(
+                                                            text = mode,
+                                                            color = if (sel) palette.selectedPillContent else palette.primaryText,
+                                                            fontSize = 11.sp,
+                                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                            Button(
+                                                onClick = {
+                                                    onPatchBot(
+                                                        botIdKey,
+                                                        null,
+                                                        null,
+                                                        null,
+                                                        null,
+                                                        draftModel.trim().ifBlank { null },
+                                                        draftApproval,
+                                                    )
+                                                    editingBotConfig = false
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = palette.primaryAccent,
+                                                    contentColor = Color.White,
+                                                ),
+                                                modifier = Modifier.fillMaxWidth(),
+                                            ) {
+                                                Text(strings.save)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
                 MuseInspectorTab.MEMBERS_OR_AGENT -> {
-                    if (isBotChat) {
-                        MuseCollapsibleHeader(
-                            title = if (strings.isEnglish) "Agent Configuration" else "智能体配置",
-                            expanded = agentConfigExpanded,
-                            onToggle = { agentConfigExpanded = !agentConfigExpanded },
-                        )
-                        if (agentConfigExpanded) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = palette.cardBg,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                ) {
-                                    MuseIconRow(
-                                        glyph = TelegramGlyph.HERMES_SPARK,
-                                        badgeColor = Color(0xFFAF52DE),
-                                        title = if (strings.isEnglish) "Model & Approval" else "模型与审批策略",
-                                        subtitle = "${fabushiBot?.preferredModel?.ifBlank { "默认" } ?: "默认"} · ${fabushiBot?.approvalMode?.ifBlank { "ask" } ?: "ask"}",
-                                        onClick = {
-                                            if (fabushiBot != null && botIdKey.isNotBlank()) {
-                                                editingBotConfig = !editingBotConfig
-                                            }
-                                        },
-                                    )
-                                    if (editingBotConfig && fabushiBot != null && botIdKey.isNotBlank()) {
-                                        OutlinedTextField(
-                                            value = draftModel,
-                                            onValueChange = { draftModel = it },
-                                            label = { Text("Preferred Model") },
-                                            singleLine = true,
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedTextColor = palette.primaryText,
-                                                unfocusedTextColor = palette.primaryText,
-                                                cursorColor = palette.searchCursorColor,
-                                            ),
-                                            modifier = Modifier.fillMaxWidth(),
-                                        )
-                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            listOf("ask", "auto_edit", "full_access").forEach { mode ->
-                                                val sel = draftApproval == mode
-                                                Surface(
-                                                    shape = RoundedCornerShape(8.dp),
-                                                    color = if (sel) palette.selectedPillBackground else palette.inputBg,
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .clickable { draftApproval = mode },
-                                                ) {
-                                                    Text(
-                                                        text = mode,
-                                                        color = if (sel) palette.selectedPillContent else palette.primaryText,
-                                                        fontSize = 11.sp,
-                                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                                    )
-                                                }
-                                            }
-                                        }
-                                        Button(
-                                            onClick = {
-                                                onPatchBot(
-                                                    botIdKey,
-                                                    null,
-                                                    null,
-                                                    null,
-                                                    null,
-                                                    draftModel.trim().ifBlank { null },
-                                                    draftApproval,
-                                                )
-                                                editingBotConfig = false
-                                            },
-                                            colors = ButtonDefaults.buttonColors(
-                                                containerColor = palette.primaryAccent,
-                                                contentColor = Color.White,
-                                            ),
-                                            modifier = Modifier.fillMaxWidth(),
-                                        ) {
-                                            Text(strings.save)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Spacer(Modifier.height(12.dp))
-                        MuseCollapsibleHeader(
-                            title = if (strings.isEnglish) "Bound Computer" else "绑定远程电脑",
-                            expanded = boundComputerExpanded,
-                            onToggle = { boundComputerExpanded = !boundComputerExpanded },
-                        )
-                        if (boundComputerExpanded) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = palette.cardBg,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Column(
-                                    modifier = Modifier.padding(10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp),
-                                ) {
-                                    if (computers.isEmpty()) {
-                                        Text(
-                                            text = if (strings.isEnglish) "No remote computers available yet." else "暂无可绑定的远程电脑节点，请先在「远程」标签页配置。",
-                                            color = palette.secondaryText,
-                                            fontSize = 13.sp,
-                                            modifier = Modifier.padding(6.dp),
-                                        )
-                                    } else {
-                                        computers.forEach { node ->
-                                            val isBound = boundNodeId == node.id
-                                            MuseIconRow(
-                                                glyph = TelegramGlyph.CLOUD_COMPUTER,
-                                                badgeColor = if (node.online) palette.secretGreen else palette.secondaryText,
-                                                title = node.name,
-                                                subtitle = buildString {
-                                                    append(if (node.online) "在线" else "离线")
-                                                    if (node.osInfo.isNotBlank()) append(" · ${node.osInfo}")
-                                                },
-                                                trailingText = if (isBound) "已绑定" else "绑定",
-                                                onClick = {
-                                                    if (botIdKey.isNotBlank()) {
-                                                        onBindBotComputer(botIdKey, if (isBound) null else node.id, isBound)
-                                                    }
-                                                },
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        MuseCollapsibleHeader(
-                            title = if (strings.isEnglish) "Participants" else "会话成员",
-                            expanded = participantsExpanded,
-                            onToggle = { participantsExpanded = !participantsExpanded },
-                        )
-                        if (participantsExpanded) {
+                    MuseCollapsibleHeader(
+                        title = if (strings.isEnglish) "Participants" else "会话成员",
+                        expanded = participantsExpanded,
+                        onToggle = { participantsExpanded = !participantsExpanded },
+                    )
+                    if (participantsExpanded) {
                             Surface(
                                 shape = RoundedCornerShape(12.dp),
                                 color = palette.cardBg,
@@ -760,7 +720,6 @@ internal fun MuseInspectorSheet(
                             }
                         }
                     }
-                }
 
                 MuseInspectorTab.SHARED_MEDIA -> {
                     Row(

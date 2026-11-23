@@ -94,6 +94,7 @@ fun TelegramComposer(
     onSendSticker: (emoji: String, packTitle: String) -> Unit,
     onSendGif: (GifItemModel) -> Unit,
     onOpenAttachmentSheet: () -> Unit,
+    onOpenMiniApp: (String) -> Unit = {},
     onToggleRecordMode: () -> Unit = {},
     onStartRecording: () -> Unit,
     onPermissionDenied: (String) -> Unit,
@@ -136,9 +137,21 @@ fun TelegramComposer(
         }
     }
 
-    val matchingCommands = remember(tfv.text, slashCommands) {
+    val effectiveSlashCommands = remember(chat.isBot, slashCommands, strings.isEnglish) {
+        if (slashCommands.isNotEmpty() || !chat.isBot) {
+            slashCommands
+        } else {
+            listOf(
+                SlashCommandSuggestion("/start", if (strings.isEnglish) "Start or restart bot" else "开始 / 重启机器人"),
+                SlashCommandSuggestion("/help", if (strings.isEnglish) "Show available commands" else "查看能力与帮助"),
+                SlashCommandSuggestion("/status", if (strings.isEnglish) "Check current status" else "查看运行状态"),
+            )
+        }
+    }
+
+    val matchingCommands = remember(tfv.text, effectiveSlashCommands) {
         if (tfv.text.startsWith("/") && !tfv.text.contains(" ")) {
-            slashCommands.filter { it.command.startsWith(tfv.text, ignoreCase = true) }
+            effectiveSlashCommands.filter { it.command.startsWith(tfv.text, ignoreCase = true) }
         } else {
             emptyList()
         }
@@ -369,6 +382,74 @@ fun TelegramComposer(
                             contentAlignment = Alignment.Center,
                         ) {
                             TelegramIcon(TelegramGlyph.PLUS, tint = palette.secondaryText, size = 16.dp)
+                        }
+
+                        // Desktop v1.6.9 External Bot Controls strictly OUTSIDE the text capsule (`R9`, `AC-7`):
+                        // 1. Mini App MenuButton (`[☰ App]`, collapses to compact 32dp circle while typing)
+                        val miniAppId = chat.miniAppPluginId?.takeIf { it.isNotBlank() }
+                        if (chat.isBot && miniAppId != null) {
+                            val collapsed = tfv.text.isNotEmpty()
+                            Row(
+                                modifier = Modifier
+                                    .padding(bottom = 7.dp)
+                                    .height(32.dp)
+                                    .then(if (collapsed) Modifier.width(32.dp) else Modifier)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(palette.primaryAccent)
+                                    .clickable {
+                                        showEmojiPanel = false
+                                        onOpenMiniApp(miniAppId)
+                                    }
+                                    .padding(horizontal = if (collapsed) 0.dp else 10.dp)
+                                    .testTag("composer-bot-menu-button"),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center,
+                            ) {
+                                TelegramIcon(TelegramGlyph.HAMBURGER, tint = Color.White, size = 14.dp)
+                                if (!collapsed) {
+                                    Spacer(Modifier.width(5.dp))
+                                    Text(
+                                        text = if (strings.isEnglish) "App" else "应用",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                    )
+                                }
+                            }
+                        }
+
+                        // 2. External `[/]` slash command toggle strictly outside the text capsule
+                        if (chat.isBot) {
+                            val slashActive = tfv.text.startsWith("/")
+                            Box(
+                                modifier = Modifier
+                                    .padding(bottom = 7.dp)
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(if (slashActive) palette.primaryAccent else palette.inputBg)
+                                    .border(
+                                        width = 0.5.dp,
+                                        color = if (slashActive) palette.primaryAccent else palette.borderColor,
+                                        shape = CircleShape,
+                                    )
+                                    .clickable {
+                                        showEmojiPanel = false
+                                        val nextText = if (tfv.text.startsWith("/")) "" else "/"
+                                        tfv = TextFieldValue(nextText, TextRange(nextText.length))
+                                        onDraftChange(nextText)
+                                    }
+                                    .testTag("composer-bot-slash-button"),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "/",
+                                    color = if (slashActive) Color.White else palette.primaryText,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 15.sp,
+                                )
+                            }
                         }
 
                         // Floating 23dp Full Pill Capsule Container

@@ -24,10 +24,13 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
 
+use zeroize::Zeroizing;
+
 type HmacSha256 = Hmac<Sha256>;
 
-const SPLIT_KEY_AUTH_INFO: &[u8] = b"gpui-telegram/split-key-v2/auth-verifier";
-const SPLIT_KEY_VAULT_INFO: &[u8] = b"gpui-telegram/split-key-v2/vault-kek";
+/// Canonical Desktop (`bhrumom/gpui-telegram` `bot-browser/src/e2ee_sync.rs`) HKDF info strings.
+pub const SPLIT_KEY_AUTH_INFO: &[u8] = b"gpui-telegram/auth-verifier/v2";
+pub const SPLIT_KEY_VAULT_INFO: &[u8] = b"gpui-telegram/vault-kek/v2";
 const DEVICE_SYNC_TTL_SECS: i64 = 300;
 
 pub fn init_schema(conn: &Connection) -> Result<(), String> {
@@ -102,8 +105,16 @@ fn validate_category(raw: &str) -> Result<&str, String> {
     }
 }
 
+/// Generates a fresh random 16-byte standard base64 salt for Split-Key V2 authentication.
+pub fn generate_split_key_salt_b64() -> String {
+    let mut salt = [0u8; 16];
+    OsRng.fill_bytes(&mut salt);
+    B64.encode(salt)
+}
+
 /// Derives Split-Key V2 `(auth_verifier_32, vault_kek_32)` from `(password, salt_bytes, kdf_params)`
-/// via Argon2id + HKDF-SHA256 domain separation so the server never sees the vault KEK or raw password.
+/// via Argon2id + HKDF-SHA256 (`salt = None`) matching Desktop `bot-browser/src/e2ee_sync.rs`
+/// bit-for-bit so accounts are 100% interoperable between Desktop and Android.
 pub fn derive_split_key_v2(
     password: &str,
     salt: &[u8],
@@ -115,18 +126,25 @@ pub fn derive_split_key_v2(
     if salt.len() < 8 {
         return Err("Salt must be at least 8 bytes".to_string());
     }
-    let m_cost = kdf.m_cost_kib.clamp(4_096, 262_144);
-    let t_cost = kdf.t_cost.clamp(1, 10);
-    let p_cost = kdf.p_cost.clamp(1, 4);
-    let argon_params =
-        Params::new(m_cost, t_cost, p_cost, Some(32)).map_err(|e| format!("Argon2 params: {e}"))?;
+    if !(1_024..=1_048_576).contains(&kdf.m_cost_kib)
+        || !(1..=64).contains(&kdf.t_cost)
+        || !(1..=16).contains(&kdf.p_cost)
+    {
+        return Err(format!(
+            "Argon2id KDF params out of safe bounds (m={}, t={}, p={})",
+            kdf.m_cost_kib, kdf.t_cost, kdf.p_cost
+        ));
+    }
+    let argon_params = Params::new(kdf.m_cost_kib, kdf.t_cost, kdf.p_cost, Some(32))
+        .map_err(|e| format!("Argon2 params: {e}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, argon_params);
-    let mut master_ikm = [0u8; 32];
+    let mut master_ikm = Zeroizing::new([0u8; 32]);
     argon2
-        .hash_password_into(password.as_bytes(), salt, &mut master_ikm)
+        .hash_password_into(password.as_bytes(), salt, &mut *master_ikm)
         .map_err(|e| format!("Argon2id derive failed: {e}"))?;
 
-    let hk = Hkdf::<Sha256>::new(Some(salt), &master_ikm);
+    // CRITICAL: Match Desktop `Hkdf::<Sha256>::new(None, &*master_key)` (salt = None)
+    let hk = Hkdf::<Sha256>::new(None, &*master_ikm);
     let mut auth_verifier = [0u8; 32];
     let mut vault_kek = [0u8; 32];
     hk.expand(SPLIT_KEY_AUTH_INFO, &mut auth_verifier)
@@ -134,6 +152,26 @@ pub fn derive_split_key_v2(
     hk.expand(SPLIT_KEY_VAULT_INFO, &mut vault_kek)
         .map_err(|_| "HKDF expand vault_kek failed".to_string())?;
     Ok((auth_verifier, vault_kek))
+}
+
+/// Convenience helper decoding a standard base64 16-byte salt and returning
+/// `(auth_verifier_b64, vault_kek_32)` matching Desktop `derive_split_key`.
+pub fn derive_split_key_v2_b64(
+    password: &str,
+    auth_salt_b64: &str,
+    kdf: Argon2KdfParamsDto,
+) -> Result<(String, [u8; 32]), String> {
+    let salt_vec = B64
+        .decode(auth_salt_b64.trim())
+        .map_err(|e| format!("Invalid split-key auth_salt_b64: {e}"))?;
+    if salt_vec.len() != 16 {
+        return Err(format!(
+            "Invalid split-key salt length: {} bytes (expected 16)",
+            salt_vec.len()
+        ));
+    }
+    let (verifier, kek) = derive_split_key_v2(password, &salt_vec, kdf)?;
+    Ok((B64.encode(verifier), kek))
 }
 
 /// Deterministic 6-digit verification code bound to `(request_id, device_public_key_b64)`.

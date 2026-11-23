@@ -11,8 +11,8 @@ android {
         applicationId 'com.ombhrum.fabushi'
         minSdk 29
         targetSdk 37
-        versionCode = (project.findProperty('versionCode') ?: '20000').toString().toInteger()
-        versionName = (project.findProperty('versionName') ?: '2.0.0').toString()
+        versionCode = (project.findProperty('versionCode') ?: '20400').toString().toInteger()
+        versionName = (project.findProperty('versionName') ?: '2.4.0').toString()
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         vectorDrawables { useSupportLibrary true }
         buildConfigField 'boolean', 'GITHUB_UPDATES_ENABLED', 'false'

@@ -12,8 +12,70 @@ internal enum class AppleShellTab {
     MESSAGES,
     CONTACTS,
     AGENTS,
-    REMOTE,
     SETTINGS,
+}
+
+internal enum class ConversationPreviewTier {
+    PENDING_ACTION,
+    DRAFT,
+    LIVE_ACTIVITY,
+    MESSAGE,
+}
+
+@Immutable
+internal data class ConversationPreviewSpec(
+    val tier: ConversationPreviewTier,
+    val prefix: String? = null,
+    val body: String,
+)
+
+/**
+ * Desktop v1.6.9 4-tier sidebar conversation preview priority (`grok_bot_interaction_spec.md`):
+ * 1. Pending approval / human action needed (`等你处理：…`)
+ * 2. Unsent local/server draft (`草稿：…`)
+ * 3. Live typing or bot execution activity (`正在调用工具…` / `AI 正在思考…`)
+ * 4. Last message snippet
+ */
+internal fun resolveConversationPreview(
+    chat: TelegramChatItem,
+    strings: AppleUiStrings,
+): ConversationPreviewSpec {
+    val lang = if (strings.isEnglish) "en-US" else "zh-CN"
+    val pendingState = chat.botExecutionState.trim().lowercase(Locale.ROOT)
+    if (pendingState == "awaiting_approval" || pendingState == "blocked" || pendingState == "needs_action") {
+        val detail = chat.botActivityDetail?.trim()?.takeIf { it.isNotEmpty() }
+            ?: if (strings.isEnglish) "Confirmation required" else "等待你的确认"
+        return ConversationPreviewSpec(
+            tier = ConversationPreviewTier.PENDING_ACTION,
+            prefix = if (strings.isEnglish) "Action needed: " else "等你处理：",
+            body = detail,
+        )
+    }
+    if (chat.draftText.isNotBlank()) {
+        return ConversationPreviewSpec(
+            tier = ConversationPreviewTier.DRAFT,
+            prefix = if (strings.isEnglish) "Draft: " else "草稿：",
+            body = chat.draftText.trim(),
+        )
+    }
+    val liveTyping = chat.typingLabel?.trim()?.takeIf { it.isNotEmpty() }
+    val botActivity = if (chat.isBot) {
+        formatBotActivitySubtitle(chat.botExecutionState, chat.botActivityDetail, lang)
+    } else null
+    val live = liveTyping ?: botActivity
+    if (live != null) {
+        return ConversationPreviewSpec(
+            tier = ConversationPreviewTier.LIVE_ACTIVITY,
+            body = live,
+        )
+    }
+    val snippet = chat.preview.ifBlank {
+        chat.subtitle.ifBlank { strings.noMessagesYet }
+    }
+    return ConversationPreviewSpec(
+        tier = ConversationPreviewTier.MESSAGE,
+        body = snippet,
+    )
 }
 
 @Immutable
@@ -268,6 +330,7 @@ internal data class AppleUiStrings(
     val settingsTonWallet: String,
     val settingsGlobalDharma: String,
     val settingsPowerSaving: String,
+    val settingsAiProviders: String,
     val signOut: String,
     val signIn: String,
     val signedOutTitle: String,
@@ -280,6 +343,16 @@ internal data class AppleUiStrings(
     val agentsMagpieTab: String,
     val agentsHermesTab: String,
     val authSubtitle: String,
+    val authIdentifierLabel: String,
+    val authSignUpAction: String,
+    val authSwitchToSignUp: String,
+    val authSwitchToSignIn: String,
+    val authTwoFactorTitle: String,
+    val authTwoFactorSubtitle: String,
+    val botWhatCanIDo: String,
+    val botStartAction: String,
+    val mikaCardTitle: String,
+    val mikaCardSubtitle: String,
     val openInAlipay: String,
     val resetDefaultServer: String,
 )
@@ -290,7 +363,7 @@ internal fun resolveUiStrings(uiLanguage: String): AppleUiStrings {
             isEnglish = true,
             tabMessages = "Messages",
             tabContacts = "Contacts",
-            tabAgents = "Agents",
+            tabAgents = "Bots",
             tabRemote = "Remote",
             tabSettings = "Settings",
             edit = "Edit",
@@ -351,6 +424,7 @@ internal fun resolveUiStrings(uiLanguage: String): AppleUiStrings {
             settingsTonWallet = "TON Wallet",
             settingsGlobalDharma = "Global Dharma",
             settingsPowerSaving = "Power Saving",
+            settingsAiProviders = "AI Models & Providers",
             signOut = "Sign Out",
             signIn = "Sign In",
             signedOutTitle = "Not Signed In",
@@ -360,9 +434,19 @@ internal fun resolveUiStrings(uiLanguage: String): AppleUiStrings {
             remoteCloudServers = "Cloud",
             remoteAiMcp = "AI MCP",
             agentsBotsTab = "Bots",
-            agentsMagpieTab = "Magpie AI",
-            agentsHermesTab = "Hermes",
-            authSubtitle = "Sign in to sync messages, agents, and remote devices",
+            agentsMagpieTab = "AI Providers",
+            agentsHermesTab = "Mika",
+            authSubtitle = "Sign in to sync your chats, bots, and Mini Apps across Desktop & Android",
+            authIdentifierLabel = "Username or Email",
+            authSignUpAction = "Create Account",
+            authSwitchToSignUp = "New here? Create an account",
+            authSwitchToSignIn = "Already have an account? Sign in",
+            authTwoFactorTitle = "Two-Step Verification",
+            authTwoFactorSubtitle = "Your account is protected with a cloud password.",
+            botWhatCanIDo = "What can this bot do?",
+            botStartAction = "START",
+            mikaCardTitle = "Mika Phone Agent",
+            mikaCardSubtitle = "On-device Android automation & hands-free assistant",
             openInAlipay = "Open in Alipay / Browser",
             resetDefaultServer = "Reset Default",
         )
@@ -432,8 +516,9 @@ internal fun resolveUiStrings(uiLanguage: String): AppleUiStrings {
             settingsTonWallet = "TON 钱包",
             settingsGlobalDharma = "全球法布施",
             settingsPowerSaving = "省电与性能",
+            settingsAiProviders = "AI 模型与供应商",
             signOut = "退出登录",
-            signIn = "登录服务器账号",
+            signIn = "登录",
             signedOutTitle = "未登录",
             offlineMode = "离线本地模式",
             remoteMyDevices = "我的设备",
@@ -441,9 +526,19 @@ internal fun resolveUiStrings(uiLanguage: String): AppleUiStrings {
             remoteCloudServers = "云服务器",
             remoteAiMcp = "AI MCP",
             agentsBotsTab = "智能体",
-            agentsMagpieTab = "Magpie AI",
-            agentsHermesTab = "Hermes",
-            authSubtitle = "登录 Fabushi 账号以同步消息、智能体与远程设备",
+            agentsMagpieTab = "AI 供应商",
+            agentsHermesTab = "Mika",
+            authSubtitle = "登录 Fabushi 账号，与桌面端实时同步对话、智能体与小程序",
+            authIdentifierLabel = "用户名或邮箱",
+            authSignUpAction = "注册并登录",
+            authSwitchToSignUp = "还没有账号？立即注册",
+            authSwitchToSignIn = "已有账号？返回登录",
+            authTwoFactorTitle = "两步验证",
+            authTwoFactorSubtitle = "您的账号已开启云密码保护，请输入两步验证密码。",
+            botWhatCanIDo = "这个机器人能做什么？",
+            botStartAction = "开始",
+            mikaCardTitle = "Mika 手机助手",
+            mikaCardSubtitle = "安卓本机自动化与智能控机助手",
             openInAlipay = "在支付宝 / 浏览器中打开",
             resetDefaultServer = "恢复默认",
         )

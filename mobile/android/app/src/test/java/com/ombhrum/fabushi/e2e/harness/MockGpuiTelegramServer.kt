@@ -97,6 +97,14 @@ class MockGpuiTelegramServer : AutoCloseable {
         var lastName: String = "",
         var bio: String = "",
         var password: String = "password123",
+        var authVersion: Int = 1,
+        var authSaltB64: String? = null,
+        var authVerifierB64: String? = null,
+        var kdfMemoryKib: Int = 65536,
+        var kdfIterations: Int = 3,
+        var kdfParallelism: Int = 1,
+        var twoFactorPassword: String? = null,
+        var twoFactorHint: String = "",
     )
 
     data class MockSession(
@@ -185,7 +193,7 @@ class MockGpuiTelegramServer : AutoCloseable {
         var avatarColor: String = "#007AFF",
         var preferredModel: String = "",
         var approvalMode: String = "ask_every_time",
-        var companionChatId: Long,
+        var companionChatId: Long? = null,
         var isFabushi: Boolean = true,
         var boundNodeId: String? = null,
     )
@@ -335,6 +343,7 @@ class MockGpuiTelegramServer : AutoCloseable {
     private val mediaStore = LinkedHashMap<String, MockMedia>()
     private val pollsById = LinkedHashMap<String, Pair<Long, Long>>() // pollId -> (chatId, msgId)
     private val alipayAttempts = LinkedHashMap<String, MockAlipayAttempt>()
+    private val twoFactorChallenges = LinkedHashMap<String, Long>() // challengeToken -> userId
     private val knownDirectoryUsers = LinkedHashMap<String, MockUser>()
     private val localCommandsQueue = mutableListOf<JSONObject>()
     private val userSettingsByUser = LinkedHashMap<Long, JSONObject>()
@@ -368,6 +377,11 @@ class MockGpuiTelegramServer : AutoCloseable {
     }
 
     // ---- Test Seeding & Control Helpers ----
+
+    fun seedUser(user: MockUser) = synchronized(stateLock) {
+        users[user.userId] = user
+        knownDirectoryUsers[user.username.lowercase()] = user
+    }
 
     fun addFault(rule: FaultRule) {
         faults.add(rule)
@@ -806,12 +820,78 @@ class MockGpuiTelegramServer : AutoCloseable {
 
         // ---- Unauthenticated Auth & Health Routes ----
         if (method == "GET" && path == "/api/v1/status") {
-            return@synchronized HttpResult.json("""{"status":"ok","version":"1.6.6"}""")
+            return@synchronized HttpResult.json("""{"status":"ok","version":"1.6.9"}""")
+        }
+        if (method == "GET" && path == "/api/v1/auth/kdf-params") {
+            val rawName = req.queryParam("username").orEmpty().trim()
+            val clean = if (rawName.startsWith("@") && !rawName.substring(1).contains("@")) {
+                rawName.removePrefix("@")
+            } else {
+                rawName
+            }
+            val user = users.values.firstOrNull { it.username.equals(clean, ignoreCase = true) }
+            if (user != null && user.authVersion == 2 && !user.authSaltB64.isNullOrBlank()) {
+                return@synchronized HttpResult.json(
+                    JSONObject()
+                        .put("auth_version", 2)
+                        .put("auth_salt_b64", user.authSaltB64)
+                        .put(
+                            "kdf_params",
+                            JSONObject()
+                                .put("m_cost_kib", user.kdfMemoryKib)
+                                .put("t_cost", user.kdfIterations)
+                                .put("p_cost", user.kdfParallelism),
+                        ),
+                )
+            }
+            return@synchronized HttpResult.json(JSONObject().put("auth_version", 1))
         }
         if (method == "POST" && path == "/api/v1/auth/login") {
-            val username = body.optString("username").trim().ifBlank { return@synchronized HttpResult.error(400, "invalid", "Username required") }
+            val rawUsername = body.optString("username").trim().ifBlank { return@synchronized HttpResult.error(400, "invalid", "Username required") }
+            val username = if (rawUsername.startsWith("@") && !rawUsername.substring(1).contains("@")) {
+                rawUsername.removePrefix("@")
+            } else {
+                rawUsername
+            }
             val user = users.values.firstOrNull { it.username.equals(username, ignoreCase = true) }
                 ?: MockUser(idGen.incrementAndGet(), username, username.replaceFirstChar { it.uppercase() }).also { users[it.userId] = it }
+            if (user.authVersion == 2) {
+                val suppliedVerifier = body.optString("auth_verifier_b64", "")
+                if (suppliedVerifier.isBlank() || suppliedVerifier != user.authVerifierB64) {
+                    return@synchronized HttpResult.error(401, "invalid_credentials", "Invalid Split-Key V2 verifier")
+                }
+            }
+            if (!user.twoFactorPassword.isNullOrBlank()) {
+                val challengeToken = "2fa_chal_${user.userId}_${idGen.incrementAndGet()}"
+                twoFactorChallenges[challengeToken] = user.userId
+                return@synchronized HttpResult.json(
+                    JSONObject()
+                        .put("requires_2fa", true)
+                        .put("challenge_token", challengeToken)
+                        .put("hint", user.twoFactorHint),
+                )
+            }
+            val sess = createSessionLocked(user, body.optString("device_name", "Fabushi Android"))
+            return@synchronized HttpResult.json(
+                JSONObject()
+                    .put("user_id", user.userId)
+                    .put("username", user.username)
+                    .put("first_name", user.firstName)
+                    .put("session_id", sess.sessionId)
+                    .put("token", sess.token),
+            )
+        }
+        if (method == "POST" && path == "/api/v1/auth/2fa/verify") {
+            val challengeToken = body.optString("challenge_token").trim()
+            val cloudPassword = body.optString("cloud_password").ifBlank { body.optString("password") }
+            val uid = twoFactorChallenges[challengeToken]
+                ?: return@synchronized HttpResult.error(401, "invalid_challenge", "Invalid or expired 2FA challenge")
+            val user = users[uid]
+                ?: return@synchronized HttpResult.error(401, "invalid_challenge", "User missing")
+            if (cloudPassword != user.twoFactorPassword) {
+                return@synchronized HttpResult.error(401, "invalid_cloud_password", "Incorrect 2FA cloud password")
+            }
+            twoFactorChallenges.remove(challengeToken)
             val sess = createSessionLocked(user, body.optString("device_name", "Fabushi Android"))
             return@synchronized HttpResult.json(
                 JSONObject()
@@ -826,7 +906,25 @@ class MockGpuiTelegramServer : AutoCloseable {
             val username = body.optString("username").trim().ifBlank { return@synchronized HttpResult.error(400, "invalid", "Username required") }
             val firstName = body.optString("first_name").ifBlank { username }
             val uid = idGen.incrementAndGet()
-            val user = MockUser(uid, username, firstName, password = body.optString("password", "pw"))
+            val authVersion = body.optInt("auth_version", 1)
+            val saltB64 = body.optString("auth_salt_b64").takeIf { it.isNotBlank() }
+            val verifierB64 = body.optString("auth_verifier_b64").takeIf { it.isNotBlank() }
+            val kdfObj = body.optJSONObject("kdf_params")
+            if (authVersion == 2 && (saltB64 == null || verifierB64 == null)) {
+                return@synchronized HttpResult.error(400, "invalid_split_key", "Split-Key V2 registration requires auth_salt_b64 and auth_verifier_b64")
+            }
+            val user = MockUser(
+                userId = uid,
+                username = username,
+                firstName = firstName,
+                password = body.optString("password", ""),
+                authVersion = if (authVersion == 2) 2 else 1,
+                authSaltB64 = saltB64,
+                authVerifierB64 = verifierB64,
+                kdfMemoryKib = kdfObj?.optInt("m_cost_kib", kdfObj.optInt("m_cost", 65536)) ?: 65536,
+                kdfIterations = kdfObj?.optInt("t_cost", 3) ?: 3,
+                kdfParallelism = kdfObj?.optInt("p_cost", 1) ?: 1,
+            )
             users[uid] = user
             knownDirectoryUsers[username.lowercase()] = user
             val sess = createSessionLocked(user, body.optString("device_name", "Fabushi Android"))
@@ -887,6 +985,24 @@ class MockGpuiTelegramServer : AutoCloseable {
             ?: return@synchronized HttpResult.error(401, "unauthorized", "Session user missing")
 
         // Account, Sessions, Profile & Settings
+        if (method == "POST" && path == "/api/v1/auth/upgrade-split-key") {
+            val saltB64 = body.optString("auth_salt_b64").takeIf { it.isNotBlank() }
+                ?: return@synchronized HttpResult.error(400, "invalid", "auth_salt_b64 required")
+            val verifierB64 = body.optString("auth_verifier_b64").takeIf { it.isNotBlank() }
+                ?: return@synchronized HttpResult.error(400, "invalid", "auth_verifier_b64 required")
+            val kdfObj = body.optJSONObject("kdf_params")
+            me.authVersion = 2
+            me.authSaltB64 = saltB64
+            me.authVerifierB64 = verifierB64
+            me.kdfMemoryKib = kdfObj?.optInt("m_cost_kib", kdfObj.optInt("m_cost", 65536)) ?: 65536
+            me.kdfIterations = kdfObj?.optInt("t_cost", 3) ?: 3
+            me.kdfParallelism = kdfObj?.optInt("p_cost", 1) ?: 1
+            return@synchronized HttpResult.json(JSONObject().put("upgraded", true).put("auth_version", 2))
+        }
+        if (method == "POST" && path == "/api/v1/auth/logout") {
+            sessionsByToken.remove(session.token)
+            return@synchronized HttpResult.json(JSONObject().put("ok", true))
+        }
         if (method == "GET" && path == "/api/v1/auth/me") {
             return@synchronized HttpResult.json(
                 JSONObject()
@@ -1346,21 +1462,58 @@ class MockGpuiTelegramServer : AutoCloseable {
         }
         if (method == "POST" && (path == "/api/v1/contacts/add" || path == "/api/v1/contacts")) {
             val uname = body.optString("username").trim().trimStart('@').lowercase()
+            val isBot = body.optBoolean("is_bot", false)
+            val matchedBot = bots.values.firstOrNull { it.username.trimStart('@').equals(uname, ignoreCase = true) }
             val target = knownDirectoryUsers[uname]
+                ?: matchedBot?.let { b ->
+                    MockUser(b.botUserId, b.username.trimStart('@'), b.displayName, bio = b.description)
+                }
+                ?: if (isBot && uname.isNotBlank()) {
+                    val botUid = idGen.incrementAndGet()
+                    val firstName = body.optString("first_name").ifBlank { uname }
+                    MockUser(botUid, uname, firstName)
+                } else {
+                    null
+                }
                 ?: return@synchronized HttpResult.error(404, "user_not_found", "User @$uname not found")
+
+            val existingDm = chats.values.firstOrNull {
+                it.ownerUserId == me.userId && it.kind == "direct" && it.peerUserId == target.userId
+            }
+            val dmChat = existingDm ?: if (isBot || matchedBot != null) {
+                val cid = matchedBot?.companionChatId ?: idGen.incrementAndGet()
+                val created = MockChat(
+                    id = cid,
+                    ownerUserId = me.userId,
+                    title = target.firstName,
+                    kind = "direct",
+                    lastMessageDateMs = System.currentTimeMillis(),
+                    isBot = true,
+                    peerUserId = target.userId,
+                )
+                chats[cid] = created
+                messagesByChat.putIfAbsent(cid, mutableListOf())
+                matchedBot?.companionChatId = cid
+                created
+            } else {
+                null
+            }
+
             val contact = MockContact(
                 userId = target.userId,
                 ownerUserId = me.userId,
                 username = target.username,
                 displayName = target.firstName,
                 bio = target.bio,
+                chatId = dmChat?.id,
             )
             contacts[target.userId] = contact
             return@synchronized HttpResult.json(
                 JSONObject()
                     .put("user_id", target.userId)
                     .put("username", target.username)
-                    .put("display_name", target.firstName),
+                    .put("display_name", target.firstName)
+                    .apply { dmChat?.let { put("chat_id", it.id) } },
             )
         }
         if (method == "DELETE" && path.startsWith("/api/v1/contacts/")) {
@@ -1892,7 +2045,7 @@ class MockGpuiTelegramServer : AutoCloseable {
         .put("avatar_color", b.avatarColor)
         .put("preferred_model", b.preferredModel)
         .put("approval_mode", b.approvalMode)
-        .put("companion_chat_id", b.companionChatId)
+        .put("companion_chat_id", b.companionChatId ?: JSONObject.NULL)
 
     private fun computerToJson(c: MockComputer): JSONObject = JSONObject()
         .put("node_id", c.nodeId)
