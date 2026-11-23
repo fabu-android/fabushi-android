@@ -98,7 +98,9 @@ jobs:
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
           ./gradlew \
-            --max-workers=2 \
+            --max-workers=1 \
+            -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8" \
+            -Pkotlin.daemon.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=768m" \
             -PversionName="$RELEASE_VER" \
             -PversionCode="$RELEASE_VCODE" \
             -PgitHash="$RELEASE_TAG" \
@@ -107,14 +109,18 @@ jobs:
             :app:assembleDebug \
             --stacktrace
           ./gradlew \
-            --max-workers=2 \
+            --max-workers=1 \
+            -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8" \
+            -Pkotlin.daemon.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=768m" \
             -PversionName="$RELEASE_VER" \
             -PversionCode="$RELEASE_VCODE" \
             -PgitHash="$RELEASE_TAG" \
             :app:assembleRelease \
             --stacktrace
           ./gradlew \
-            --max-workers=2 \
+            --max-workers=1 \
+            -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8" \
+            -Pkotlin.daemon.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=768m" \
             -PversionName="$RELEASE_VER" \
             -PversionCode="$RELEASE_VCODE" \
             -PgitHash="$RELEASE_TAG" \

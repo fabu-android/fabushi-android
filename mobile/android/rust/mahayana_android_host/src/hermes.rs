@@ -13,6 +13,7 @@ use chrono::{Datelike, TimeZone, Timelike, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::{json, Value};
+use std::sync::Mutex;
 
 pub const MEMORY_MD_CHAR_LIMIT: usize = 2_200;
 pub const USER_MD_CHAR_LIMIT: usize = 1_375;
@@ -258,12 +259,13 @@ impl CronSchedule {
 }
 
 fn parse_cron_field(field: &str, min_v: usize, max_v: usize, out: &mut [bool]) -> Result<(), String> {
+    let max_step = max_v - min_v + 1;
     for part in field.split(',') {
         let part = part.trim();
         let (range_part, step) = if let Some((r, s)) = part.split_once('/') {
             let st: usize = s.parse().map_err(|_| format!("Invalid cron step '{s}'"))?;
-            if st == 0 {
-                return Err("Cron step cannot be 0".into());
+            if st == 0 || st > max_step {
+                return Err(format!("Cron step {st} out of bounds [1..={max_step}]"));
             }
             (r, st)
         } else {
@@ -293,7 +295,10 @@ fn parse_cron_field(field: &str, min_v: usize, max_v: usize, out: &mut [bool]) -
         let mut cur = lo;
         while cur <= hi {
             out[cur] = true;
-            cur += step;
+            match cur.checked_add(step) {
+                Some(next) => cur = next,
+                None => break,
+            }
         }
     }
     Ok(())
@@ -418,33 +423,6 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
         conn.execute(
             "INSERT INTO hermes_sessions (session_id, parent_session_id, title, model, provider_id, archived, created_at_ms, updated_at_ms)
              VALUES ('hermes_main', NULL, 'Hermes Studio Main', 'auto', 'auto', 0, ?1, ?1)",
-            params![now],
-        )
-        .map_err(|e| e.to_string())?;
-
-        conn.execute(
-            "INSERT OR IGNORE INTO hermes_skills (name, description, body_markdown, enabled, updated_at_ms)
-             VALUES ('dharma-translator', 'Translate classical Chinese sutras with Sanskrit glosses', '# Dharma Translator\nPreserve Prajnaparamita terminology and provide concise commentary.', 1, ?1)",
-            params![now],
-        )
-        .map_err(|e| e.to_string())?;
-
-        for (cid, col, title, prio) in [
-            ("card_01", "todo", "Review morning Heart Sutra commentary", "medium"),
-            ("card_02", "in_progress", "Audit Magpie provider latency & cost", "high"),
-            ("card_03", "done", "Initialize X3DH Double Ratchet keys", "high"),
-        ] {
-            conn.execute(
-                "INSERT OR IGNORE INTO hermes_kanban_cards (card_id, column_id, title, priority, assignee, updated_at_ms)
-                 VALUES (?1, ?2, ?3, ?4, 'hermes', ?5)",
-                params![cid, col, title, prio, now],
-            )
-            .map_err(|e| e.to_string())?;
-        }
-
-        conn.execute(
-            "INSERT OR IGNORE INTO hermes_approvals (approval_id, session_id, tool_name, command_summary, risk_level, status, created_at_ms)
-             VALUES ('apr_term_01', '', 'terminal_exec', 'adb shell dumpsys package com.ombhrum.fabushi', 'high', 'pending', ?1)",
             params![now],
         )
         .map_err(|e| e.to_string())?;
@@ -702,18 +680,18 @@ fn load_session_unified_history(
 
 fn execute_safe_hermes_tool(conn: &Connection, name: &str, args: &Value) -> Result<Value, String> {
     match name {
-        "memory_read" => handle_rpc(
+        "memory_read" => handle_rpc_local(
             conn,
             "memoryGet",
             &json!({ "target": args.get("target").and_then(Value::as_str).unwrap_or("MEMORY.md") }),
         ),
-        "memory_update" => handle_rpc(conn, "memoryUpdate", args),
-        "kanban_list" => handle_rpc(conn, "kanbanBoard", &json!({})),
-        "kanban_add_card" => handle_rpc(conn, "kanbanAddCard", args),
-        "kanban_move_card" => handle_rpc(conn, "kanbanMove", args),
-        "cron_list" => handle_rpc(conn, "cronList", &json!({})),
-        "cron_schedule" => handle_rpc(conn, "cronUpsert", args),
-        "skills_list" => handle_rpc(conn, "skillsList", &json!({})),
+        "memory_update" => handle_rpc_local(conn, "memoryUpdate", args),
+        "kanban_list" => handle_rpc_local(conn, "kanbanBoard", &json!({})),
+        "kanban_add_card" => handle_rpc_local(conn, "kanbanAddCard", args),
+        "kanban_move_card" => handle_rpc_local(conn, "kanbanMove", args),
+        "cron_list" => handle_rpc_local(conn, "cronList", &json!({})),
+        "cron_schedule" => handle_rpc_local(conn, "cronUpsert", args),
+        "skills_list" => handle_rpc_local(conn, "skillsList", &json!({})),
         "messaging_search" => {
             let q = args.get("query").and_then(Value::as_str).unwrap_or("");
             crate::telegram_ext::handle_messaging_ext_rpc(
@@ -744,7 +722,7 @@ fn execute_safe_hermes_tool(conn: &Connection, name: &str, args: &Value) -> Resu
 }
 
 fn execute_approved_dangerous_tool(
-    conn: &Connection,
+    db: &Mutex<Connection>,
     name: &str,
     args: &Value,
 ) -> Result<Value, String> {
@@ -755,70 +733,72 @@ fn execute_approved_dangerous_tool(
                 .and_then(Value::as_str)
                 .unwrap_or("local-android-mika");
             let lease = crate::computer::handle_computer_rpc(
-                conn,
+                db,
                 "leaseAcquire",
                 &json!({ "nodeId": node_id, "holder": "hermes-approved" }),
             )?;
             let gen = lease.get("generation").and_then(Value::as_i64).unwrap_or(1);
+            let op_val = args
+                .get("op")
+                .cloned()
+                .unwrap_or_else(|| Value::String("screenshot".into()));
             crate::computer::handle_computer_rpc(
-                conn,
+                db,
                 "executeOp",
                 &json!({
                     "nodeId": node_id,
                     "generation": gen,
-                    "op": args.get("op").and_then(Value::as_str).unwrap_or("screenshot"),
+                    "op": op_val,
                     "payload": args.get("payload").cloned().unwrap_or_else(|| json!({})),
                 }),
             )
         }
-        "wallet_send_ton" => crate::wallet::handle_rpc(conn, "sendTon", args),
+        "wallet_send_ton" => crate::wallet::handle_rpc(db, "sendTon", args),
         "terminal_exec" => {
             let cmd_str = args.get("command").and_then(Value::as_str).unwrap_or("");
-            Ok(json!({
-                "approved": true,
-                "tool": "terminal_exec",
-                "command": cmd_str,
-                "sandbox": "android-restricted",
-                "note": "Approved by user via hermes_approvals gate; dispatched to host action audit",
-            }))
+            Err(format!(
+                "TERMINAL_EXEC_UNAVAILABLE: Sandboxed shell execution for '{cmd_str}' is unavailable in Rust host; bind a remote computer node (/api/v1/computers/exec) or Mika AndroidSandbox"
+            ))
         }
-        other => Ok(json!({
-            "approved": true,
-            "tool": other,
-            "arguments": args,
-        })),
+        other => Err(format!(
+            "TOOL_UNAVAILABLE: Approved tool '{other}' has no native executor configured"
+        )),
     }
 }
 
 fn run_agentic_loop(
-    conn: &Connection,
+    db: &Mutex<Connection>,
     session_id: &str,
     user_msg_id: Option<&str>,
 ) -> Result<Value, String> {
-    let (session_model, session_provider): (String, String) = conn
-        .query_row(
-            "SELECT model, provider_id FROM hermes_sessions WHERE session_id = ?1",
-            params![session_id],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
-        .unwrap_or_else(|| ("auto".into(), "auto".into()));
+    let (req_model, preferred_provider, system_prompt, tools) = crate::with_db(db, |conn| {
+        let (session_model, session_provider): (String, String) = conn
+            .query_row(
+                "SELECT model, provider_id FROM hermes_sessions WHERE session_id = ?1",
+                params![session_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .unwrap_or_else(|| ("auto".into(), "auto".into()));
 
-    let preferred_provider = (session_provider != "auto" && !session_provider.is_empty())
-        .then_some(session_provider.as_str());
-    let req_model = if session_model.is_empty() {
-        "auto".to_string()
-    } else {
-        session_model
-    };
+        let preferred_provider = (session_provider != "auto" && !session_provider.is_empty())
+            .then_some(session_provider);
+        let req_model = if session_model.is_empty() {
+            "auto".to_string()
+        } else {
+            session_model
+        };
 
-    let system_prompt = build_hermes_system_prompt(conn)?;
-    let tools = load_enabled_tool_specs(conn)?;
+        let system_prompt = build_hermes_system_prompt(conn)?;
+        let tools = load_enabled_tool_specs(conn)?;
+        Ok((req_model, preferred_provider, system_prompt, tools))
+    })?;
+
     let mut tool_steps = Vec::new();
 
     for _step in 0..MAX_AGENTIC_STEPS {
-        let history = load_session_unified_history(conn, session_id)?;
+        let history = crate::with_db(db, |conn| load_session_unified_history(conn, session_id))?;
         let req = UnifiedRequest {
             model: req_model.clone(),
             system_prompt: system_prompt.clone(),
@@ -830,136 +810,147 @@ fn run_agentic_loop(
             stream: true,
         };
 
+        // Phase 2: execute live LLM request with DB lock released
         let outcome = crate::magpie::execute_live_request(
-            conn,
+            db,
             &req,
             None,
-            preferred_provider,
+            preferred_provider.as_deref(),
             Some(session_id),
             |_delta| {},
         )?;
 
         let now = Utc::now().timestamp_millis();
         if !outcome.tool_calls.is_empty() {
-            let asst_tc_msg_id = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
-            let tc_json = serde_json::to_string(&outcome.tool_calls).map_err(|e| e.to_string())?;
-            let seq = next_message_seq(conn, session_id);
-            conn.execute(
-                "INSERT INTO hermes_messages
-                (msg_id, session_id, seq, role, content, model, token_estimate, tool_calls_json, created_at_ms)
-                VALUES (?1, ?2, ?3, 'assistant', ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    asst_tc_msg_id,
-                    session_id,
-                    seq,
-                    outcome.reply,
-                    outcome.model,
-                    outcome.usage.output_tokens as i64,
-                    tc_json,
-                    now,
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-
-            for tc in &outcome.tool_calls {
-                let parsed_args: Value =
-                    serde_json::from_str(&tc.arguments).unwrap_or_else(|_| json!({}));
-                if is_dangerous_tool(&tc.name) {
-                    let approval_id = format!("apr_{}", uuid::Uuid::new_v4().simple());
-                    let summary = format!("{}({})", tc.name, tc.arguments);
-                    conn.execute(
-                        "INSERT INTO hermes_approvals
-                        (approval_id, session_id, tool_name, command_summary, risk_level, status, tool_call_id, arguments_json, created_at_ms)
-                        VALUES (?1, ?2, ?3, ?4, 'high', 'pending', ?5, ?6, ?7)",
-                        params![
-                            approval_id,
-                            session_id,
-                            tc.name,
-                            summary,
-                            tc.id,
-                            tc.arguments,
-                            now,
-                        ],
-                    )
-                    .map_err(|e| e.to_string())?;
-                    conn.execute(
-                        "UPDATE hermes_sessions SET updated_at_ms = ?1 WHERE session_id = ?2",
-                        params![now, session_id],
-                    )
-                    .map_err(|e| e.to_string())?;
-
-                    return Ok(json!({
-                        "sessionId": session_id,
-                        "status": "waiting_approval",
-                        "userMsgId": user_msg_id,
-                        "pendingApproval": {
-                            "approvalId": approval_id,
-                            "toolCallId": tc.id,
-                            "toolName": tc.name,
-                            "arguments": parsed_args,
-                            "commandSummary": summary,
-                            "riskLevel": "high",
-                        },
-                        "toolSteps": tool_steps,
-                    }));
-                }
-
-                let tool_result = match execute_safe_hermes_tool(conn, &tc.name, &parsed_args) {
-                    Ok(v) => v,
-                    Err(e) => json!({ "error": e }),
-                };
-                let tool_msg_id = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
-                let tool_seq = next_message_seq(conn, session_id);
-                let result_str = tool_result.to_string();
+            let waiting_res = crate::with_db(db, |conn| {
+                let asst_tc_msg_id = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
+                let tc_json =
+                    serde_json::to_string(&outcome.tool_calls).map_err(|e| e.to_string())?;
+                let seq = next_message_seq(conn, session_id);
                 conn.execute(
                     "INSERT INTO hermes_messages
-                    (msg_id, session_id, seq, role, content, model, token_estimate, tool_call_id, tool_name, created_at_ms)
-                    VALUES (?1, ?2, ?3, 'tool', ?4, NULL, ?5, ?6, ?7, ?8)",
+                    (msg_id, session_id, seq, role, content, model, token_estimate, tool_calls_json, created_at_ms)
+                    VALUES (?1, ?2, ?3, 'assistant', ?4, ?5, ?6, ?7, ?8)",
                     params![
-                        tool_msg_id,
+                        asst_tc_msg_id,
                         session_id,
-                        tool_seq,
-                        result_str,
-                        ((result_str.len() / 4) + 1) as i64,
-                        tc.id,
-                        tc.name,
-                        Utc::now().timestamp_millis(),
+                        seq,
+                        outcome.reply,
+                        outcome.model,
+                        outcome.usage.output_tokens as i64,
+                        tc_json,
+                        now,
                     ],
                 )
                 .map_err(|e| e.to_string())?;
 
-                tool_steps.push(json!({
-                    "toolCallId": tc.id,
-                    "toolName": tc.name,
-                    "arguments": parsed_args,
-                    "result": tool_result,
-                }));
+                for tc in &outcome.tool_calls {
+                    let parsed_args: Value =
+                        serde_json::from_str(&tc.arguments).unwrap_or_else(|_| json!({}));
+                    if is_dangerous_tool(&tc.name) {
+                        let approval_id = format!("apr_{}", uuid::Uuid::new_v4().simple());
+                        let summary = format!("{}({})", tc.name, tc.arguments);
+                        conn.execute(
+                            "INSERT INTO hermes_approvals
+                            (approval_id, session_id, tool_name, command_summary, risk_level, status, tool_call_id, arguments_json, created_at_ms)
+                            VALUES (?1, ?2, ?3, ?4, 'high', 'pending', ?5, ?6, ?7)",
+                            params![
+                                approval_id,
+                                session_id,
+                                tc.name,
+                                summary,
+                                tc.id,
+                                tc.arguments,
+                                now,
+                            ],
+                        )
+                        .map_err(|e| e.to_string())?;
+                        conn.execute(
+                            "UPDATE hermes_sessions SET updated_at_ms = ?1 WHERE session_id = ?2",
+                            params![now, session_id],
+                        )
+                        .map_err(|e| e.to_string())?;
+
+                        return Ok(Some(json!({
+                            "sessionId": session_id,
+                            "status": "waiting_approval",
+                            "userMsgId": user_msg_id,
+                            "pendingApproval": {
+                                "approvalId": approval_id,
+                                "toolCallId": tc.id,
+                                "toolName": tc.name,
+                                "arguments": parsed_args,
+                                "commandSummary": summary,
+                                "riskLevel": "high",
+                            },
+                            "toolSteps": tool_steps,
+                        })));
+                    }
+
+                    let tool_result = match execute_safe_hermes_tool(conn, &tc.name, &parsed_args) {
+                        Ok(v) => v,
+                        Err(e) => json!({ "error": e }),
+                    };
+                    let tool_msg_id = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
+                    let tool_seq = next_message_seq(conn, session_id);
+                    let result_str = tool_result.to_string();
+                    conn.execute(
+                        "INSERT INTO hermes_messages
+                        (msg_id, session_id, seq, role, content, model, token_estimate, tool_call_id, tool_name, created_at_ms)
+                        VALUES (?1, ?2, ?3, 'tool', ?4, NULL, ?5, ?6, ?7, ?8)",
+                        params![
+                            tool_msg_id,
+                            session_id,
+                            tool_seq,
+                            result_str,
+                            ((result_str.len() / 4) + 1) as i64,
+                            tc.id,
+                            tc.name,
+                            Utc::now().timestamp_millis(),
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
+
+                    tool_steps.push(json!({
+                        "toolCallId": tc.id,
+                        "toolName": tc.name,
+                        "arguments": parsed_args,
+                        "result": tool_result,
+                    }));
+                }
+                Ok(None)
+            })?;
+            if let Some(waiting) = waiting_res {
+                return Ok(waiting);
             }
             continue;
         }
 
         let asst_msg_id = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
-        let seq = next_message_seq(conn, session_id);
-        conn.execute(
-            "INSERT INTO hermes_messages
-            (msg_id, session_id, seq, role, content, model, token_estimate, created_at_ms)
-            VALUES (?1, ?2, ?3, 'assistant', ?4, ?5, ?6, ?7)",
-            params![
-                asst_msg_id,
-                session_id,
-                seq,
-                outcome.reply,
-                outcome.model,
-                outcome.usage.output_tokens as i64,
-                now,
-            ],
-        )
-        .map_err(|e| e.to_string())?;
-        conn.execute(
-            "UPDATE hermes_sessions SET updated_at_ms = ?1 WHERE session_id = ?2",
-            params![now, session_id],
-        )
-        .map_err(|e| e.to_string())?;
+        crate::with_db(db, |conn| {
+            let seq = next_message_seq(conn, session_id);
+            conn.execute(
+                "INSERT INTO hermes_messages
+                (msg_id, session_id, seq, role, content, model, token_estimate, created_at_ms)
+                VALUES (?1, ?2, ?3, 'assistant', ?4, ?5, ?6, ?7)",
+                params![
+                    asst_msg_id,
+                    session_id,
+                    seq,
+                    outcome.reply,
+                    outcome.model,
+                    outcome.usage.output_tokens as i64,
+                    now,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "UPDATE hermes_sessions SET updated_at_ms = ?1 WHERE session_id = ?2",
+                params![now, session_id],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
 
         return Ok(json!({
             "sessionId": session_id,
@@ -983,7 +974,207 @@ fn run_agentic_loop(
     ))
 }
 
-pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
+pub fn handle_rpc(db: &Mutex<Connection>, submethod: &str, params: &Value) -> Result<Value, String> {
+    match submethod {
+        "listCommands" => Ok(json!({
+            "commands": HERMES_SLASH_COMMANDS,
+            "total": HERMES_SLASH_COMMANDS.len(),
+        })),
+        "sendTurn" => handle_send_turn(db, params),
+        "approvalsDecide" => handle_approvals_decide(db, params),
+        _ => crate::with_db(db, |conn| handle_rpc_local(conn, submethod, params)),
+    }
+}
+
+fn handle_send_turn(db: &Mutex<Connection>, params: &Value) -> Result<Value, String> {
+    let sid = params
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or("hermes_main");
+    let text = params
+        .get("text")
+        .or_else(|| params.get("prompt"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "sendTurn requires 'text'".to_string())?
+        .trim();
+    if text.is_empty() {
+        return Err("sendTurn text cannot be empty".into());
+    }
+
+    if text.starts_with('/') {
+        return crate::with_db(db, |conn| {
+            init_schema(conn)?;
+            let slash = handle_rpc_local(
+                conn,
+                "runSlashCommand",
+                &json!({ "sessionId": sid, "input": text }),
+            )?;
+            let now = Utc::now().timestamp_millis();
+            let seq = next_message_seq(conn, sid);
+            let user_mid = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
+            let asst_mid = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
+            let reply = slash["summary"].as_str().unwrap_or_default().to_string();
+            conn.execute(
+                "INSERT INTO hermes_messages (msg_id, session_id, seq, role, content, model, token_estimate, created_at_ms)
+                 VALUES (?1, ?2, ?3, 'user', ?4, NULL, ?5, ?6)",
+                params![user_mid, sid, seq, text, ((text.len() / 4) + 1) as i64, now],
+            )
+            .map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO hermes_messages (msg_id, session_id, seq, role, content, model, token_estimate, created_at_ms)
+                 VALUES (?1, ?2, ?3, 'assistant', ?4, 'hermes-slash', ?5, ?6)",
+                params![asst_mid, sid, seq + 1, reply, ((reply.len() / 4) + 1) as i64, now + 1],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(json!({
+                "sessionId": sid,
+                "status": "completed",
+                "userMsgId": user_mid,
+                "assistantMsgId": asst_mid,
+                "reply": reply,
+                "slashCommand": slash,
+            }))
+        });
+    }
+
+    let user_mid = crate::with_db(db, |conn| {
+        init_schema(conn)?;
+        // Fail closed BEFORE mutating session history when no live LLM seat is configured!
+        if !crate::magpie::has_configured_live_seat(conn) {
+            return Err(
+                "PROVIDER_NOT_CONFIGURED: Configure an API key or local endpoint in Magpie Gateway before running Hermes turns"
+                    .into(),
+            );
+        }
+        let now = Utc::now().timestamp_millis();
+        let seq = next_message_seq(conn, sid);
+        let user_mid = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
+        conn.execute(
+            "INSERT INTO hermes_messages (msg_id, session_id, seq, role, content, model, token_estimate, created_at_ms)
+             VALUES (?1, ?2, ?3, 'user', ?4, NULL, ?5, ?6)",
+            params![user_mid, sid, seq, text, ((text.len() / 4) + 1) as i64, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(user_mid)
+    })?;
+
+    run_agentic_loop(db, sid, Some(&user_mid))
+}
+
+fn handle_approvals_decide(db: &Mutex<Connection>, params: &Value) -> Result<Value, String> {
+    let aid = params
+        .get("approvalId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "approvalsDecide requires 'approvalId'".to_string())?;
+    let decision = params
+        .get("decision")
+        .and_then(Value::as_str)
+        .unwrap_or("approved");
+    let status = if decision == "approved" || decision == "allow" {
+        "approved"
+    } else {
+        "denied"
+    };
+
+    let row: Option<(String, String, Option<String>, Option<String>)> = crate::with_db(db, |conn| {
+        init_schema(conn)?;
+        let row: Option<(String, String, Option<String>, Option<String>, String)> = conn
+            .query_row(
+                "SELECT session_id, tool_name, tool_call_id, arguments_json, status
+                 FROM hermes_approvals WHERE approval_id = ?1",
+                params![aid],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+
+        let Some((session_id, tool_name, tool_call_id, args_json, current_status)) = row else {
+            return Err(format!("Approval '{aid}' not found"));
+        };
+
+        let updated = conn
+            .execute(
+                "UPDATE hermes_approvals SET status = ?1 WHERE approval_id = ?2 AND status = 'pending'",
+                params![status, aid],
+            )
+            .map_err(|e| e.to_string())?;
+        if updated == 0 {
+            return Err(format!(
+                "Approval '{aid}' already decided (current status: '{current_status}')"
+            ));
+        }
+        Ok(Some((session_id, tool_name, tool_call_id, args_json)))
+    })?;
+
+    if let Some((session_id, tool_name, Some(tool_call_id), args_opt)) = row {
+        if !session_id.trim().is_empty() {
+            let parsed_args: Value = args_opt
+                .as_deref()
+                .and_then(|s| serde_json::from_str(s).ok())
+                .unwrap_or_else(|| json!({}));
+            let tool_output = if status == "approved" {
+                match execute_approved_dangerous_tool(db, &tool_name, &parsed_args) {
+                    Ok(v) => v,
+                    Err(e) => json!({ "error": e }),
+                }
+            } else {
+                json!({
+                    "error": "USER_DENIED_APPROVAL",
+                    "tool": tool_name,
+                    "approvalId": aid,
+                })
+            };
+
+            let has_live_seat = crate::with_db(db, |conn| {
+                let tool_msg_id = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
+                let seq = next_message_seq(conn, &session_id);
+                let out_str = tool_output.to_string();
+                conn.execute(
+                    "INSERT INTO hermes_messages
+                    (msg_id, session_id, seq, role, content, model, token_estimate, tool_call_id, tool_name, created_at_ms)
+                    VALUES (?1, ?2, ?3, 'tool', ?4, NULL, ?5, ?6, ?7, ?8)",
+                    params![
+                        tool_msg_id,
+                        session_id,
+                        seq,
+                        out_str,
+                        ((out_str.len() / 4) + 1) as i64,
+                        tool_call_id,
+                        tool_name,
+                        Utc::now().timestamp_millis(),
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                Ok(crate::magpie::has_configured_live_seat(conn))
+            })?;
+
+            let resume_turn = params
+                .get("resumeTurn")
+                .and_then(Value::as_bool)
+                .unwrap_or(status == "approved");
+            if resume_turn && has_live_seat {
+                let resumed = run_agentic_loop(db, &session_id, None)?;
+                return Ok(json!({
+                    "approvalId": aid,
+                    "status": status,
+                    "resumed": true,
+                    "toolResult": tool_output,
+                    "turn": resumed,
+                }));
+            }
+            return Ok(json!({
+                "approvalId": aid,
+                "status": status,
+                "resumed": false,
+                "toolResult": tool_output,
+            }));
+        }
+    }
+
+    Ok(json!({ "approvalId": aid, "status": status }))
+}
+
+fn handle_rpc_local(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
     init_schema(conn)?;
     match submethod {
         "listCommands" => Ok(json!({
@@ -1020,7 +1211,7 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                     format!("Switched active model for '{session_id}' to '{rest}'")
                 }
                 "/branch" => {
-                    let branched = handle_rpc(
+                    let branched = handle_rpc_local(
                         conn,
                         "branchSession",
                         &json!({
@@ -1235,74 +1426,7 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
             Ok(json!({ "sessionId": sid, "messages": msgs }))
         }
 
-        "sendTurn" => {
-            let sid = params
-                .get("sessionId")
-                .and_then(Value::as_str)
-                .unwrap_or("hermes_main");
-            let text = params
-                .get("text")
-                .or_else(|| params.get("prompt"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| "sendTurn requires 'text'".to_string())?
-                .trim();
-            if text.is_empty() {
-                return Err("sendTurn text cannot be empty".into());
-            }
 
-            if text.starts_with('/') {
-                let slash = handle_rpc(
-                    conn,
-                    "runSlashCommand",
-                    &json!({ "sessionId": sid, "input": text }),
-                )?;
-                let now = Utc::now().timestamp_millis();
-                let seq = next_message_seq(conn, sid);
-                let user_mid = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
-                let asst_mid = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
-                let reply = slash["summary"].as_str().unwrap_or_default().to_string();
-                conn.execute(
-                    "INSERT INTO hermes_messages (msg_id, session_id, seq, role, content, model, token_estimate, created_at_ms)
-                     VALUES (?1, ?2, ?3, 'user', ?4, NULL, ?5, ?6)",
-                    params![user_mid, sid, seq, text, ((text.len() / 4) + 1) as i64, now],
-                )
-                .map_err(|e| e.to_string())?;
-                conn.execute(
-                    "INSERT INTO hermes_messages (msg_id, session_id, seq, role, content, model, token_estimate, created_at_ms)
-                     VALUES (?1, ?2, ?3, 'assistant', ?4, 'hermes-slash', ?5, ?6)",
-                    params![asst_mid, sid, seq + 1, reply, ((reply.len() / 4) + 1) as i64, now + 1],
-                )
-                .map_err(|e| e.to_string())?;
-                return Ok(json!({
-                    "sessionId": sid,
-                    "status": "completed",
-                    "userMsgId": user_mid,
-                    "assistantMsgId": asst_mid,
-                    "reply": reply,
-                    "slashCommand": slash,
-                }));
-            }
-
-            // Fail closed BEFORE mutating session history when no live LLM seat is configured!
-            if !crate::magpie::has_configured_live_seat(conn) {
-                return Err(
-                    "PROVIDER_NOT_CONFIGURED: Configure an API key or local endpoint in Magpie Gateway before running Hermes turns"
-                        .into(),
-                );
-            }
-
-            let now = Utc::now().timestamp_millis();
-            let seq = next_message_seq(conn, sid);
-            let user_mid = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
-            conn.execute(
-                "INSERT INTO hermes_messages (msg_id, session_id, seq, role, content, model, token_estimate, created_at_ms)
-                 VALUES (?1, ?2, ?3, 'user', ?4, NULL, ?5, ?6)",
-                params![user_mid, sid, seq, text, ((text.len() / 4) + 1) as i64, now],
-            )
-            .map_err(|e| e.to_string())?;
-
-            run_agentic_loop(conn, sid, Some(&user_mid))
-        }
 
         "memoryGet" => {
             let mut stmt = conn
@@ -1432,16 +1556,21 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .get("bodyMarkdown")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "skillUpsert requires 'bodyMarkdown'".to_string())?;
+            let enabled = params
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
             let warnings = scan_skill_security(body)?;
             let now = Utc::now().timestamp_millis();
             conn.execute(
                 "INSERT OR REPLACE INTO hermes_skills (name, description, body_markdown, enabled, updated_at_ms)
-                 VALUES (?1, ?2, ?3, 1, ?4)",
-                params![name, description, body, now],
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![name, description, body, if enabled { 1i64 } else { 0i64 }, now],
             )
             .map_err(|e| e.to_string())?;
             Ok(json!({
                 "name": name,
+                "enabled": enabled,
                 "securityScanPassed": true,
                 "warnings": warnings,
             }))
@@ -1477,6 +1606,10 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .get("prompt")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "cronUpsert requires 'prompt'".to_string())?;
+            let enabled = params
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
             let parsed = CronSchedule::parse(schedule)?;
             let now = Utc::now().timestamp_millis();
             let next_run = parsed.next_after_ms(now)?;
@@ -1487,14 +1620,15 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .unwrap_or_else(|| format!("cron_{}", uuid::Uuid::new_v4().simple()));
             conn.execute(
                 "INSERT OR REPLACE INTO hermes_cron_jobs (job_id, schedule, prompt, enabled, next_run_ms, last_run_ms)
-                 VALUES (?1, ?2, ?3, 1, ?4, NULL)",
-                params![job_id, schedule, prompt, next_run],
+                 VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+                params![job_id, schedule, prompt, if enabled { 1i64 } else { 0i64 }, next_run],
             )
             .map_err(|e| e.to_string())?;
             Ok(json!({
                 "jobId": job_id,
                 "schedule": schedule,
                 "prompt": prompt,
+                "enabled": enabled,
                 "nextRunMs": next_run,
             }))
         }
@@ -1589,102 +1723,6 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|e| e.to_string())?;
             Ok(json!({ "approvals": list }))
-        }
-
-        "approvalsDecide" => {
-            let aid = params
-                .get("approvalId")
-                .and_then(Value::as_str)
-                .ok_or_else(|| "approvalsDecide requires 'approvalId'".to_string())?;
-            let decision = params
-                .get("decision")
-                .and_then(Value::as_str)
-                .unwrap_or("approved");
-            let status = if decision == "approved" || decision == "allow" {
-                "approved"
-            } else {
-                "denied"
-            };
-
-            let row: Option<(String, String, Option<String>, Option<String>)> = conn
-                .query_row(
-                    "SELECT session_id, tool_name, tool_call_id, arguments_json
-                     FROM hermes_approvals WHERE approval_id = ?1",
-                    params![aid],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-                )
-                .optional()
-                .map_err(|e| e.to_string())?;
-
-            conn.execute(
-                "UPDATE hermes_approvals SET status = ?1 WHERE approval_id = ?2",
-                params![status, aid],
-            )
-            .map_err(|e| e.to_string())?;
-
-            if let Some((session_id, tool_name, Some(tool_call_id), args_opt)) = row {
-                if !session_id.trim().is_empty() {
-                    let parsed_args: Value = args_opt
-                        .as_deref()
-                        .and_then(|s| serde_json::from_str(s).ok())
-                        .unwrap_or_else(|| json!({}));
-                    let tool_output = if status == "approved" {
-                        match execute_approved_dangerous_tool(conn, &tool_name, &parsed_args) {
-                            Ok(v) => v,
-                            Err(e) => json!({ "error": e }),
-                        }
-                    } else {
-                        json!({
-                            "error": "USER_DENIED_APPROVAL",
-                            "tool": tool_name,
-                            "approvalId": aid,
-                        })
-                    };
-
-                    let tool_msg_id = format!("hmsg_{}", uuid::Uuid::new_v4().simple());
-                    let seq = next_message_seq(conn, &session_id);
-                    let out_str = tool_output.to_string();
-                    conn.execute(
-                        "INSERT INTO hermes_messages
-                        (msg_id, session_id, seq, role, content, model, token_estimate, tool_call_id, tool_name, created_at_ms)
-                        VALUES (?1, ?2, ?3, 'tool', ?4, NULL, ?5, ?6, ?7, ?8)",
-                        params![
-                            tool_msg_id,
-                            session_id,
-                            seq,
-                            out_str,
-                            ((out_str.len() / 4) + 1) as i64,
-                            tool_call_id,
-                            tool_name,
-                            Utc::now().timestamp_millis(),
-                        ],
-                    )
-                    .map_err(|e| e.to_string())?;
-
-                    let resume_turn = params
-                        .get("resumeTurn")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(status == "approved");
-                    if resume_turn && crate::magpie::has_configured_live_seat(conn) {
-                        let resumed = run_agentic_loop(conn, &session_id, None)?;
-                        return Ok(json!({
-                            "approvalId": aid,
-                            "status": status,
-                            "resumed": true,
-                            "toolResult": tool_output,
-                            "turn": resumed,
-                        }));
-                    }
-                    return Ok(json!({
-                        "approvalId": aid,
-                        "status": status,
-                        "resumed": false,
-                        "toolResult": tool_output,
-                    }));
-                }
-            }
-
-            Ok(json!({ "approvalId": aid, "status": status }))
         }
 
         other => Err(format!("Unsupported hermes method: {other}")),

@@ -16,8 +16,8 @@ fn new_test_host(tag: &str) -> (MahayanaAndroidHost, PathBuf) {
 fn test_feature_info_reports_desktop_v162_parity() {
     let (host, dir) = new_test_host("feature_info");
     let info = host.dispatch("feature.info", &json!({})).unwrap();
-    assert_eq!(info["desktopParityVersion"], "1.6.5");
-    assert_eq!(info["desktopParityCommit"], "db06f9c");
+    assert_eq!(info["desktopParityVersion"], "1.6.6");
+    assert_eq!(info["desktopParityCommit"], "6ca754c");
     assert_eq!(info["platform"], "android");
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -229,51 +229,41 @@ fn test_coding_agent_bots_crud_control_checkpoints_and_approvals() {
 
 #[test]
 fn test_uu_remote_assist_stream_settings_extended_ops_and_mcp_oauth_grants() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
     let (host, dir) = new_test_host("uu_remote");
 
     // 1. 19 Action Bus categories (v1.5.0)
     let cats = host.dispatch("remote.actionBusCategories", &json!({})).unwrap();
     assert_eq!(cats["total"], 19);
 
-    // 2. Permanent 9-digit Remote Assist ID + code enforcement
-    let cfg = host.dispatch("remote.getAssistConfig", &json!({})).unwrap();
-    let assist_id = cfg["assist_id"].as_str().unwrap().to_string();
-    assert_eq!(assist_id.len(), 9);
-    host.dispatch(
-        "remote.setAssistCode",
-        &json!({ "code": "Fabu2026", "codeMode": "custom" }),
-    )
-    .unwrap();
-
-    // Wrong code fails closed
+    // 2. Unauthenticated remote.* assist/sessions/MCP grants MUST fail closed (R-F4, R-F5)
+    assert!(host
+        .dispatch("remote.getAssistConfig", &json!({}))
+        .unwrap_err()
+        .contains("REMOTE_ASSIST_UNAVAILABLE"));
     assert!(host
         .dispatch(
             "remote.startAssist",
-            &json!({ "assistId": assist_id, "accessCode": "WRONG99" })
+            &json!({ "assistId": "123456789", "accessCode": "Fabu2026" })
         )
-        .is_err());
-
-    // Correct ID + code starts active session
-    let started = host
+        .unwrap_err()
+        .contains("REMOTE_ASSIST_UNAVAILABLE"));
+    assert!(host
+        .dispatch("remote.listMcpGrants", &json!({}))
+        .unwrap_err()
+        .contains("AUTH_REQUIRED"));
+    assert!(host
         .dispatch(
-            "remote.startAssist",
-            &json!({
-                "assistId": assist_id,
-                "accessCode": "Fabu2026",
-                "requesterName": "Mac Studio Desktop",
-                "mode": "desktop"
-            }),
+            "remote.issueMcpGrant",
+            &json!({ "clientName": "Claude Desktop MCP" })
         )
-        .unwrap();
-    let sid = started["sessionId"].as_str().unwrap().to_string();
-    let list1 = host.dispatch("remote.listSessions", &json!({})).unwrap();
-    assert_eq!(list1["sessions"].as_array().unwrap().len(), 1);
-    host.dispatch("remote.disconnectSession", &json!({ "sessionId": sid }))
-        .unwrap();
-    let list2 = host.dispatch("remote.listSessions", &json!({})).unwrap();
-    assert_eq!(list2["sessions"].as_array().unwrap().len(), 0);
+        .unwrap_err()
+        .contains("OAUTH_FLOW_REQUIRED"));
 
-    // 3. Stream settings persistence
+    // 3. Stream settings local persistence
     let updated_stream = host
         .dispatch(
             "remote.updateStreamSettings",
@@ -298,7 +288,7 @@ fn test_uu_remote_assist_stream_settings_extended_ops_and_mcp_oauth_grants() {
     assert_eq!(updated_stream["target_fps"], 120);
     assert_eq!(updated_stream["privacy_screen"], true);
 
-    // 4. Extended structured RemoteComputerOp with generation fencing
+    // 4. Local computer.executeOp MUST fail closed (R-F3) while preserving generation fencing
     let lease = host
         .dispatch(
             "computer.leaseAcquire",
@@ -306,7 +296,7 @@ fn test_uu_remote_assist_stream_settings_extended_ops_and_mcp_oauth_grants() {
         )
         .unwrap();
     let gen = lease["generation"].as_i64().unwrap();
-    let clip_res = host
+    let local_err = host
         .dispatch(
             "computer.executeOp",
             &json!({
@@ -315,44 +305,144 @@ fn test_uu_remote_assist_stream_settings_extended_ops_and_mcp_oauth_grants() {
                 "op": { "op": "clipboard_get" }
             }),
         )
-        .unwrap();
-    assert_eq!(clip_res["executed"], true);
-    assert_eq!(clip_res["readOnly"], true);
+        .unwrap_err();
+    assert!(local_err.contains("LOCAL_EXECUTOR_REQUIRED"));
 
+    // 5. Real loopback server backing assist, sessions, extended RemoteComputerOp, and MCP grants
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+    let addr = listener.local_addr().unwrap();
+    let server_url = format!("http://{addr}");
+    let srv = thread::spawn(move || {
+        for _ in 0..10 {
+            let (mut stream, _) = match listener.accept() {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            let mut raw_buf = Vec::with_capacity(4096);
+            let mut chunk = [0u8; 4096];
+            let mut header_end = None;
+            let mut content_len = 0usize;
+            loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                raw_buf.extend_from_slice(&chunk[..n]);
+                if header_end.is_none() {
+                    if let Some(pos) = raw_buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let hend = pos + 4;
+                        let head = String::from_utf8_lossy(&raw_buf[..pos]);
+                        for line in head.lines() {
+                            if let Some((k, v)) = line.split_once(':') {
+                                if k.trim().eq_ignore_ascii_case("content-length") {
+                                    content_len = v.trim().parse().unwrap_or(0);
+                                }
+                            }
+                        }
+                        header_end = Some(hend);
+                    }
+                }
+                if let Some(hend) = header_end {
+                    if raw_buf.len() >= hend + content_len {
+                        break;
+                    }
+                }
+            }
+            let req = String::from_utf8_lossy(&raw_buf);
+            let first = req.lines().next().unwrap_or("");
+            let (status, body) = if first.starts_with("POST /api/v1/auth/login") {
+                ("200 OK", r#"{"user_id":42,"username":"ops","session_id":"s_ops","token":"tok_remote_12345678901234567890"}"#)
+            } else if first.starts_with("GET /api/v1/remote/assist/info") {
+                ("200 OK", r#"{"assist_id":"987654321","allow_assist":true,"code_mode":"temporary","current_code":"AbCd1234"}"#)
+            } else if first.starts_with("POST /api/v1/remote/assist/set-code") {
+                ("200 OK", r#"{"assist_id":"987654321","allow_assist":true,"code_mode":"custom","current_code":"Fabu2026"}"#)
+            } else if first.starts_with("POST /api/v1/remote/assist/start") {
+                if req.contains("WRONG99") {
+                    ("403 Forbidden", r#"{"error":"invalid_code","message":"Invalid verification code"}"#)
+                } else {
+                    ("200 OK", r#"{"session_id":"rsess_01","target_node_id":"cloud:42:prod","target_device_id":"987654321","temp_relay_token":"fbrelay_tok_01","requires_host_confirm":true}"#)
+                }
+            } else if first.starts_with("GET /api/v1/remote/sessions") {
+                ("200 OK", r#"{"sessions":[{"session_id":"rsess_01","controller_kind":"assist_guest","controller_name":"Mac Studio Desktop"}]}"#)
+            } else if first.starts_with("POST /api/v1/remote/sessions/disconnect") {
+                ("200 OK", r#"{"disconnected":true,"session_id":"rsess_01"}"#)
+            } else if first.starts_with("POST /api/v1/computers/exec") {
+                ("200 OK", r#"{"command_id":"cmd_1","node_id":"cloud:42:prod","ok":true,"exit_code":0,"stdout":"copied","stderr":"","entries":[],"executed_by":"daemon","duration_ms":12}"#)
+            } else if first.starts_with("GET /api/v1/mcp/grants") {
+                ("200 OK", r#"[{"family_id":"fam_srv_01","client_id":"claude_desktop","client_name":"Claude Desktop MCP","scopes":["remote.read"],"allowed_node_ids":["cloud:42:prod"],"created_at_ms":1760000000000,"expires_at_ms":1769999999999}]"#)
+            } else if first.starts_with("DELETE /api/v1/mcp/grants/fam_srv_01") {
+                ("200 OK", r#"{"revoked":true,"family_id":"fam_srv_01"}"#)
+            } else {
+                ("404 Not Found", r#"{"error":"not_found"}"#)
+            };
+            let resp = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(resp.as_bytes());
+        }
+    });
+
+    host.dispatch(
+        "telegram.server.login",
+        &json!({ "endpoint": server_url, "username": "ops", "password": "secret" }),
+    )
+    .unwrap();
+
+    let cfg = host.dispatch("remote.getAssistConfig", &json!({})).unwrap();
+    assert_eq!(cfg["assist_id"], "987654321");
+
+    host.dispatch("remote.setAssistCode", &json!({ "code": "Fabu2026" }))
+        .unwrap();
+    assert!(host
+        .dispatch(
+            "remote.startAssist",
+            &json!({ "assistId": "987654321", "accessCode": "WRONG99" })
+        )
+        .is_err());
+    let started = host
+        .dispatch(
+            "remote.startAssist",
+            &json!({
+                "assistId": "987654321",
+                "accessCode": "Fabu2026",
+                "requesterName": "Mac Studio Desktop",
+                "mode": "desktop"
+            }),
+        )
+        .unwrap();
+    assert_eq!(started["session_id"], "rsess_01");
+
+    let list1 = host.dispatch("remote.listSessions", &json!({})).unwrap();
+    assert_eq!(list1["sessions"].as_array().unwrap().len(), 1);
+    host.dispatch("remote.disconnectSession", &json!({ "sessionId": "rsess_01" }))
+        .unwrap();
+
+    // Extended structured RemoteComputerOp via real telegram.server.execComputer
     let wol_res = host
         .dispatch(
-            "computer.executeOp",
+            "telegram.server.execComputer",
             &json!({
-                "nodeId": "local-android-mika",
-                "generation": gen,
-                "op": {
+                "nodeId": "cloud:42:prod",
+                "operation": {
                     "op": "power_action",
                     "action": { "kind": "wake_on_lan", "mac_address": "AA:BB:CC:DD:EE:FF" }
                 }
             }),
         )
         .unwrap();
-    assert_eq!(wol_res["executed"], true);
-    assert_eq!(wol_res["readOnly"], false);
+    assert_eq!(wol_res["ok"], true);
 
-    // 5. Official OAuth 2.1 Remote MCP Grants lifecycle
-    let grant = host
-        .dispatch(
-            "remote.issueMcpGrant",
-            &json!({
-                "clientName": "Claude Desktop MCP",
-                "scopes": ["remote.read", "remote.terminal", "mcp.tools"]
-            }),
-        )
-        .unwrap();
-    let family_id = grant["family_id"].as_str().unwrap().to_string();
+    // Real server-backed OAuth 2.1 MCP grants list & revoke
     let grants = host.dispatch("remote.listMcpGrants", &json!({})).unwrap();
     assert_eq!(grants["grants"].as_array().unwrap().len(), 1);
-    host.dispatch("remote.revokeMcpGrant", &json!({ "familyId": family_id }))
+    let revoked = host
+        .dispatch("remote.revokeMcpGrant", &json!({ "familyId": "fam_srv_01" }))
         .unwrap();
-    let grants_after = host.dispatch("remote.listMcpGrants", &json!({})).unwrap();
-    assert_eq!(grants_after["grants"].as_array().unwrap().len(), 0);
+    assert_eq!(revoked["revoked"], true);
 
+    let _ = srv.join();
     let _ = std::fs::remove_dir_all(dir);
 }
 

@@ -45,11 +45,149 @@ import java.util.concurrent.atomic.AtomicBoolean
 private const val WEB_MCP_ORIGIN = "fabushi.ombhrum.com"
 private const val LOCAL_WEB_MCP_ORIGIN = "miniapp.local.fabushi.invalid"
 
-private class MiniAppNativeWebMcpBridge(
+internal fun isAllowedMiniAppUrl(url: String): Boolean {
+    val uri = runCatching { java.net.URI(url.trim()) }.getOrNull() ?: return false
+    if (!uri.scheme.equals("https", ignoreCase = true)) return false
+    if (uri.userInfo != null) return false
+    val host = uri.host?.lowercase(java.util.Locale.ROOT) ?: return false
+    if (host != WEB_MCP_ORIGIN && host != LOCAL_WEB_MCP_ORIGIN) return false
+    return uri.port == -1 || uri.port == 443
+}
+
+internal fun isLocalMiniAppUrl(url: String?): Boolean {
+    if (url.isNullOrBlank() || !isAllowedMiniAppUrl(url)) return false
+    val host = runCatching { java.net.URI(url.trim()).host?.lowercase(java.util.Locale.ROOT) }.getOrNull()
+    return host == LOCAL_WEB_MCP_ORIGIN
+}
+
+internal class MiniAppLifecycleGate {
+    private var _localPageLoaded = false
+    private var _lifecycleActive = true
+    private var _disposed = false
+
+    val localPageLoaded: Boolean
+        get() = synchronized(this) { _localPageLoaded }
+    val lifecycleActive: Boolean
+        get() = synchronized(this) { _lifecycleActive }
+    val localDocumentActive: Boolean
+        get() = synchronized(this) { !_disposed && _lifecycleActive && _localPageLoaded }
+    val disposed: Boolean
+        get() = synchronized(this) { _disposed }
+
+    fun onLocalHtmlLoaded() {
+        synchronized(this) {
+            if (_disposed) return
+            _localPageLoaded = true
+        }
+    }
+
+    fun onHostedUrlLoaded() {
+        synchronized(this) {
+            _localPageLoaded = false
+        }
+    }
+
+    fun onPageStarted(url: String?) {
+        synchronized(this) {
+            _localPageLoaded = !_disposed && isLocalMiniAppUrl(url)
+        }
+    }
+
+    fun onLifecycleEvent(event: Lifecycle.Event) {
+        synchronized(this) {
+            when (event) {
+                Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> {
+                    if (_disposed) return
+                    _lifecycleActive = true
+                }
+                Lifecycle.Event.ON_PAUSE, Lifecycle.Event.ON_STOP -> {
+                    // A page that is no longer foregrounded loses its native
+                    // execution grant. Long work must be resumed through the
+                    // Host task owner after the page returns.
+                    _lifecycleActive = false
+                }
+                Lifecycle.Event.ON_DESTROY -> {
+                    _disposed = true
+                    _lifecycleActive = false
+                    _localPageLoaded = false
+                }
+                else -> Unit
+            }
+        }
+    }
+
+    fun onDispose() {
+        synchronized(this) {
+            _disposed = true
+            _lifecycleActive = false
+            _localPageLoaded = false
+        }
+    }
+
+    fun canDispatchHostEvent(): Boolean = synchronized(this) {
+        !_disposed && _lifecycleActive && _localPageLoaded
+    }
+
+    fun dispatchHostEvent(event: JSONObject, deliver: (JSONObject) -> Unit): Boolean {
+        if (!canDispatchHostEvent()) return false
+        val projected = miniAppEventProjection(event)
+        if (projected.length() == 0) return false
+        if (!canDispatchHostEvent()) return false
+        deliver(projected)
+        return true
+    }
+}
+
+private fun requestNativeApproval(context: android.content.Context, tool: MiniAppToolContract): Boolean {
+    val decided = AtomicBoolean(false)
+    val allowed = AtomicBoolean(false)
+    val latch = CountDownLatch(1)
+    val posted = runCatching {
+        Handler(Looper.getMainLooper()).post {
+            try {
+                val warning = if (tool.approval == "destructive") {
+                    "该操作可能产生破坏性修改。"
+                } else {
+                    "该操作会修改小程序或后台状态。"
+                }
+                AlertDialog.Builder(context)
+                    .setTitle("允许 WebMCP 调用 ${tool.name}？")
+                    .setMessage("${tool.description}\n\n$warning")
+                    .setPositiveButton("允许") { _, _ ->
+                        if (decided.compareAndSet(false, true)) {
+                            allowed.set(true)
+                            latch.countDown()
+                        }
+                    }
+                    .setNegativeButton("取消") { _, _ ->
+                        if (decided.compareAndSet(false, true)) latch.countDown()
+                    }
+                    .setOnCancelListener {
+                        if (decided.compareAndSet(false, true)) latch.countDown()
+                    }
+                    .setOnDismissListener {
+                        if (decided.compareAndSet(false, true)) latch.countDown()
+                    }
+                    .show()
+            } catch (_: Throwable) {
+                if (decided.compareAndSet(false, true)) latch.countDown()
+            }
+        }
+    }.getOrDefault(false)
+    if (!posted) {
+        if (decided.compareAndSet(false, true)) latch.countDown()
+        return false
+    }
+    latch.await(2, TimeUnit.MINUTES)
+    return allowed.get()
+}
+
+internal class MiniAppNativeWebMcpBridge(
     private val plugin: MarketplacePlugin,
     private val context: android.content.Context,
     private val localDocumentActive: () -> Boolean,
     private val callRuntimeToolJson: (pluginId: String, name: String, argumentsJson: String) -> String,
+    private val approvalPrompt: (MiniAppToolContract) -> Boolean = { tool -> requestNativeApproval(context, tool) },
 ) {
     private val tools = plugin.tools.associateBy { it.name }
 
@@ -71,8 +209,14 @@ private class MiniAppNativeWebMcpBridge(
         }
         val tool = tools[name]
             ?: return JSONObject().put("ok", false).put("error", "Tool is not in this MiniApp contract").toString()
-        if (tool.approval != "none" && !requestNativeApproval(tool)) {
-            return JSONObject().put("ok", false).put("error", "用户取消了 WebMCP Tool 调用").toString()
+        if (tool.approval != "none") {
+            val approved = runCatching { approvalPrompt(tool) }.getOrDefault(false)
+            if (!approved) {
+                return JSONObject().put("ok", false).put("error", "用户取消了 WebMCP Tool 调用").toString()
+            }
+            if (!localDocumentActive()) {
+                return JSONObject().put("ok", false).put("error", "Local MiniApp document is not active").toString()
+            }
         }
         return runCatching {
             val resultJson = callRuntimeToolJson(plugin.pluginId, name, argumentsJson)
@@ -83,37 +227,6 @@ private class MiniAppNativeWebMcpBridge(
                 .put("error", error.message ?: "WebMCP runtime call failed")
                 .toString()
         }
-    }
-
-    private fun requestNativeApproval(tool: MiniAppToolContract): Boolean {
-        val decided = AtomicBoolean(false)
-        val allowed = AtomicBoolean(false)
-        val latch = CountDownLatch(1)
-        Handler(Looper.getMainLooper()).post {
-            val warning = if (tool.approval == "destructive") {
-                "该操作可能产生破坏性修改。"
-            } else {
-                "该操作会修改小程序或后台状态。"
-            }
-            AlertDialog.Builder(context)
-                .setTitle("允许 WebMCP 调用 ${tool.name}？")
-                .setMessage("${tool.description}\n\n$warning")
-                .setPositiveButton("允许") { _, _ ->
-                    if (decided.compareAndSet(false, true)) {
-                        allowed.set(true)
-                        latch.countDown()
-                    }
-                }
-                .setNegativeButton("取消") { _, _ ->
-                    if (decided.compareAndSet(false, true)) latch.countDown()
-                }
-                .setOnCancelListener {
-                    if (decided.compareAndSet(false, true)) latch.countDown()
-                }
-                .show()
-        }
-        latch.await(2, TimeUnit.MINUTES)
-        return allowed.get()
     }
 }
 
@@ -139,24 +252,27 @@ internal fun miniAppCapabilityAnswer(tools: Collection<MiniAppToolContract>): JS
         .put("targetPools", JSONArray())
 }
 
-private fun toolContractJson(plugin: MarketplacePlugin): String {
+internal fun toolContractJson(plugin: MarketplacePlugin): String {
     val rows = JSONArray()
     // The probe is part of the injected contract so the page can discover what it was
     // granted before calling anything; callTool answers it without a native runtime hop.
     rows.put(
         JSONObject()
             .put("name", CAPABILITY_PROBE_TOOL)
-                .put("title", CAPABILITY_PROBE_TOOL)
+            .put("title", CAPABILITY_PROBE_TOOL)
             .put("description", "Report which capabilities this host granted to the MiniApp.")
-                .put("readOnlyHint", true)
-                .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject())),
+            .put("readOnlyHint", true)
+            .put("annotations", JSONObject().put("readOnlyHint", true))
+            .put("inputSchema", JSONObject().put("type", "object").put("properties", JSONObject())),
     )
     for (tool in plugin.tools) {
+        val readOnly = tool.approval == "none"
         val row = JSONObject()
-                .put("name", tool.name)
-                .put("title", tool.title ?: tool.name)
-                .put("description", tool.description)
-                .put("readOnlyHint", tool.approval == "none")
+            .put("name", tool.name)
+            .put("title", tool.title ?: tool.name)
+            .put("description", tool.description)
+            .put("readOnlyHint", readOnly)
+            .put("annotations", JSONObject().put("readOnlyHint", readOnly))
         tool.inputSchemaJson?.let { schema ->
             runCatching { row.put("inputSchema", JSONObject(schema)) }
         }
@@ -166,19 +282,22 @@ private fun toolContractJson(plugin: MarketplacePlugin): String {
 }
 
 /** UI-safe Fabushi account projection. Account/session credentials never enter the WebView. */
-private fun miniAppAccountProjection(auth: JSONObject): JSONObject {
+internal fun miniAppAccountProjection(auth: JSONObject): JSONObject {
     val projection = JSONObject().put("loggedIn", auth.optBoolean("loggedIn", false))
     val source = auth.optJSONObject("user") ?: JSONObject()
     val user = JSONObject()
     for (key in listOf("id", "userId", "username", "nickname", "email", "avatar", "role", "membership")) {
-        if (source.has(key) && !source.isNull(key)) user.put(key, source.opt(key))
+        if (!source.has(key) || source.isNull(key)) continue
+        when (val value = source.opt(key)) {
+            is String, is Number, is Boolean -> user.put(key, value)
+        }
     }
     projection.put("user", user)
     return projection
 }
 
 /** FeatureHost events are projected as scalar UI state only; nested credentials/results are dropped. */
-private fun miniAppEventProjection(event: JSONObject): JSONObject {
+internal fun miniAppEventProjection(event: JSONObject): JSONObject {
     val output = JSONObject()
     val allowed = listOf(
         "type", "timestamp", "requestId", "operationId", "miniAppId", "pluginId", "agentId",
@@ -194,13 +313,21 @@ private fun miniAppEventProjection(event: JSONObject): JSONObject {
     return output
 }
 
-private fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: JSONObject): String {
-    val tools = toolContractJson(plugin)
+private fun escapeJsonForHtmlScript(json: String): String =
+    json
+        .replace("<", "\\u003c")
+        .replace("\u2028", "\\u2028")
+        .replace("\u2029", "\\u2029")
+
+internal fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: JSONObject): String {
+    val tools = escapeJsonForHtmlScript(toolContractJson(plugin))
+    val safeAccount = escapeJsonForHtmlScript(account.toString())
+    val safePluginId = escapeJsonForHtmlScript(JSONObject.quote(plugin.pluginId))
     val bootstrap = """
         <script>
         (function(){
           const definitions=$tools;
-          const account=${account};
+          const account=$safeAccount;
           const localTools=new Map();
           const controllers=[];
           function publicTool(tool){const copy={...tool};delete copy.execute;return copy;}
@@ -221,7 +348,7 @@ private fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: 
           for(const item of definitions)register(item);
           const host={
             version:1,
-            pluginId:${JSONObject.quote(plugin.pluginId)},
+            pluginId:$safePluginId,
             account,
             lastEvent:null,
             getAccount:()=>account,
@@ -234,12 +361,12 @@ private fun injectLocalWebMcp(html: String, plugin: MarketplacePlugin, account: 
           Object.defineProperty(window,'__fabushiWebMcp',{configurable:true,value:{version:1,list:()=>Array.from(localTools.values()).map(publicTool),call:async(name,input={})=>{const tool=localTools.get(name);if(!tool)throw new Error('Unknown WebMCP tool: '+name);return tool.execute(input);}}});
           window.addEventListener('pagehide',()=>{for(const controller of controllers)controller.abort();},{once:true});
           window.dispatchEvent(new CustomEvent('fabushi:miniapp-auth',{detail:account}));
-          window.dispatchEvent(new CustomEvent('fabushi:webmcp-ready',{detail:{pluginId:${JSONObject.quote(plugin.pluginId)},tools:definitions.map(t=>t.name)}}));
+          window.dispatchEvent(new CustomEvent('fabushi:webmcp-ready',{detail:{pluginId:$safePluginId,tools:definitions.map(t=>t.name)}}));
         })();
         </script>
     """.trimIndent()
     return if (html.contains("</head>", ignoreCase = true)) {
-        html.replace(Regex("</head>", RegexOption.IGNORE_CASE), "$bootstrap</head>")
+        html.replaceFirst(Regex("</head>", RegexOption.IGNORE_CASE), Regex.escapeReplacement("$bootstrap</head>"))
     } else {
         "$bootstrap$html"
     }
@@ -260,9 +387,7 @@ fun MiniAppWebMcpSurface(
     var localHtml by remember(plugin.pluginId) { mutableStateOf<String?>(null) }
     var accountProjection by remember(plugin.pluginId) { mutableStateOf(JSONObject().put("loggedIn", false).put("user", JSONObject())) }
     var sourceResolved by remember(plugin.pluginId) { mutableStateOf(false) }
-    val localDocumentActive = remember(plugin.pluginId) { AtomicBoolean(false) }
-    val localPageLoaded = remember(plugin.pluginId) { AtomicBoolean(false) }
-    val lifecycleActive = remember(plugin.pluginId) { AtomicBoolean(true) }
+    val gate = remember(plugin.pluginId) { MiniAppLifecycleGate() }
     val encodedId = URLEncoder.encode(plugin.pluginId, StandardCharsets.UTF_8.toString())
     val hostedUrl = "https://fabushi.ombhrum.com/miniapps/$encodedId/"
 
@@ -303,20 +428,23 @@ fun MiniAppWebMcpSurface(
                     MiniAppNativeWebMcpBridge(
                         plugin = plugin,
                         context = context,
-                        localDocumentActive = localDocumentActive::get,
+                        localDocumentActive = { gate.localDocumentActive },
                         callRuntimeToolJson = callRuntimeToolJson,
                     ),
                     "FabushiWebMcpNative",
                 )
                 webViewClient = object : WebViewClient() {
                     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                        val uri = request.url
-                        return uri.scheme != "https" || uri.host !in setOf(WEB_MCP_ORIGIN, LOCAL_WEB_MCP_ORIGIN)
+                        val url = request.url.toString()
+                        val allowed = isAllowedMiniAppUrl(url)
+                        if (!allowed && request.isForMainFrame) {
+                            gate.onPageStarted(url)
+                        }
+                        return !allowed
                     }
 
                     override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                        localPageLoaded.set(url?.startsWith("https://$LOCAL_WEB_MCP_ORIGIN/") == true)
-                        localDocumentActive.set(localPageLoaded.get() && lifecycleActive.get())
+                        gate.onPageStarted(url)
                         status = "正在加载 WebMCP…"
                     }
 
@@ -345,12 +473,11 @@ fun MiniAppWebMcpSurface(
 
         val eventListener = remember(plugin.pluginId, webView) {
             host.addFeatureEventListener { event ->
-                if (!localDocumentActive.get()) return@addFeatureEventListener
-                val projected = miniAppEventProjection(event)
-                if (projected.length() == 0) return@addFeatureEventListener
-                val script = "window.__fabushiMiniAppHost?.pushEvent(JSON.parse(${JSONObject.quote(projected.toString())}));"
-                Handler(Looper.getMainLooper()).post {
-                    if (localDocumentActive.get()) runCatching { webView.evaluateJavascript(script, null) }
+                gate.dispatchHostEvent(event) { projected ->
+                    val script = "window.__fabushiMiniAppHost?.pushEvent(JSON.parse(${JSONObject.quote(projected.toString())}));"
+                    Handler(Looper.getMainLooper()).post {
+                        if (gate.canDispatchHostEvent()) runCatching { webView.evaluateJavascript(script, null) }
+                    }
                 }
             }
         }
@@ -364,8 +491,7 @@ fun MiniAppWebMcpSurface(
                 if (view.tag == desiredTag) return@AndroidView
                 view.tag = desiredTag
                 if (local != null) {
-                    localPageLoaded.set(true)
-                    localDocumentActive.set(lifecycleActive.get())
+                    gate.onLocalHtmlLoaded()
                     val baseUrl = "https://$LOCAL_WEB_MCP_ORIGIN/miniapps/$encodedId/"
                     view.loadDataWithBaseURL(
                         baseUrl,
@@ -375,8 +501,7 @@ fun MiniAppWebMcpSurface(
                         null,
                     )
                 } else {
-                    localPageLoaded.set(false)
-                    localDocumentActive.set(false)
+                    gate.onHostedUrlLoaded()
                     view.loadUrl(hostedUrl)
                 }
             },
@@ -385,27 +510,13 @@ fun MiniAppWebMcpSurface(
 
         DisposableEffect(webView, eventListener, host, lifecycleOwner) {
             val lifecycleObserver = LifecycleEventObserver { _, event ->
-                when (event) {
-                    Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> {
-                        lifecycleActive.set(true)
-                        localDocumentActive.set(localPageLoaded.get())
-                    }
-                    Lifecycle.Event.ON_STOP, Lifecycle.Event.ON_PAUSE -> {
-                        // A page that is no longer foregrounded loses its native
-                        // execution grant. Long work must be resumed through the
-                        // Host task owner after the page returns.
-                        lifecycleActive.set(false)
-                        localDocumentActive.set(false)
-                    }
-                    else -> Unit
-                }
+                gate.onLifecycleEvent(event)
             }
             lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(lifecycleObserver)
                 eventListener.close()
-                localPageLoaded.set(false)
-                localDocumentActive.set(false)
+                gate.onDispose()
                 webView.stopLoading()
                 webView.removeJavascriptInterface("FabushiWebMcpNative")
                 webView.loadUrl("about:blank")

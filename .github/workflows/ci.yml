@@ -60,7 +60,9 @@ jobs:
         working-directory: mobile/android
         run: |
           ./gradlew \
-            --max-workers=2 \
+            --max-workers=1 \
+            -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8" \
+            -Pkotlin.daemon.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=768m" \
             :mika-core:test \
             :mika-core:knowledgeIndex \
             :mika-agent:testDebugUnitTest \

@@ -44,6 +44,16 @@ pub struct MahayanaAndroidHost {
     vad: Mutex<VadBargeInDetector>,
 }
 
+pub(crate) fn with_db<T>(
+    db: &Mutex<Connection>,
+    f: impl FnOnce(&Connection) -> Result<T, String>,
+) -> Result<T, String> {
+    let conn = db
+        .lock()
+        .map_err(|_| "Host SQLite mutex poisoned".to_string())?;
+    f(&conn)
+}
+
 impl MahayanaAndroidHost {
     pub fn new(app_data_dir: impl AsRef<Path>, test_mode: bool) -> Result<Self, String> {
         let root = app_data_dir.as_ref().to_path_buf();
@@ -138,131 +148,145 @@ impl MahayanaAndroidHost {
     }
 
     pub fn dispatch(&self, method: &str, params: &Value) -> Result<Value, String> {
-        let conn = self
-            .db
-            .lock()
-            .map_err(|_| "Host SQLite mutex poisoned".to_string())?;
+        // Zero-DB methods (never acquire self.db mutex)
+        match method {
+            "feature.info" => {
+                return Ok(json!({
+                    "platform": "android",
+                    "protocolVersion": "2",
+                    "runtimeVersion": if self.test_mode { "2.0.0-test" } else { "2.0.0" },
+                    "desktopParityVersion": "1.6.6",
+                    "desktopParityCommit": "6ca754c",
+                    "engine": "mahayana-gpui-telegram-mika",
+                    "sqliteWal": true
+                }));
+            }
+            "feature.auth.providers" => return Ok(auth_providers()),
+            "feature.receive" => return self.handle_feature_receive(),
+            "feature.marketplace.release" => return marketplace_release(params),
+            "feature.plugin.uiDocument" => return plugin_ui_document(params),
+            "plugin.compatibility" => return plugin_compatibility(params),
+            _ => {}
+        }
 
+        // Tier 1: Network-capable namespaces (manage short DB locks internally; never lock across I/O)
+        if let Some(sub) = method.strip_prefix("telegram.auth.") {
+            return telegram_ext::handle_auth_rpc(&self.db, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("telegram.server.") {
+            return telegram_ext::handle_server_rpc(&self.db, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("wallet.") {
+            return wallet::handle_rpc(&self.db, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("fabushiMiniapp.") {
+            return fabushi_miniapp::handle_rpc(&self.db, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("hermes.") {
+            return hermes::handle_rpc(&self.db, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("magpie.") {
+            return magpie::handle_rpc(&self.db, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("computer.") {
+            return computer::handle_computer_rpc(&self.db, sub, params);
+        }
+        if let Some(sub) = method.strip_prefix("remote.") {
+            return computer::handle_remote_rpc(&self.db, sub, params);
+        }
+
+        match method {
+            "feature.execute" => return self.handle_feature_execute(params),
+            "runtime.call" => return runtime_call(&self.db, params),
+            "platform.request" => return platform_request(&self.db, params),
+            _ => {}
+        }
+
+        // Tier 2: Pure local SQLite namespaces
         if let Some(sub) = method
             .strip_prefix("telegram.e2ee.")
             .or_else(|| method.strip_prefix("e2ee."))
         {
-            return e2ee::handle_rpc(&conn, sub, params);
-        }
-        if let Some(sub) = method.strip_prefix("telegram.auth.") {
-            return telegram_ext::handle_auth_rpc(&conn, sub, params);
+            return with_db(&self.db, |conn| e2ee::handle_rpc(conn, sub, params));
         }
         if let Some(sub) = method.strip_prefix("telegram.messaging.") {
-            return telegram_ext::handle_messaging_ext_rpc(&conn, sub, params);
+            return with_db(&self.db, |conn| {
+                telegram_ext::handle_messaging_ext_rpc(conn, sub, params)
+            });
         }
         if let Some(sub) = method
             .strip_prefix("telegram.calls.")
             .or_else(|| method.strip_prefix("calls."))
         {
-            return telegram_ext::handle_calls_rpc(&conn, &self.vad, sub, params);
-        }
-        if let Some(sub) = method.strip_prefix("telegram.server.") {
-            return telegram_ext::handle_server_rpc(&conn, sub, params);
-        }
-        if let Some(sub) = method.strip_prefix("wallet.") {
-            return wallet::handle_rpc(&conn, sub, params);
-        }
-        if let Some(sub) = method.strip_prefix("fabushiMiniapp.") {
-            return fabushi_miniapp::handle_rpc(&conn, sub, params);
+            return with_db(&self.db, |conn| {
+                telegram_ext::handle_calls_rpc(conn, &self.vad, sub, params)
+            });
         }
         if let Some(sub) = method.strip_prefix("miniapp.webmcp.") {
-            return fabushi_miniapp::handle_webmcp_rpc(&conn, sub, params);
-        }
-        if let Some(sub) = method.strip_prefix("hermes.") {
-            return hermes::handle_rpc(&conn, sub, params);
-        }
-        if let Some(sub) = method.strip_prefix("magpie.") {
-            return magpie::handle_rpc(&conn, sub, params);
-        }
-        if let Some(sub) = method.strip_prefix("computer.") {
-            return computer::handle_computer_rpc(&conn, sub, params);
-        }
-        if let Some(sub) = method.strip_prefix("remote.") {
-            return computer::handle_remote_rpc(&conn, sub, params);
+            return with_db(&self.db, |conn| {
+                fabushi_miniapp::handle_webmcp_rpc(conn, sub, params)
+            });
         }
         if let Some(sub) = method.strip_prefix("userVault.") {
-            return user_vault::handle_rpc(&conn, sub, params);
+            return with_db(&self.db, |conn| user_vault::handle_rpc(conn, sub, params));
         }
         if let Some(sub) = method.strip_prefix("codingAgent.") {
-            return coding_agent::handle_rpc(&conn, sub, params);
+            return with_db(&self.db, |conn| coding_agent::handle_rpc(conn, sub, params));
         }
         if let Some(sub) = method.strip_prefix("mika.") {
-            return computer::handle_mika_rpc(&conn, sub, params);
+            return with_db(&self.db, |conn| computer::handle_mika_rpc(conn, sub, params));
         }
 
-        match method {
-            "feature.info" => Ok(json!({
-                "platform": "android",
-                "protocolVersion": "2",
-                "runtimeVersion": if self.test_mode { "2.0.0-test" } else { "2.0.0" },
-                "desktopParityVersion": "1.6.5",
-                "desktopParityCommit": "db06f9c",
-                "engine": "mahayana-gpui-telegram-mika",
-                "sqliteWal": true
-            })),
-
+        with_db(&self.db, |conn| match method {
             // Auth family
-            "feature.auth.status" => auth_status(&conn),
-            "feature.auth.providers" => Ok(auth_providers()),
-            "feature.auth.oauthStart" => auth_oauth_start(&conn, params),
-            "feature.auth.oauthPoll" => auth_oauth_poll(&conn, params),
-            "feature.auth.browserStart" => auth_browser_start(&conn, params),
-            "feature.auth.browserReopen" => auth_browser_reopen(&conn, params),
-            "feature.auth.browserCancel" => auth_browser_cancel(&conn, params),
-            "feature.auth.browserPoll" => auth_browser_poll(&conn, params),
-            "feature.auth.passwordLogin" => auth_password_login(&conn, params),
+            "feature.auth.status" => auth_status(conn),
+            "feature.auth.oauthStart" => auth_oauth_start(conn, self.test_mode, params),
+            "feature.auth.oauthPoll" => auth_oauth_poll(conn, self.test_mode, params),
+            "feature.auth.browserStart" => auth_browser_start(conn, self.test_mode, params),
+            "feature.auth.browserReopen" => auth_browser_reopen(conn, self.test_mode, params),
+            "feature.auth.browserCancel" => auth_browser_cancel(conn, params),
+            "feature.auth.browserPoll" => auth_browser_poll(conn, self.test_mode, params),
+            "feature.auth.passwordLogin" => auth_password_login(conn, self.test_mode, params),
             "feature.auth.logout" => {
                 if let Ok(mut q) = self.events.lock() {
                     q.clear();
                 }
-                auth_logout(&conn)
+                auth_logout(conn)
             }
-            "feature.auth.deviceAgentSession" => auth_device_agent_session(&conn),
+            "feature.auth.deviceAgentSession" => auth_device_agent_session(conn, self.test_mode),
 
-            // Feature execution / streaming event bus / approvals / interrupts
-            "feature.execute" => self.handle_feature_execute(&conn, params),
-            "feature.receive" => self.handle_feature_receive(),
-            "feature.interrupt" => self.handle_feature_interrupt(&conn, params),
-            "feature.approval.resolve" => self.handle_approval_resolve(&conn, params),
+            // Interrupts & approvals
+            "feature.interrupt" => self.handle_feature_interrupt(conn, params),
+            "feature.approval.resolve" => self.handle_approval_resolve(conn, params),
 
             // Persistence KV store (SQLite WAL)
-            "feature.persistence.set" => persistence_set(&conn, params),
-            "feature.persistence.get" => persistence_get(&conn, params),
-            "feature.persistence.remove" => persistence_remove(&conn, params),
-            "feature.persistence.list" => persistence_list(&conn, params),
+            "feature.persistence.set" => persistence_set(conn, params),
+            "feature.persistence.get" => persistence_get(conn, params),
+            "feature.persistence.remove" => persistence_remove(conn, params),
+            "feature.persistence.list" => persistence_list(conn, params),
 
-            // Marketplace, plugins, portable runtime & platform control plane
-            "feature.marketplace.browse" => marketplace_browse(&conn, params),
-            "feature.marketplace.release" => marketplace_release(params),
-            "feature.marketplace.add" => marketplace_add_plugin(&conn, params),
-            "feature.plugin.install" => plugin_install(&conn, params),
-            "feature.plugin.uninstall" => plugin_uninstall(&conn, params),
-            "feature.plugin.listInstalled" => plugin_list_installed(&conn),
-            "feature.plugin.uiDocument" => plugin_ui_document(params),
-            "plugin.permission.grant" => plugin_permission_grant(&conn, params),
-            "plugin.compatibility" => plugin_compatibility(params),
-            "runtime.start" => runtime_start(&conn, params),
-            "runtime.call" => runtime_call(&conn, params),
-            "platform.request" => platform_request(&conn, params),
+            // Marketplace, plugins & portable runtime
+            "feature.marketplace.browse" => marketplace_browse(conn, params),
+            "feature.marketplace.add" => marketplace_add_plugin(conn, params),
+            "feature.plugin.install" => plugin_install(conn, params),
+            "feature.plugin.uninstall" => plugin_uninstall(conn, params),
+            "feature.plugin.listInstalled" => plugin_list_installed(conn),
+            "plugin.permission.grant" => plugin_permission_grant(conn, params),
+            "runtime.start" => runtime_start(conn, params),
 
             // Messaging Protocol v2
             "feature.messaging.access.issue" => {
-                messaging::issue_access(&conn, self.test_mode, params)
+                messaging::issue_access(conn, self.test_mode, params)
             }
             "feature.messaging.execute" => {
-                messaging::execute_command(&conn, &self.app_data_dir, self.test_mode, params)
+                messaging::execute_command(conn, &self.app_data_dir, self.test_mode, params)
             }
             "feature.messaging.blob.read" => {
-                messaging::read_blob(&conn, &self.app_data_dir, params)
+                messaging::read_blob(conn, &self.app_data_dir, params)
             }
 
             other => Err(format!("Unsupported MahayanaHost method: {other}")),
-        }
+        })
     }
 
     fn push_event(&self, event: Value) {
@@ -282,7 +306,7 @@ impl MahayanaAndroidHost {
         Ok(q.pop_front().unwrap_or_else(|| json!({ "type": "" })))
     }
 
-    fn handle_feature_execute(&self, conn: &Connection, params: &Value) -> Result<Value, String> {
+    fn handle_feature_execute(&self, params: &Value) -> Result<Value, String> {
         let now = chrono::Utc::now().timestamp_millis();
         let command = params.get("command").unwrap_or(params);
         let cmd_type = command
@@ -319,7 +343,7 @@ impl MahayanaAndroidHost {
 
                 if text.starts_with('/') {
                     let slash = hermes::handle_rpc(
-                        conn,
+                        &self.db,
                         "runSlashCommand",
                         &json!({ "input": text }),
                     )?;
@@ -327,12 +351,15 @@ impl MahayanaAndroidHost {
                         .as_str()
                         .unwrap_or("Executed slash command")
                         .to_string();
-                    conn.execute(
-                        "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
-                         VALUES (?1, ?2, 'chat.send', 'completed', ?3)",
-                        params![operation_id, request_id, now],
-                    )
-                    .map_err(|e| e.to_string())?;
+                    with_db(&self.db, |conn| {
+                        conn.execute(
+                            "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
+                             VALUES (?1, ?2, 'chat.send', 'completed', ?3)",
+                            params![operation_id, request_id, now],
+                        )
+                        .map_err(|e| e.to_string())?;
+                        Ok(())
+                    })?;
                     self.push_event(json!({
                         "type": "operation.started",
                         "operationId": operation_id,
@@ -400,7 +427,7 @@ impl MahayanaAndroidHost {
 
                     let mut streamed_deltas = Vec::<String>::new();
                     match magpie::execute_live_request(
-                        conn,
+                        &self.db,
                         &req,
                         None,
                         command.get("providerId").and_then(Value::as_str),
@@ -412,12 +439,15 @@ impl MahayanaAndroidHost {
                         },
                     ) {
                         Ok(outcome) => {
-                            conn.execute(
-                                "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
-                                 VALUES (?1, ?2, 'chat.send', 'completed', ?3)",
-                                params![operation_id, request_id, now],
-                            )
-                            .map_err(|e| e.to_string())?;
+                            with_db(&self.db, |conn| {
+                                conn.execute(
+                                    "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
+                                     VALUES (?1, ?2, 'chat.send', 'completed', ?3)",
+                                    params![operation_id, request_id, now],
+                                )
+                                .map_err(|e| e.to_string())?;
+                                Ok(())
+                            })?;
 
                             self.push_event(json!({
                                 "type": "operation.started",
@@ -471,12 +501,15 @@ impl MahayanaAndroidHost {
                             } else {
                                 "UPSTREAM_UNAVAILABLE"
                             };
-                            conn.execute(
-                                "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
-                                 VALUES (?1, ?2, 'chat.send', 'failed', ?3)",
-                                params![operation_id, request_id, now],
-                            )
-                            .map_err(|e| e.to_string())?;
+                            with_db(&self.db, |conn| {
+                                conn.execute(
+                                    "INSERT OR REPLACE INTO host_operations (operation_id, request_id, kind, status, updated_at_ms)
+                                     VALUES (?1, ?2, 'chat.send', 'failed', ?3)",
+                                    params![operation_id, request_id, now],
+                                )
+                                .map_err(|e| e.to_string())?;
+                                Ok(())
+                            })?;
 
                             self.push_event(json!({
                                 "type": "operation.started",
@@ -498,7 +531,7 @@ impl MahayanaAndroidHost {
             }
 
             "bot.list" => {
-                let bots = collect_surface_bots(conn)?;
+                let bots = with_db(&self.db, collect_surface_bots)?;
                 self.push_event(json!({
                     "type": "bot.listed",
                     "operationId": operation_id,
@@ -519,12 +552,15 @@ impl MahayanaAndroidHost {
                     .unwrap_or("")
                     .trim();
                 let bot_id = format!("bot-{}", uuid::Uuid::new_v4().simple());
-                conn.execute(
-                    "INSERT INTO host_bots (bot_id, name, description, mini_app_id, created_at_ms)
-                     VALUES (?1, ?2, ?3, NULL, ?4)",
-                    params![bot_id, name, description, now],
-                )
-                .map_err(|e| e.to_string())?;
+                with_db(&self.db, |conn| {
+                    conn.execute(
+                        "INSERT INTO host_bots (bot_id, name, description, mini_app_id, created_at_ms)
+                         VALUES (?1, ?2, ?3, NULL, ?4)",
+                        params![bot_id, name, description, now],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(())
+                })?;
                 self.push_event(json!({
                     "type": "bot.created",
                     "operationId": operation_id,
@@ -548,7 +584,9 @@ impl MahayanaAndroidHost {
                     .or_else(|| command.get("pluginId"))
                     .and_then(Value::as_str)
                     .unwrap_or("global-dharma");
-                record_plugin_install(conn, plugin_id, "2.0.0", "cordis-js", now)?;
+                with_db(&self.db, |conn| {
+                    record_plugin_install(conn, plugin_id, "2.0.0", "cordis-js", now)
+                })?;
                 self.push_event(json!({
                     "type": "operation.started",
                     "operationId": operation_id,
@@ -603,13 +641,16 @@ impl MahayanaAndroidHost {
                     .unwrap_or("");
                 let approval_id = format!("apr_{}", uuid::Uuid::new_v4().simple());
 
-                conn.execute(
-                    "INSERT INTO host_approvals
-                     (approval_id, operation_id, mini_app_id, capability, reason, decision, updated_at_ms)
-                     VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
-                    params![approval_id, operation_id, mini_app_id, capability, reason, now],
-                )
-                .map_err(|e| e.to_string())?;
+                with_db(&self.db, |conn| {
+                    conn.execute(
+                        "INSERT INTO host_approvals
+                         (approval_id, operation_id, mini_app_id, capability, reason, decision, updated_at_ms)
+                         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', ?6)",
+                        params![approval_id, operation_id, mini_app_id, capability, reason, now],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(())
+                })?;
 
                 self.push_event(json!({
                     "type": "approval.requested",
@@ -627,13 +668,16 @@ impl MahayanaAndroidHost {
                     .get("label")
                     .and_then(Value::as_str)
                     .unwrap_or("Long background operation");
-                conn.execute(
-                    "INSERT OR REPLACE INTO host_operations
-                     (operation_id, request_id, kind, status, updated_at_ms)
-                     VALUES (?1, ?2, 'runtime.longTask', 'running', ?3)",
-                    params![operation_id, request_id, now],
-                )
-                .map_err(|e| e.to_string())?;
+                with_db(&self.db, |conn| {
+                    conn.execute(
+                        "INSERT OR REPLACE INTO host_operations
+                         (operation_id, request_id, kind, status, updated_at_ms)
+                         VALUES (?1, ?2, 'runtime.longTask', 'running', ?3)",
+                        params![operation_id, request_id, now],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(())
+                })?;
                 self.push_event(json!({
                     "type": "operation.started",
                     "operationId": operation_id,
@@ -1213,7 +1257,13 @@ fn mark_logged_in(
     auth_status(conn)
 }
 
-fn auth_oauth_start(conn: &Connection, params: &Value) -> Result<Value, String> {
+fn auth_oauth_start(conn: &Connection, test_mode: bool, params: &Value) -> Result<Value, String> {
+    if !test_mode {
+        return Err(
+            "AUTH_TEST_ONLY: Legacy local OAuth mock is disabled in production; use telegram.server.* authentication"
+                .into(),
+        );
+    }
     let now = chrono::Utc::now().timestamp_millis();
     let provider = params
         .get("provider")
@@ -1236,7 +1286,13 @@ fn auth_oauth_start(conn: &Connection, params: &Value) -> Result<Value, String> 
     }))
 }
 
-fn auth_oauth_poll(conn: &Connection, params: &Value) -> Result<Value, String> {
+fn auth_oauth_poll(conn: &Connection, test_mode: bool, params: &Value) -> Result<Value, String> {
+    if !test_mode {
+        return Err(
+            "AUTH_TEST_ONLY: Legacy local OAuth poll is disabled in production; use telegram.server.* authentication"
+                .into(),
+        );
+    }
     let attempt_id = params
         .get("attemptId")
         .and_then(Value::as_str)
@@ -1274,7 +1330,11 @@ fn auth_oauth_poll(conn: &Connection, params: &Value) -> Result<Value, String> {
     }))
 }
 
-fn auth_browser_start(conn: &Connection, _params: &Value) -> Result<Value, String> {
+fn auth_browser_start(
+    conn: &Connection,
+    test_mode: bool,
+    _params: &Value,
+) -> Result<Value, String> {
     let now = chrono::Utc::now().timestamp_millis();
     let attempt_id = format!("browser_{}", &uuid::Uuid::new_v4().simple().to_string()[..20]);
     let base = std::env::var("FABUSHI_LIVE_AUTH_URL")
@@ -1282,7 +1342,15 @@ fn auth_browser_start(conn: &Connection, _params: &Value) -> Result<Value, Strin
         .filter(|s| !s.trim().is_empty());
     let login_url = match base {
         Some(b) => format!("{}?attemptId={attempt_id}", b.trim_end_matches('/')),
-        None => format!("about:blank#fabushi-test-browser-login&attemptId={attempt_id}"),
+        None if test_mode => {
+            format!("about:blank#fabushi-test-browser-login&attemptId={attempt_id}")
+        }
+        None => {
+            return Err(
+                "AUTH_TEST_ONLY: Browser auth requires FABUSHI_LIVE_AUTH_URL in production; use telegram.server.* authentication"
+                    .into(),
+            );
+        }
     };
     conn.execute(
         "INSERT INTO host_auth_attempts (attempt_id, kind, provider, login_url, status, created_at_ms)
@@ -1298,20 +1366,32 @@ fn auth_browser_start(conn: &Connection, _params: &Value) -> Result<Value, Strin
     }))
 }
 
-fn auth_browser_reopen(conn: &Connection, params: &Value) -> Result<Value, String> {
+fn auth_browser_reopen(
+    conn: &Connection,
+    test_mode: bool,
+    params: &Value,
+) -> Result<Value, String> {
     let attempt_id = params
         .get("attemptId")
         .and_then(Value::as_str)
         .ok_or_else(|| "browserReopen requires 'attemptId'".to_string())?;
-    let url: String = conn
+    let row: Option<String> = conn
         .query_row(
             "SELECT login_url FROM host_auth_attempts WHERE attempt_id = ?1",
             params![attempt_id],
             |r| r.get(0),
         )
-        .unwrap_or_else(|_| {
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let url = match row {
+        Some(u) => u,
+        None if test_mode => {
             format!("about:blank#fabushi-test-browser-login&attemptId={attempt_id}")
-        });
+        }
+        None => {
+            return Err(format!("Unknown browser auth attemptId '{attempt_id}'"));
+        }
+    };
     Ok(json!({
         "attemptId": attempt_id,
         "loginUrl": url,
@@ -1335,7 +1415,13 @@ fn auth_browser_cancel(conn: &Connection, params: &Value) -> Result<Value, Strin
     }))
 }
 
-fn auth_browser_poll(conn: &Connection, params: &Value) -> Result<Value, String> {
+fn auth_browser_poll(conn: &Connection, test_mode: bool, params: &Value) -> Result<Value, String> {
+    if !test_mode {
+        return Err(
+            "AUTH_TEST_ONLY: Legacy local browser auth auto-login is disabled in production"
+                .into(),
+        );
+    }
     let attempt_id = params
         .get("attemptId")
         .and_then(Value::as_str)
@@ -1375,7 +1461,17 @@ fn auth_browser_poll(conn: &Connection, params: &Value) -> Result<Value, String>
     }))
 }
 
-fn auth_password_login(conn: &Connection, params: &Value) -> Result<Value, String> {
+fn auth_password_login(
+    conn: &Connection,
+    test_mode: bool,
+    params: &Value,
+) -> Result<Value, String> {
+    if !test_mode {
+        return Err(
+            "AUTH_TEST_ONLY: Local password bypass is disabled in production; use telegram.server.login"
+                .into(),
+        );
+    }
     let identity = params
         .get("username")
         .or_else(|| params.get("email"))
@@ -1414,7 +1510,7 @@ fn auth_logout(conn: &Connection) -> Result<Value, String> {
     }))
 }
 
-fn auth_device_agent_session(conn: &Connection) -> Result<Value, String> {
+fn auth_device_agent_session(conn: &Connection, test_mode: bool) -> Result<Value, String> {
     try_sync_ci_session_file(conn)?;
     let now_sec = chrono::Utc::now().timestamp();
     let (logged_in, username, mut token, device_id, session_id, mut expires_at): (
@@ -1442,26 +1538,93 @@ fn auth_device_agent_session(conn: &Connection) -> Result<Value, String> {
         )
         .map_err(|e| e.to_string())?;
 
-    if logged_in == 0 {
-        return Err("Not logged in for deviceAgentSession".into());
-    }
-    if token.len() < 24 || expires_at <= now_sec {
-        token = format!("fabushi_agent_tok_{}_{}", uuid::Uuid::new_v4().simple(), now_sec);
-        expires_at = now_sec + 14_400;
-        conn.execute(
-            "UPDATE host_auth_state SET access_token = ?1, expires_at_sec = ?2 WHERE singleton_id = 1",
-            params![token, expires_at],
-        )
-        .map_err(|e| e.to_string())?;
+    if logged_in != 0 {
+        let valid_existing = token.len() >= 24
+            && token.len() <= 16_384
+            && !token.chars().any(char::is_whitespace)
+            && expires_at > now_sec;
+        if valid_existing {
+            return Ok(json!({
+                "accessToken": token,
+                "deviceId": device_id,
+                "sessionId": session_id,
+                "username": username,
+                "accessTokenExpiresAt": expires_at
+            }));
+        }
+        if test_mode {
+            token = format!(
+                "fabushi_agent_tok_{}_{}",
+                uuid::Uuid::new_v4().simple(),
+                now_sec
+            );
+            expires_at = now_sec + 14_400;
+            conn.execute(
+                "UPDATE host_auth_state SET access_token = ?1, expires_at_sec = ?2 WHERE singleton_id = 1",
+                params![token, expires_at],
+            )
+            .map_err(|e| e.to_string())?;
+            return Ok(json!({
+                "accessToken": token,
+                "deviceId": device_id,
+                "sessionId": session_id,
+                "username": username,
+                "accessTokenExpiresAt": expires_at
+            }));
+        }
     }
 
-    Ok(json!({
-        "accessToken": token,
-        "deviceId": device_id,
-        "sessionId": session_id,
-        "username": username,
-        "accessTokenExpiresAt": expires_at
-    }))
+    // Bridge authenticated gpui_telegram_server session from tg_fence (no fake token fabrication!)
+    let tg_row: Option<(Option<String>, Option<String>, Option<String>, Option<i64>)> = conn
+        .query_row(
+            "SELECT auth_token, session_username, session_id, session_user_id
+             FROM tg_fence WHERE singleton_id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+
+    if let Some((Some(tg_tok), tg_user, tg_sid, tg_uid)) = tg_row {
+        let clean_tok = tg_tok.trim();
+        if clean_tok.len() >= 24
+            && clean_tok.len() <= 16_384
+            && !clean_tok.chars().any(char::is_whitespace)
+        {
+            let trimmed_dev = device_id.trim();
+            let clean_device_id = if !trimmed_dev.is_empty()
+                && trimmed_dev.len() <= 128
+                && trimmed_dev
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+            {
+                trimmed_dev.to_string()
+            } else {
+                "android:fabushi-native".to_string()
+            };
+            let clean_session_id = tg_sid
+                .as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| s.chars().take(200).collect::<String>())
+                .unwrap_or_else(|| format!("tg-session:{}", tg_uid.unwrap_or(0)));
+            let clean_username = tg_user
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .to_string();
+            return Ok(json!({
+                "accessToken": clean_tok,
+                "deviceId": clean_device_id,
+                "sessionId": clean_session_id,
+                "username": clean_username,
+                "accessTokenExpiresAt": now_sec + 14_400,
+                "source": "telegram_server_session"
+            }));
+        }
+    }
+
+    Err("Not logged in for deviceAgentSession".into())
 }
 
 // ============================================================================
@@ -1915,7 +2078,7 @@ fn runtime_start(conn: &Connection, params: &Value) -> Result<Value, String> {
     }))
 }
 
-fn runtime_call(conn: &Connection, params: &Value) -> Result<Value, String> {
+fn runtime_call(db: &Mutex<Connection>, params: &Value) -> Result<Value, String> {
     let plugin_id = params
         .get("pluginId")
         .and_then(Value::as_str)
@@ -1930,19 +2093,19 @@ fn runtime_call(conn: &Connection, params: &Value) -> Result<Value, String> {
         .unwrap_or_else(|| json!({}));
 
     let structured = match tool {
-        "dharma.sutras" => fabushi_miniapp::handle_rpc(conn, "sutras", &args)?,
-        "dharma.offer" => fabushi_miniapp::handle_rpc(conn, "offerDharma", &args)?,
-        "dharma.counsel" => fabushi_miniapp::handle_rpc(conn, "aiDharmaChat", &args)?,
-        "local.prayer-wheel.start" => fabushi_miniapp::handle_rpc(conn, "spinPrayerWheel", &args)?,
-        "wallet.state" => wallet::handle_rpc(conn, "status", &args)?,
-        "wallet.emulate" => wallet::handle_rpc(conn, "tonConnectEmulate", &args)?,
-        "hermes.sessions" => hermes::handle_rpc(conn, "sessions", &args)?,
-        "hermes.kanban" => hermes::handle_rpc(conn, "kanbanBoard", &args)?,
-        "magpie.presets" => magpie::handle_rpc(conn, "presets", &args)?,
-        "magpie.usage" => magpie::handle_rpc(conn, "usageSummary", &args)?,
-        "computer.nodes" => computer::handle_computer_rpc(conn, "nodes", &args)?,
-        "computer.tasks" => computer::handle_computer_rpc(conn, "tasks.list", &args)?,
-        "mika.status" => computer::handle_mika_rpc(conn, "bridgeStatus", &args)?,
+        "dharma.sutras" => fabushi_miniapp::handle_rpc(db, "sutras", &args)?,
+        "dharma.offer" => fabushi_miniapp::handle_rpc(db, "offerDharma", &args)?,
+        "dharma.counsel" => fabushi_miniapp::handle_rpc(db, "aiDharmaChat", &args)?,
+        "local.prayer-wheel.start" => fabushi_miniapp::handle_rpc(db, "spinPrayerWheel", &args)?,
+        "wallet.state" => wallet::handle_rpc(db, "status", &args)?,
+        "wallet.emulate" => wallet::handle_rpc(db, "tonConnectEmulate", &args)?,
+        "hermes.sessions" => hermes::handle_rpc(db, "sessions", &args)?,
+        "hermes.kanban" => hermes::handle_rpc(db, "kanbanBoard", &args)?,
+        "magpie.presets" => magpie::handle_rpc(db, "presets", &args)?,
+        "magpie.usage" => magpie::handle_rpc(db, "usageSummary", &args)?,
+        "computer.nodes" => computer::handle_computer_rpc(db, "nodes", &args)?,
+        "computer.tasks" => computer::handle_computer_rpc(db, "tasks.list", &args)?,
+        "mika.status" => with_db(db, |conn| computer::handle_mika_rpc(conn, "bridgeStatus", &args))?,
         _ => json!({
             "pluginId": plugin_id,
             "tool": tool,
@@ -2005,7 +2168,7 @@ fn plugin_ui_document(params: &Value) -> Result<Value, String> {
     }))
 }
 
-fn platform_request(conn: &Connection, params: &Value) -> Result<Value, String> {
+fn platform_request(db: &Mutex<Connection>, params: &Value) -> Result<Value, String> {
     let now = chrono::Utc::now().timestamp_millis();
     let method = params
         .get("method")
@@ -2021,14 +2184,17 @@ fn platform_request(conn: &Connection, params: &Value) -> Result<Value, String> 
 
     // 1. GET /v1/marketplace/added
     if method == "GET" && path == "/v1/marketplace/added" {
-        let mut stmt = conn
-            .prepare("SELECT plugin_id, version FROM host_plugins WHERE added_to_account = 1 ORDER BY installed_at_ms ASC")
-            .map_err(|e| e.to_string())?;
-        let installed_ids: Vec<(String, String)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
+        let installed_ids: Vec<(String, String)> = with_db(db, |conn| {
+            let mut stmt = conn
+                .prepare("SELECT plugin_id, version FROM host_plugins WHERE added_to_account = 1 ORDER BY installed_at_ms ASC")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })?;
 
         let catalog = catalog_plugins();
         let apps: Vec<Value> = installed_ids
@@ -2072,7 +2238,9 @@ fn platform_request(conn: &Connection, params: &Value) -> Result<Value, String> 
             .trim_start_matches("/v1/marketplace/plugins/")
             .trim_end_matches("/add")
             .trim_matches('/');
-        record_plugin_install(conn, plugin_id, "2.0.0", "cordis-js", now)?;
+        with_db(db, |conn| {
+            record_plugin_install(conn, plugin_id, "2.0.0", "cordis-js", now)
+        })?;
         return Ok(json!({
             "ok": true,
             "statusCode": 200,
@@ -2096,7 +2264,7 @@ fn platform_request(conn: &Connection, params: &Value) -> Result<Value, String> 
             .and_then(Value::as_bool)
             .unwrap_or(false);
 
-        let (slash, tool, message, structured) = route_miniapp_input(conn, plugin_id, input)?;
+        let (slash, tool, message, structured) = route_miniapp_input(db, plugin_id, input)?;
         let mut data = json!({
             "pluginId": plugin_id,
             "command": { "slash": slash, "tool": tool },
@@ -2149,15 +2317,18 @@ fn platform_request(conn: &Connection, params: &Value) -> Result<Value, String> 
         let plugin_id = parts.next().unwrap_or("global-dharma");
         let capability = parts.next().unwrap_or("local.prayer-wheel.start");
 
-        let allowed: bool = conn
-            .query_row(
-                "SELECT allowed FROM host_entitlements WHERE plugin_id = ?1 AND capability = ?2",
-                params![plugin_id, capability],
-                |r| Ok(r.get::<_, i64>(0)? != 0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?
-            .unwrap_or(false);
+        let allowed: bool = with_db(db, |conn| {
+            let val = conn
+                .query_row(
+                    "SELECT allowed FROM host_entitlements WHERE plugin_id = ?1 AND capability = ?2",
+                    params![plugin_id, capability],
+                    |r| Ok(r.get::<_, i64>(0)? != 0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .unwrap_or(false);
+            Ok(val)
+        })?;
 
         return Ok(json!({
             "ok": true,
@@ -2207,13 +2378,16 @@ fn platform_request(conn: &Connection, params: &Value) -> Result<Value, String> 
             sku
         };
 
-        conn.execute(
-            "INSERT OR REPLACE INTO host_entitlements
-             (plugin_id, capability, sku, allowed, idempotency_key, updated_at_ms)
-             VALUES (?1, ?2, ?3, 1, ?4, ?5)",
-            params![plugin_id, capability, sku, idem, now],
-        )
-        .map_err(|e| e.to_string())?;
+        with_db(db, |conn| {
+            conn.execute(
+                "INSERT OR REPLACE INTO host_entitlements
+                 (plugin_id, capability, sku, allowed, idempotency_key, updated_at_ms)
+                 VALUES (?1, ?2, ?3, 1, ?4, ?5)",
+                params![plugin_id, capability, sku, idem, now],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })?;
 
         return Ok(json!({
             "ok": true,
@@ -2231,20 +2405,23 @@ fn platform_request(conn: &Connection, params: &Value) -> Result<Value, String> 
 
     // 7. POST /v1/purchases/restore
     if method == "POST" && path == "/v1/purchases/restore" {
-        let mut stmt = conn
-            .prepare("SELECT plugin_id, capability, sku FROM host_entitlements WHERE allowed = 1")
-            .map_err(|e| e.to_string())?;
-        let restored: Vec<Value> = stmt
-            .query_map([], |r| {
-                Ok(json!({
-                    "pluginId": r.get::<_, String>(0)?,
-                    "capability": r.get::<_, String>(1)?,
-                    "sku": r.get::<_, String>(2)?
-                }))
-            })
-            .map_err(|e| e.to_string())?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| e.to_string())?;
+        let restored: Vec<Value> = with_db(db, |conn| {
+            let mut stmt = conn
+                .prepare("SELECT plugin_id, capability, sku FROM host_entitlements WHERE allowed = 1")
+                .map_err(|e| e.to_string())?;
+            let rows = stmt
+                .query_map([], |r| {
+                    Ok(json!({
+                        "pluginId": r.get::<_, String>(0)?,
+                        "capability": r.get::<_, String>(1)?,
+                        "sku": r.get::<_, String>(2)?
+                    }))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+            Ok(rows)
+        })?;
         return Ok(json!({
             "ok": true,
             "statusCode": 200,
@@ -2263,7 +2440,7 @@ fn platform_request(conn: &Connection, params: &Value) -> Result<Value, String> 
 }
 
 fn route_miniapp_input(
-    conn: &Connection,
+    db: &Mutex<Connection>,
     plugin_id: &str,
     input: &str,
 ) -> Result<(String, String, String, Value), String> {
@@ -2271,7 +2448,7 @@ fn route_miniapp_input(
         "global-dharma" => {
             if input.starts_with("/wheel") || input.contains("转经轮") {
                 let res = fabushi_miniapp::handle_rpc(
-                    conn,
+                    db,
                     "spinPrayerWheel",
                     &json!({ "rotations": 108 }),
                 )?;
@@ -2279,7 +2456,10 @@ fn route_miniapp_input(
                     .get("wheelRotations")
                     .and_then(Value::as_u64)
                     .unwrap_or(108);
-                let merit = res.get("totalMerit").and_then(Value::as_u64).unwrap_or(972);
+                let merit = res
+                    .get("totalMeritPoints")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
                 Ok((
                     "/wheel".into(),
                     "local.prayer-wheel.start".into(),
@@ -2287,7 +2467,7 @@ fn route_miniapp_input(
                     res,
                 ))
             } else if input.starts_with("/sutras") || input.contains("经") {
-                let res = fabushi_miniapp::handle_rpc(conn, "sutras", &json!({}))?;
+                let res = fabushi_miniapp::handle_rpc(db, "sutras", &json!({}))?;
                 Ok((
                     "/sutras".into(),
                     "dharma.sutras".into(),
@@ -2296,20 +2476,20 @@ fn route_miniapp_input(
                 ))
             } else {
                 let res = fabushi_miniapp::handle_rpc(
-                    conn,
+                    db,
                     "aiDharmaChat",
                     &json!({ "prompt": input }),
                 )?;
                 let reply = res
                     .get("reply")
                     .and_then(Value::as_str)
-                    .unwrap_or("愿心清净，福慧双修。")
+                    .unwrap_or("")
                     .to_string();
                 Ok(("/ask".into(), "dharma.counsel".into(), reply, res))
             }
         }
         "ton-wallet" => {
-            let res = wallet::handle_rpc(conn, "status", &json!({}))?;
+            let res = wallet::handle_rpc(db, "status", &json!({}))?;
             let addr = res
                 .get("address")
                 .and_then(Value::as_str)
@@ -2323,7 +2503,7 @@ fn route_miniapp_input(
             ))
         }
         "hermes-studio" => {
-            let res = hermes::handle_rpc(conn, "listCommands", &json!({}))?;
+            let res = hermes::handle_rpc(db, "listCommands", &json!({}))?;
             let count = res.get("total").and_then(Value::as_u64).unwrap_or(61);
             Ok((
                 "/help".into(),
@@ -2342,29 +2522,7 @@ fn route_miniapp_input(
 }
 
 fn collect_surface_bots(conn: &Connection) -> Result<Vec<Value>, String> {
-    let mut bots = vec![
-        json!({
-            "id": "mika-companion-agent",
-            "name": "Mika 手机操控智能体",
-            "description": "端侧 Android 无障碍屏幕感知、ReAct 规划与自动化操控",
-            "miniAppId": null,
-            "menuButtonText": "操控面板"
-        }),
-        json!({
-            "id": "hermes-companion-agent",
-            "name": "Hermes 深度推理助手",
-            "description": "支持 61 条斜杠命令、持久记忆与多分支任务规划",
-            "miniAppId": null,
-            "menuButtonText": "打开工作台"
-        }),
-        json!({
-            "id": "magpie-router-agent",
-            "name": "Magpie 多模型智能路由",
-            "description": "51 家大模型最优成本/低延迟自适应路由与隐私脱敏",
-            "miniAppId": null,
-            "menuButtonText": "路由状态"
-        }),
-    ];
+    let mut bots: Vec<Value> = Vec::new();
 
     let mut stmt = conn
         .prepare("SELECT bot_id, name, description, mini_app_id FROM host_bots ORDER BY created_at_ms DESC")
@@ -2383,6 +2541,20 @@ fn collect_surface_bots(conn: &Connection) -> Result<Vec<Value>, String> {
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     bots.extend(custom);
+
+    // Include server-synced bots cached from /api/v1/bots/my & /api/v1/fabushi-bots
+    if let Ok(mut server_stmt) =
+        conn.prepare("SELECT bot_json FROM tg_server_bots ORDER BY updated_at_ms DESC")
+    {
+        if let Ok(rows) = server_stmt.query_map([], |r| r.get::<_, String>(0)) {
+            for raw in rows.flatten() {
+                if let Ok(val) = serde_json::from_str::<Value>(&raw) {
+                    bots.push(val);
+                }
+            }
+        }
+    }
+
     Ok(bots)
 }
 

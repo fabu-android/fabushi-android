@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 pub const DEFAULT_ACTOR_ID: &str = "human:account:fabushi-user";
 
-pub fn init_schema(conn: &Connection, test_mode: bool) -> Result<(), String> {
+pub fn init_schema(conn: &Connection, _test_mode: bool) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS msg_meta (
             key TEXT PRIMARY KEY,
@@ -69,9 +69,6 @@ pub fn init_schema(conn: &Connection, test_mode: bool) -> Result<(), String> {
     )
     .map_err(|e| format!("Failed initializing messaging schema: {e}"))?;
 
-    if !test_mode {
-        seed_production_dialogs(conn)?;
-    }
     Ok(())
 }
 
@@ -92,341 +89,7 @@ fn next_cursor(conn: &Connection) -> String {
     format!("pts:{next}")
 }
 
-fn seed_production_dialogs(conn: &Connection) -> Result<(), String> {
-    let already_seeded: Option<String> = conn
-        .query_row(
-            "SELECT value FROM msg_meta WHERE key = 'seeded_starter_dialogs'",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?;
-    if already_seeded.is_some() {
-        return Ok(());
-    }
 
-    let now = chrono::Utc::now().timestamp_millis();
-    let actors = vec![
-        json!({
-            "id": DEFAULT_ACTOR_ID,
-            "kind": "human",
-            "displayName": "Fabushi 用户",
-            "username": "fabushi_user",
-            "avatarUrl": null,
-            "bio": "Mahayana Android Native Host",
-            "capabilities": ["messages", "groups", "channels", "calls", "payments", "miniApps"],
-            "presence": { "status": "online", "lastSeenAtMs": now, "statusText": null },
-            "verified": true
-        }),
-        json!({
-            "id": "bot:botfather",
-            "kind": "bot",
-            "displayName": "@BotFather",
-            "username": "BotFather",
-            "avatarUrl": null,
-            "bio": "Create and manage Fabushi & Telegram Mini App Bots via /newbot and /mybots.",
-            "capabilities": ["messages", "miniApps"],
-            "presence": { "status": "online", "lastSeenAtMs": now, "statusText": "bot" },
-            "verified": true
-        }),
-        json!({
-            "id": "bot:mika",
-            "kind": "bot",
-            "displayName": "@MikaPhoneBot (手机操控助手)",
-            "username": "MikaPhoneBot",
-            "avatarUrl": null,
-            "bio": "On-device Android Accessibility + ReAct phone control agent.",
-            "capabilities": ["messages", "miniApps"],
-            "presence": { "status": "online", "lastSeenAtMs": now, "statusText": "on-device agent" },
-            "verified": true
-        }),
-        json!({
-            "id": "bot:hermes",
-            "kind": "bot",
-            "displayName": "@HermesAI",
-            "username": "HermesAI",
-            "avatarUrl": null,
-            "bio": "Hermes AI Studio — 61 slash commands, memory, cron & kanban.",
-            "capabilities": ["messages", "miniApps"],
-            "presence": { "status": "online", "lastSeenAtMs": now, "statusText": "AI Studio" },
-            "verified": true
-        }),
-        json!({
-            "id": "bot:global-dharma",
-            "kind": "bot",
-            "displayName": "全球法布施助手",
-            "username": "GlobalDharmaBot",
-            "avatarUrl": null,
-            "bio": "全球法布施修持、禅堂转经轮与功德回向助手。",
-            "capabilities": ["messages", "payments", "miniApps"],
-            "presence": { "status": "online", "lastSeenAtMs": now, "statusText": "Mini App" },
-            "verified": true
-        }),
-        json!({
-            "id": "human:contact:ananda",
-            "kind": "human",
-            "displayName": "阿难陀 (Ananda)",
-            "username": "ananda_zen",
-            "avatarUrl": null,
-            "bio": "多闻第一 · 经藏护持",
-            "capabilities": ["messages", "groups", "calls"],
-            "presence": { "status": "online", "lastSeenAtMs": now, "statusText": null },
-            "verified": true
-        }),
-        json!({
-            "id": "human:contact:subhuti",
-            "kind": "human",
-            "displayName": "须菩提 (Subhuti)",
-            "username": "subhuti_dharma",
-            "avatarUrl": null,
-            "bio": "解空第一 · 般若行者",
-            "capabilities": ["messages", "groups", "calls"],
-            "presence": { "status": "recently", "lastSeenAtMs": now - 180_000, "statusText": null },
-            "verified": false
-        }),
-    ];
-
-    for actor in actors {
-        upsert_actor_row(conn, &actor, now)?;
-    }
-
-    let starter_dialogs = vec![
-        (
-            "conv_saved_messages",
-            "savedMessages",
-            "Saved Messages (收藏夹)",
-            "跨端加密云端备忘录、经文摘录与常用文件收藏。",
-            vec![(DEFAULT_ACTOR_ID, "owner")],
-            true,
-            vec!["folder_personal"],
-            "msg_seed_saved_1",
-            DEFAULT_ACTOR_ID,
-            "欢迎使用 Saved Messages（收藏夹）！您在此处保存的笔记、语音波形、位置与文件均存储于本地 SQLite WAL 高性能加密仓中。",
-            now - 50_000,
-        ),
-        (
-            "conv_mika_bot",
-            "direct",
-            "@MikaPhoneBot (手机操控助手)",
-            "端侧无障碍自动化助手：发送自然语言即可自动规划并操控手机 App。",
-            vec![(DEFAULT_ACTOR_ID, "owner"), ("bot:mika", "member")],
-            true,
-            vec!["folder_bots"],
-            "msg_seed_mika_1",
-            "bot:mika",
-            "你好！我是 Mika 手机操控助手 🤖📱。\n直接在这里发送任务（例如：「打开设置查看电池电量」或「帮我搜索最近的禅修中心」），我会实时汇报每一步屏幕观测与操控进度；敏感支付/密码界面会自动暂停请求您的确认。",
-            now - 40_000,
-        ),
-        (
-            "conv_global_dharma_channel",
-            "channel",
-            "全球法布施官方频道",
-            "全球 249 个国家与地区法布施动态、禅堂共修与经典导读。",
-            vec![(DEFAULT_ACTOR_ID, "owner"), ("bot:global-dharma", "admin")],
-            true,
-            vec!["folder_channels"],
-            "msg_seed_dharma_1",
-            "bot:global-dharma",
-            "🙏 欢迎订阅【全球法布施官方频道】！\n今日共修：《般若波罗蜜多心经》与本地禅堂转经轮。愿以此功德，庄严佛净土，上报四重恩，下济三途苦。",
-            now - 30_000,
-        ),
-        (
-            "conv_hermes_ai",
-            "direct",
-            "@HermesAI",
-            "Hermes AI Studio 随身智能体工作台（支持 /plan、/memory、/cron、/kanban）。",
-            vec![(DEFAULT_ACTOR_ID, "owner"), ("bot:hermes", "member")],
-            false,
-            vec!["folder_bots"],
-            "msg_seed_hermes_1",
-            "bot:hermes",
-            "欢迎来到 @HermesAI Studio！已挂载 29 个工具集与 61 条斜杠命令，输入 /help 或直接提问即可开始多模型协同推理。",
-            now - 20_000,
-        ),
-        (
-            "conv_botfather",
-            "direct",
-            "@BotFather",
-            "官方 Bot 创建与 Mini App 绑定中心。",
-            vec![(DEFAULT_ACTOR_ID, "owner"), ("bot:botfather", "member")],
-            false,
-            vec!["folder_bots"],
-            "msg_seed_botfather_1",
-            "bot:botfather",
-            "I can help you create and manage Fabushi & Telegram bots.\n\nCommands:\n/newbot <name> - create a new bot\n/mybots - list your bots\n/help - view BotFather guide",
-            now - 10_000,
-        ),
-    ];
-
-    for (
-        conv_id,
-        kind,
-        title,
-        desc,
-        members,
-        pinned,
-        folder_ids,
-        msg_id,
-        sender_id,
-        msg_text,
-        ts,
-    ) in starter_dialogs
-    {
-        let participants: Vec<Value> = members
-            .into_iter()
-            .map(|(aid, role)| {
-                json!({
-                    "actorId": aid,
-                    "role": role,
-                    "joinedAtMs": ts,
-                    "mutedUntilMs": null
-                })
-            })
-            .collect();
-
-        let msg = build_message_json(
-            msg_id,
-            conv_id,
-            sender_id,
-            &json!({
-                "type": "text",
-                "data": {
-                    "text": { "text": msg_text, "entities": [] }
-                }
-            }),
-            None,
-            None,
-            false,
-            "read",
-            ts,
-        );
-        insert_message_row(conn, &msg)?;
-
-        let conv = json!({
-            "id": conv_id,
-            "kind": kind,
-            "title": title,
-            "description": desc,
-            "avatarUrl": null,
-            "participants": participants,
-            "ownerId": DEFAULT_ACTOR_ID,
-            "lastMessageId": msg_id,
-            "lastReadMessageId": msg_id,
-            "unreadCount": 0,
-            "mentionCount": 0,
-            "pinnedMessageIds": [],
-            "notificationSettings": {
-                "mutedUntilMs": null,
-                "sound": null,
-                "showPreview": true,
-                "notifyMentions": true
-            },
-            "permissions": {
-                "canSendMessages": true,
-                "canSendMedia": true,
-                "canSendPolls": true,
-                "canAddMembers": true,
-                "canPinMessages": true,
-                "canManageTopics": true,
-                "canManageCalls": true
-            },
-            "historyVisibility": "allMembers",
-            "topics": [],
-            "folderIds": folder_ids,
-            "archived": false,
-            "pinned": pinned,
-            "markedUnread": false,
-            "createdAtMs": ts,
-            "updatedAtMs": ts
-        });
-        upsert_conversation_row(conn, &conv, ts)?;
-    }
-
-    let default_folders = vec![
-        (
-            0,
-            json!({
-                "id": "folder_personal",
-                "title": "Personal",
-                "icon": "👤",
-                "conversationIds": ["conv_saved_messages"],
-                "includeContacts": true,
-                "includeBots": false,
-                "includeGroups": false,
-                "includeChannels": false,
-                "excludeMuted": false,
-                "excludeRead": false,
-                "excludeArchived": true
-            }),
-        ),
-        (
-            1,
-            json!({
-                "id": "folder_bots",
-                "title": "Bots",
-                "icon": "🤖",
-                "conversationIds": ["conv_mika_bot", "conv_hermes_ai", "conv_botfather"],
-                "includeContacts": false,
-                "includeBots": true,
-                "includeGroups": false,
-                "includeChannels": false,
-                "excludeMuted": false,
-                "excludeRead": false,
-                "excludeArchived": true
-            }),
-        ),
-        (
-            2,
-            json!({
-                "id": "folder_groups",
-                "title": "Groups",
-                "icon": "👥",
-                "conversationIds": [],
-                "includeContacts": false,
-                "includeBots": false,
-                "includeGroups": true,
-                "includeChannels": false,
-                "excludeMuted": false,
-                "excludeRead": false,
-                "excludeArchived": true
-            }),
-        ),
-        (
-            3,
-            json!({
-                "id": "folder_channels",
-                "title": "Channels",
-                "icon": "📢",
-                "conversationIds": ["conv_global_dharma_channel"],
-                "includeContacts": false,
-                "includeBots": false,
-                "includeGroups": false,
-                "includeChannels": true,
-                "excludeMuted": false,
-                "excludeRead": false,
-                "excludeArchived": true
-            }),
-        ),
-    ];
-
-    for (order, folder) in default_folders {
-        let fid = folder.get("id").and_then(Value::as_str).unwrap_or("");
-        conn.execute(
-            "INSERT OR REPLACE INTO msg_folders (folder_id, folder_json, sort_order) VALUES (?1, ?2, ?3)",
-            params![fid, folder.to_string(), order],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-
-    conn.execute(
-        "INSERT OR REPLACE INTO msg_meta (key, value) VALUES ('seeded_starter_dialogs', '1')",
-        [],
-    )
-    .map_err(|e| e.to_string())?;
-    let _ = next_cursor(conn);
-
-    Ok(())
-}
 
 pub fn issue_access(conn: &Connection, test_mode: bool, params: &Value) -> Result<Value, String> {
     init_schema(conn, test_mode)?;
@@ -619,12 +282,6 @@ pub fn execute_command(
                 }));
             }
 
-            // Interactive companion bot replies for starter bot dialogs
-            if let Some(user_text) = extract_plain_text(content) {
-                let extra = maybe_generate_bot_reply(conn, conv_id, actor_id, &user_text, now + 1)?;
-                out_events.extend(extra);
-            }
-
             out_events
         }
 
@@ -737,6 +394,14 @@ pub fn execute_command(
                 .and_then(Value::as_str)
                 .ok_or_else(|| "appendBlobChunk requires 'dataBase64'".to_string())?;
             let bytes = decode_base64_lenient(data_b64)?;
+            let end_offset = offset
+                .checked_add(bytes.len() as u64)
+                .ok_or_else(|| "Blob chunk offset overflow".to_string())?;
+            if end_offset > MAX_BLOB_BYTES {
+                return Err(format!(
+                    "Blob chunk exceeds maximum allowed size ({MAX_BLOB_BYTES} bytes)"
+                ));
+            }
 
             let path = blob_file_path(app_data_dir, blob_id)?;
             if let Some(parent) = path.parent() {
@@ -768,6 +433,14 @@ pub fn execute_command(
                 .ok_or_else(|| "finishBlobUpload requires 'blobId'".to_string())?;
             validate_blob_id(blob_id)?;
             let path = blob_file_path(app_data_dir, blob_id)?;
+            let meta_fs = fs::metadata(&path)
+                .map_err(|e| format!("Blob '{blob_id}' missing on finish: {e}"))?;
+            if meta_fs.len() > MAX_BLOB_BYTES {
+                return Err(format!(
+                    "Blob '{blob_id}' size ({} bytes) exceeds maximum allowed ({MAX_BLOB_BYTES} bytes)",
+                    meta_fs.len()
+                ));
+            }
             let data = fs::read(&path).map_err(|e| format!("Blob '{blob_id}' missing on finish: {e}"))?;
             let hash_hex: String = Sha256::digest(&data)
                 .iter()
@@ -1590,168 +1263,6 @@ pub fn export_chat_history(conn: &Connection, params: &Value) -> Result<Value, S
     }
 }
 
-fn maybe_generate_bot_reply(
-    conn: &Connection,
-    conv_id: &str,
-    actor_id: &str,
-    user_text: &str,
-    now: i64,
-) -> Result<Vec<Value>, String> {
-    let trimmed = user_text.trim();
-    let mut events = Vec::new();
-
-    if conv_id == "conv_botfather" {
-        let reply_text = if let Some(rest) = trimmed.strip_prefix("/newbot") {
-            let bot_name = rest.trim();
-            if bot_name.is_empty() {
-                "Alright, a new bot. Please send `/newbot <BotName>` so I can provision its token and dialog.".to_string()
-            } else {
-                let slug: String = bot_name
-                    .chars()
-                    .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
-                    .collect();
-                let clean_slug = slug.trim_matches('_');
-                let username = if clean_slug.is_empty() {
-                    format!("fabushi_{}_bot", &uuid::Uuid::new_v4().simple().to_string()[..6])
-                } else if clean_slug.ends_with("bot") {
-                    clean_slug.to_string()
-                } else {
-                    format!("{clean_slug}_bot")
-                };
-                let bot_actor_id = format!("bot:{username}");
-                let new_conv_id = format!("conv_bot_{username}");
-                let token = format!(
-                    "{}:AAH{}",
-                    now % 1_000_000_000,
-                    &uuid::Uuid::new_v4().simple().to_string()[..24]
-                );
-
-                let bot_actor = json!({
-                    "id": bot_actor_id,
-                    "kind": "bot",
-                    "displayName": bot_name,
-                    "username": username,
-                    "avatarUrl": null,
-                    "bio": format!("Created via @BotFather ({bot_name})"),
-                    "capabilities": ["messages", "miniApps"],
-                    "presence": { "status": "online", "lastSeenAtMs": now, "statusText": "bot" },
-                    "verified": false
-                });
-                upsert_actor_row(conn, &bot_actor, now)?;
-                events.push(json!({ "type": "actorChanged", "actor": bot_actor }));
-
-                let bot_conv = json!({
-                    "id": new_conv_id,
-                    "kind": "direct",
-                    "title": bot_name,
-                    "description": format!("@{username}"),
-                    "avatarUrl": null,
-                    "participants": [
-                        { "actorId": actor_id, "role": "owner", "joinedAtMs": now, "mutedUntilMs": null },
-                        { "actorId": bot_actor_id, "role": "member", "joinedAtMs": now, "mutedUntilMs": null }
-                    ],
-                    "ownerId": actor_id,
-                    "lastMessageId": null,
-                    "lastReadMessageId": null,
-                    "unreadCount": 0,
-                    "mentionCount": 0,
-                    "pinnedMessageIds": [],
-                    "notificationSettings": { "mutedUntilMs": null, "sound": null, "showPreview": true, "notifyMentions": true },
-                    "permissions": { "canSendMessages": true, "canSendMedia": true, "canSendPolls": true, "canAddMembers": false, "canPinMessages": true, "canManageTopics": false, "canManageCalls": false },
-                    "historyVisibility": "allMembers",
-                    "topics": [],
-                    "folderIds": ["folder_bots"],
-                    "archived": false,
-                    "pinned": false,
-                    "markedUnread": false,
-                    "createdAtMs": now,
-                    "updatedAtMs": now
-                });
-                upsert_conversation_row(conn, &bot_conv, now)?;
-                events.push(json!({ "type": "conversationChanged", "conversation": bot_conv }));
-
-                format!(
-                    "Done! Congratulations on your new bot @{username}.\n\nUse this token to access the HTTP Bot API:\n`{token}`"
-                )
-            }
-        } else {
-            "BotFather ready. Send `/newbot <Name>` to create a new bot or `/mybots` to inspect bots.".to_string()
-        };
-
-        events.extend(append_bot_message(conn, conv_id, "bot:botfather", &reply_text, now)?);
-    } else if conv_id == "conv_mika_bot" {
-        let _ = crate::computer::handle_mika_rpc(
-            conn,
-            "registerTaskEvent",
-            &json!({
-                "taskId": format!("mika_chat_{now}"),
-                "stepIndex": 1,
-                "phase": "queued_from_telegram_chat",
-                "summary": trimmed
-            }),
-        );
-        let reply_text = format!(
-            "🤖 Mika 已接收手机操控指令：「{trimmed}」\n• 执行通道：端侧无障碍引擎 (:mika-agent)\n• 安全护栏：支付/密码界面自动暂停确认"
-        );
-        events.extend(append_bot_message(conn, conv_id, "bot:mika", &reply_text, now)?);
-    } else if conv_id == "conv_hermes_ai" {
-        if trimmed.starts_with('/') {
-            match crate::hermes::handle_rpc(
-                conn,
-                "runSlashCommand",
-                &json!({ "sessionId": "hermes_main", "input": trimmed }),
-            ) {
-                Ok(slash) => {
-                    let summary = slash["summary"]
-                        .as_str()
-                        .unwrap_or("Executed Hermes slash command");
-                    events.extend(append_bot_message(conn, conv_id, "bot:hermes", summary, now)?);
-                }
-                Err(err) => {
-                    events.push(json!({
-                        "type": "botError",
-                        "conversationId": conv_id,
-                        "botId": "bot:hermes",
-                        "error": err
-                    }));
-                }
-            }
-        } else {
-            match crate::hermes::handle_rpc(
-                conn,
-                "sendTurn",
-                &json!({ "sessionId": "hermes_main", "text": trimmed }),
-            ) {
-                Ok(turn) => {
-                    if let Some(reply) = turn
-                        .get("reply")
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.trim().is_empty())
-                    {
-                        events.extend(append_bot_message(conn, conv_id, "bot:hermes", reply, now)?);
-                    } else if turn.get("status").and_then(Value::as_str) == Some("waiting_approval") {
-                        events.push(json!({
-                            "type": "hermesApprovalRequired",
-                            "conversationId": conv_id,
-                            "pendingApproval": turn.get("pendingApproval").cloned().unwrap_or(Value::Null),
-                        }));
-                    }
-                }
-                Err(err) => {
-                    events.push(json!({
-                        "type": "botError",
-                        "conversationId": conv_id,
-                        "botId": "bot:hermes",
-                        "error": err
-                    }));
-                }
-            }
-        }
-    }
-
-    Ok(events)
-}
-
 /// Persists an inbound message synced from `gpui_telegram_server` into SQLite + FTS5.
 pub fn ingest_synced_message(
     conn: &Connection,
@@ -1761,7 +1272,7 @@ pub fn ingest_synced_message(
     text: &str,
     created_at_ms: i64,
 ) -> Result<Value, String> {
-    init_schema(conn, false)?;
+    init_schema(conn, true)?;
     if load_conversation(conn, conv_id)?.is_none() {
         let mut conv = json!({
             "id": conv_id,
@@ -1794,47 +1305,6 @@ pub fn ingest_synced_message(
         upsert_conversation_row(conn, &conv, created_at_ms)?;
     }
     Ok(msg)
-}
-
-fn append_bot_message(
-    conn: &Connection,
-    conv_id: &str,
-    bot_sender_id: &str,
-    text: &str,
-    now: i64,
-) -> Result<Vec<Value>, String> {
-    let msg_id = format!("msg_{}", uuid::Uuid::new_v4().simple());
-    let msg = build_message_json(
-        &msg_id,
-        conv_id,
-        bot_sender_id,
-        &json!({
-            "type": "text",
-            "data": { "text": { "text": text, "entities": [] } }
-        }),
-        None,
-        None,
-        false,
-        "sent",
-        now,
-    );
-    insert_message_row(conn, &msg)?;
-    let mut out = vec![json!({
-        "type": "messageAdded",
-        "message": msg
-    })];
-    if let Some(mut conv) = load_conversation(conn, conv_id)? {
-        if let Some(obj) = conv.as_object_mut() {
-            obj.insert("lastMessageId".into(), json!(msg_id));
-            obj.insert("updatedAtMs".into(), json!(now));
-        }
-        upsert_conversation_row(conn, &conv, now)?;
-        out.push(json!({
-            "type": "conversationChanged",
-            "conversation": conv
-        }));
-    }
-    Ok(out)
 }
 
 fn build_message_json(
@@ -2114,9 +1584,14 @@ fn list_messages(conn: &Connection, limit: i64) -> Result<Vec<Value>, String> {
     Ok(rows)
 }
 
+const MAX_BLOB_BYTES: u64 = 64 * 1024 * 1024;
+
 fn validate_blob_id(blob_id: &str) -> Result<(), String> {
     if blob_id.is_empty()
         || blob_id.len() > 160
+        || blob_id == "."
+        || blob_id == ".."
+        || blob_id.contains("..")
         || !blob_id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':'))

@@ -40,4 +40,8 @@ jobs:
           test -d "$ANDROID_HOME/platforms/android-37.0"
           test -d "$ANDROID_HOME/build-tools/37.0.0"
       - name: Run Android Mini App contract tests
-        run: ./gradlew --no-daemon -x ensureRustHostLibs :app:testDebugUnitTest --tests com.ombhrum.fabushi.MiniAppWebMcpSurfaceTest
+        run: |
+          ./gradlew --no-daemon --max-workers=1 \
+            -Dorg.gradle.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8" \
+            -Pkotlin.daemon.jvmargs="-Xmx4096m -XX:MaxMetaspaceSize=768m" \
+            -x ensureRustHostLibs :app:testDebugUnitTest --tests com.ombhrum.fabushi.MiniAppWebMcpSurfaceTest

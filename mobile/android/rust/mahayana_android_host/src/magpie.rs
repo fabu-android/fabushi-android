@@ -26,7 +26,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -278,11 +278,26 @@ pub struct LiveTurnResult {
 
 pub fn is_local_loopback_url(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
-    lower.starts_with("http://127.0.0.1")
-        || lower.starts_with("http://localhost")
-        || lower.starts_with("http://[::1]")
-        || lower.starts_with("https://127.0.0.1")
-        || lower.starts_with("https://localhost")
+    let rest = if let Some(r) = lower.strip_prefix("http://") {
+        r
+    } else if let Some(r) = lower.strip_prefix("https://") {
+        r
+    } else {
+        return false;
+    };
+    for host in ["127.0.0.1", "localhost", "[::1]"] {
+        if let Some(after) = rest.strip_prefix(host) {
+            if after.is_empty()
+                || after.starts_with(':')
+                || after.starts_with('/')
+                || after.starts_with('?')
+                || after.starts_with('#')
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Circuit-breaker rest window computation matching Magpie exponential backoff.
@@ -461,7 +476,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
             output_cost_per_1m_usd REAL NOT NULL DEFAULT 3.0,
             cooldown_until_ms INTEGER NOT NULL DEFAULT 0,
             consecutive_failures INTEGER NOT NULL DEFAULT 0,
-            last_latency_ms INTEGER NOT NULL DEFAULT 180,
+            last_latency_ms INTEGER NOT NULL DEFAULT 0,
             total_requests INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS magpie_config (
@@ -518,7 +533,7 @@ pub fn init_schema(conn: &Connection) -> Result<(), String> {
                         100 + (idx as i32),
                         p.input_cost_per_1m_usd,
                         p.output_cost_per_1m_usd,
-                        120 + (idx as i64) * 35,
+                        0i64,
                     ],
                 )
                 .map_err(|e| e.to_string())?;
@@ -605,7 +620,7 @@ fn load_providers(conn: &Connection) -> Result<Vec<ConfiguredProvider>, String> 
                 output_cost_per_1m_usd: row.get(12)?,
                 cooldown_until_ms: row.get(13)?,
                 consecutive_failures: row.get::<_, i64>(14)?.max(0) as u32,
-                last_latency_ms: row.get::<_, i64>(15)?.max(1) as u64,
+                last_latency_ms: row.get::<_, i64>(15)?.max(0) as u64,
                 total_requests: row.get::<_, i64>(16)?.max(0) as u64,
             })
         })
@@ -654,7 +669,14 @@ fn order_candidates(mut healthy: Vec<ConfiguredProvider>, strategy: RoutingStrat
             });
         }
         RoutingStrategy::Fastest => {
-            healthy.sort_by_key(|p| (p.last_latency_ms, p.priority));
+            healthy.sort_by_key(|p| {
+                let effective_latency = if p.last_latency_ms == 0 {
+                    u64::MAX
+                } else {
+                    p.last_latency_ms
+                };
+                (effective_latency, p.priority)
+            });
         }
         RoutingStrategy::Usage | RoutingStrategy::Pace => {
             healthy.sort_by_key(|p| (p.total_requests, p.priority));
@@ -1067,11 +1089,33 @@ where
         .to_ascii_lowercase();
     let is_sse = content_type.contains("text/event-stream");
 
+    const MAX_NON_SSE_BODY_BYTES: u64 = 16 * 1024 * 1024;
+    const MAX_SSE_TOTAL_BYTES: u64 = 32 * 1024 * 1024;
+
     if !is_sse && !masked_req.stream {
-        let raw_body = response.into_string().map_err(|e| SeatHttpError {
+        let mut raw_bytes = Vec::new();
+        let mut limited = std::io::Read::take(response.into_reader(), MAX_NON_SSE_BODY_BYTES + 1);
+        std::io::Read::read_to_end(&mut limited, &mut raw_bytes).map_err(|e| SeatHttpError {
             status_code: 502,
             retry_after_ms: None,
             message: format!("Failed reading response body from {}: {e}", seat.id),
+            partial_emitted: false,
+        })?;
+        if raw_bytes.len() as u64 > MAX_NON_SSE_BODY_BYTES {
+            return Err(SeatHttpError {
+                status_code: 502,
+                retry_after_ms: None,
+                message: format!(
+                    "Response body from {} exceeded maximum allowed size ({MAX_NON_SSE_BODY_BYTES} bytes)",
+                    seat.id
+                ),
+                partial_emitted: false,
+            });
+        }
+        let raw_body = String::from_utf8(raw_bytes).map_err(|e| SeatHttpError {
+            status_code: 502,
+            retry_after_ms: None,
+            message: format!("Response body from {} was not valid UTF-8: {e}", seat.id),
             partial_emitted: false,
         })?;
         let parsed = parse_non_stream_body(seat, &masked_req.model, &raw_body)?;
@@ -1083,14 +1127,35 @@ where
         return Ok((unmasked, latency_ms));
     }
 
-    let mut reader = BufReader::new(response.into_reader());
+    let mut reader = BufReader::new(std::io::Read::take(
+        response.into_reader(),
+        MAX_SSE_TOTAL_BYTES + 1,
+    ));
     if !is_sse {
         // Provider returned JSON even though stream=true was requested; support seamlessly.
-        let mut full_buf = String::new();
-        std::io::Read::read_to_string(&mut reader, &mut full_buf).map_err(|e| SeatHttpError {
+        let mut raw_bytes = Vec::new();
+        let mut limited = std::io::Read::take(&mut reader, MAX_NON_SSE_BODY_BYTES + 1);
+        std::io::Read::read_to_end(&mut limited, &mut raw_bytes).map_err(|e| SeatHttpError {
             status_code: 502,
             retry_after_ms: None,
             message: format!("Failed reading response body from {}: {e}", seat.id),
+            partial_emitted: false,
+        })?;
+        if raw_bytes.len() as u64 > MAX_NON_SSE_BODY_BYTES {
+            return Err(SeatHttpError {
+                status_code: 502,
+                retry_after_ms: None,
+                message: format!(
+                    "Response body from {} exceeded maximum allowed size ({MAX_NON_SSE_BODY_BYTES} bytes)",
+                    seat.id
+                ),
+                partial_emitted: false,
+            });
+        }
+        let full_buf = String::from_utf8(raw_bytes).map_err(|e| SeatHttpError {
+            status_code: 502,
+            retry_after_ms: None,
+            message: format!("Response body from {} was not valid UTF-8: {e}", seat.id),
             partial_emitted: false,
         })?;
         let trimmed = full_buf.trim();
@@ -1166,7 +1231,11 @@ where
     let mut usage = UnifiedUsage::default();
     let mut current_event = String::new();
     let mut gemini_call_counter = 0usize;
+    const MAX_SSE_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+    const MAX_SSE_LINES: usize = 200_000;
     let mut partial_emitted = false;
+    let mut total_bytes_read = 0usize;
+    let mut lines_read = 0usize;
     let mut line = String::new();
 
     loop {
@@ -1179,6 +1248,19 @@ where
         })?;
         if n == 0 {
             break;
+        }
+        total_bytes_read = total_bytes_read.saturating_add(n);
+        lines_read = lines_read.saturating_add(1);
+        if total_bytes_read > MAX_SSE_TOTAL_BYTES || lines_read > MAX_SSE_LINES {
+            return Err(SeatHttpError {
+                status_code: 502,
+                retry_after_ms: None,
+                message: format!(
+                    "SSE stream from {} exceeded maximum allowed bounds ({MAX_SSE_TOTAL_BYTES} bytes / {MAX_SSE_LINES} lines)",
+                    seat.id
+                ),
+                partial_emitted,
+            });
         }
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -1313,8 +1395,9 @@ fn unmask_unified_response(mut resp: UnifiedResponse, engine: &MaskingEngine) ->
 
 /// Executes a genuine Magpie multi-provider LLM turn with reversible PII pre-masking,
 /// SSE chunk unmasking, circuit-breaker seat failover, and real SQLite usage accounting.
+/// Releases `db` mutex across all blocking HTTP/SSE upstream calls.
 pub fn execute_live_request<F>(
-    conn: &Connection,
+    db: &Mutex<Connection>,
     req: &UnifiedRequest,
     strategy_override: Option<RoutingStrategy>,
     preferred_provider_id: Option<&str>,
@@ -1324,10 +1407,12 @@ pub fn execute_live_request<F>(
 where
     F: FnMut(&str),
 {
-    init_schema(conn)?;
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let strategy = strategy_override.unwrap_or_else(|| current_routing_strategy(conn));
-    let candidates = select_live_candidates(conn, strategy, preferred_provider_id, now_ms)?;
+    let candidates = crate::with_db(db, |conn| {
+        init_schema(conn)?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let strategy = strategy_override.unwrap_or_else(|| current_routing_strategy(conn));
+        select_live_candidates(conn, strategy, preferred_provider_id, now_ms)
+    })?;
 
     let engine = shared_masking_engine();
     let (mut masked_req, masked_secrets_count) = mask_unified_request(req, engine);
@@ -1362,33 +1447,37 @@ where
                         * seat.output_cost_per_1m_usd;
 
                 let entry_id = format!("use_{}", uuid::Uuid::new_v4().simple());
-                conn.execute(
-                    "INSERT INTO magpie_usage_ledger
-                    (entry_id, provider_id, model, input_tokens, output_tokens, cost_usd, latency_ms, created_at_ms)
-                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                    params![
-                        entry_id,
-                        seat.id,
-                        effective_model,
-                        resp.usage.input_tokens as i64,
-                        resp.usage.output_tokens as i64,
-                        cost_usd,
-                        latency_ms as i64,
-                        chrono::Utc::now().timestamp_millis(),
-                    ],
-                )
-                .map_err(|e| e.to_string())?;
+                let recorded_at = chrono::Utc::now().timestamp_millis();
+                crate::with_db(db, |conn| {
+                    conn.execute(
+                        "INSERT INTO magpie_usage_ledger
+                        (entry_id, provider_id, model, input_tokens, output_tokens, cost_usd, latency_ms, created_at_ms)
+                        VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        params![
+                            entry_id,
+                            seat.id,
+                            effective_model,
+                            resp.usage.input_tokens as i64,
+                            resp.usage.output_tokens as i64,
+                            cost_usd,
+                            latency_ms as i64,
+                            recorded_at,
+                        ],
+                    )
+                    .map_err(|e| e.to_string())?;
 
-                conn.execute(
-                    "UPDATE magpie_providers
-                     SET total_requests = total_requests + 1,
-                         consecutive_failures = 0,
-                         cooldown_until_ms = 0,
-                         last_latency_ms = ?1
-                     WHERE id = ?2",
-                    params![latency_ms as i64, seat.id],
-                )
-                .map_err(|e| e.to_string())?;
+                    conn.execute(
+                        "UPDATE magpie_providers
+                         SET total_requests = total_requests + 1,
+                             consecutive_failures = 0,
+                             cooldown_until_ms = 0,
+                             last_latency_ms = ?1
+                         WHERE id = ?2",
+                        params![latency_ms as i64, seat.id],
+                    )
+                    .map_err(|e| e.to_string())?;
+                    Ok(())
+                })?;
 
                 return Ok(LiveTurnResult {
                     provider_id: seat.id.clone(),
@@ -1407,12 +1496,9 @@ where
                 });
             }
             Err(err) => {
-                let _ = record_provider_failure(
-                    conn,
-                    &seat.id,
-                    err.status_code,
-                    err.retry_after_ms,
-                );
+                let _ = crate::with_db(db, |conn| {
+                    record_provider_failure(conn, &seat.id, err.status_code, err.retry_after_ms)
+                });
                 failed_over_from.push(seat.id.clone());
                 last_errors.push(err.message.clone());
                 if err.partial_emitted {
@@ -1428,7 +1514,316 @@ where
     ))
 }
 
-pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
+pub fn handle_rpc(db: &Mutex<Connection>, submethod: &str, params: &Value) -> Result<Value, String> {
+    match submethod {
+        "presets" => Ok(json!({
+            "presets": MAGPIE_PRESETS,
+            "total": MAGPIE_PRESETS.len(),
+            "sharedGatewayPresetsCount": magpie_gateway::all_presets().len(),
+        })),
+
+        "chatComplete" | "chatStream" => handle_chat_rpc(db, submethod, params),
+
+        "parseModelsDevCatalog" => {
+            let raw_json = params
+                .get("json")
+                .or_else(|| params.get("raw"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| "magpie.parseModelsDevCatalog requires 'json' string".to_string())?;
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            let catalog = magpie_gateway::parse_models_dev_json(raw_json, now_ms)?;
+            Ok(json!({
+                "source": catalog.source,
+                "fetchedAtMs": catalog.fetched_at_ms,
+                "providerCount": catalog.providers.len(),
+                "providers": catalog.providers,
+            }))
+        }
+
+        "fetchModelsDevCatalog" => {
+            let force_refresh = params
+                .get("forceRefresh")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let url = params
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or(magpie_gateway::MODELS_DEV_API_URL);
+            let cache_path = params
+                .get("cachePath")
+                .and_then(Value::as_str)
+                .map(std::path::PathBuf::from);
+            let agent = ureq::AgentBuilder::new()
+                .timeout_connect(std::time::Duration::from_secs(10))
+                .timeout_read(std::time::Duration::from_secs(20))
+                .build();
+            let catalog = magpie_gateway::fetch_models_dev_catalog_from_url(
+                &agent,
+                url,
+                cache_path.as_deref(),
+                force_refresh,
+            )?;
+            Ok(json!({
+                "source": catalog.source,
+                "fetchedAtMs": catalog.fetched_at_ms,
+                "providerCount": catalog.providers.len(),
+                "providers": catalog.providers,
+            }))
+        }
+
+        "discoverModels" => {
+            let kind_raw = params
+                .get("subscriptionKind")
+                .or_else(|| params.get("providerId"))
+                .and_then(Value::as_str)
+                .unwrap_or("codex");
+            let kind = match kind_raw.trim().to_ascii_lowercase().as_str() {
+                "google-vertex" | "vertex" | "google_vertex" => {
+                    magpie_gateway::SubscriptionKind::GoogleVertex
+                }
+                "gemini" | "google" | "gemini_code_assist" => {
+                    magpie_gateway::SubscriptionKind::GeminiCodeAssist
+                }
+                "anthropic" | "claude" | "claude_code" => {
+                    magpie_gateway::SubscriptionKind::ClaudeCode
+                }
+                "github_copilot" | "copilot" => magpie_gateway::SubscriptionKind::GitHubCopilot,
+                "antigravity" => magpie_gateway::SubscriptionKind::Antigravity,
+                "grok" | "xai" => magpie_gateway::SubscriptionKind::GrokSuperGrok,
+                _ => magpie_gateway::SubscriptionKind::CodexChatGpt,
+            };
+
+            let base_url = params.get("baseUrl").and_then(Value::as_str);
+            let bearer = params
+                .get("apiKey")
+                .or_else(|| params.get("bearerToken"))
+                .and_then(Value::as_str);
+            let project_id = params.get("projectId").and_then(Value::as_str);
+            let location = params.get("location").and_then(Value::as_str);
+            let headers = std::collections::BTreeMap::new();
+
+            let mut live_models: Vec<String> = Vec::new();
+            let mut live_error: Option<String> = None;
+            if bearer.is_some() || base_url.is_some() {
+                let agent = ureq::AgentBuilder::new()
+                    .timeout_connect(std::time::Duration::from_secs(10))
+                    .timeout_read(std::time::Duration::from_secs(20))
+                    .build();
+                match magpie_gateway::fetch_live_upstream_models(
+                    &agent,
+                    kind,
+                    base_url,
+                    bearer,
+                    &headers,
+                    project_id,
+                    location,
+                ) {
+                    Ok(m) => live_models = m,
+                    Err(e) => live_error = Some(e),
+                }
+            }
+
+            let defaults: Vec<String> = magpie_gateway::default_models_for_subscription_kind(kind)
+                .iter()
+                .map(|s| (*s).to_string())
+                .collect();
+            let merged = magpie_gateway::merge_discovered_models(&[&live_models, &defaults]);
+            Ok(json!({
+                "subscriptionKind": format!("{kind:?}"),
+                "modelsDevProvider": magpie_gateway::models_dev_provider_id_for_subscription(kind),
+                "liveCount": live_models.len(),
+                "liveError": live_error,
+                "models": merged,
+            }))
+        }
+
+        "discoverSyncableSubscriptions" => {
+            let home_dir = params
+                .get("homeDir")
+                .and_then(Value::as_str)
+                .map(std::path::PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
+                .unwrap_or_else(|| std::path::PathBuf::from("/"));
+            let target_is_remote = params
+                .get("targetIsRemote")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let items = magpie_gateway::discover_syncable_subscriptions_in_home(
+                &home_dir,
+                None,
+                target_is_remote,
+            );
+            let redacted: Vec<Value> = items
+                .iter()
+                .map(|item| {
+                    json!({
+                        "id": item.account.id,
+                        "kind": format!("{:?}", item.account.kind),
+                        "label": item.account.label,
+                        "email": item.account.email,
+                        "plan": item.account.plan,
+                        "active": item.account.active,
+                        "baseUrl": item.account.base_url,
+                        "defaultModel": item.account.default_model,
+                        "regionId": item.region_id,
+                        "hasAccessToken": item.access_token.is_some(),
+                        "hasVertexAdc": item.vertex_adc.is_some(),
+                        "hasCodexOAuth": item.codex_oauth.is_some(),
+                        "availableModels": item.available_models,
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "total": redacted.len(),
+                "subscriptions": redacted,
+            }))
+        }
+
+        "sanitizeVertexSchema" => {
+            let schema = params
+                .get("schema")
+                .ok_or_else(|| "magpie.sanitizeVertexSchema requires 'schema'".to_string())?;
+            Ok(json!({
+                "sanitized": magpie_gateway::sanitize_schema_for_gemini(schema),
+            }))
+        }
+
+        "mergeGeminiFunctionResponses" => {
+            let req_val = params
+                .get("request")
+                .cloned()
+                .unwrap_or_else(|| params.clone());
+            let unified: UnifiedRequest = serde_json::from_value(req_val)
+                .map_err(|e| format!("Invalid UnifiedRequest JSON: {e}"))?;
+            let payload = magpie_gateway::build_gemini_generate_content_payload(&unified);
+            Ok(json!({ "payload": payload }))
+        }
+
+        _ => crate::with_db(db, |conn| handle_rpc_local(conn, submethod, params)),
+    }
+}
+
+fn handle_chat_rpc(
+    db: &Mutex<Connection>,
+    submethod: &str,
+    params: &Value,
+) -> Result<Value, String> {
+    let stream = submethod == "chatStream"
+        || params
+            .get("stream")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+    let system_prompt = params
+        .get("system")
+        .or_else(|| params.get("systemPrompt"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let model = params
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("auto")
+        .to_string();
+    let preferred_provider = params.get("providerId").and_then(Value::as_str);
+    let strategy_override = params
+        .get("strategy")
+        .and_then(Value::as_str)
+        .map(RoutingStrategy::from_str_lossy);
+
+    let mut messages = Vec::new();
+    if let Some(arr) = params.get("messages").and_then(Value::as_array) {
+        for m in arr {
+            let role = match m.get("role").and_then(Value::as_str).unwrap_or("user") {
+                "system" => UnifiedRole::System,
+                "assistant" | "model" => UnifiedRole::Assistant,
+                "tool" => UnifiedRole::Tool,
+                _ => UnifiedRole::User,
+            };
+            let content = m
+                .get("content")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            messages.push(UnifiedMessage {
+                role,
+                content,
+                name: m.get("name").and_then(Value::as_str).map(ToString::to_string),
+                tool_call_id: m
+                    .get("toolCallId")
+                    .or_else(|| m.get("tool_call_id"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                tool_calls: Vec::new(),
+                reasoning: None,
+            });
+        }
+    } else {
+        let prompt = params
+            .get("prompt")
+            .or_else(|| params.get("text"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| "chatComplete requires 'prompt', 'text', or 'messages'".to_string())?;
+        messages.push(UnifiedMessage {
+            role: UnifiedRole::User,
+            content: prompt.to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+            reasoning: None,
+        });
+    }
+
+    let req = UnifiedRequest {
+        model,
+        system_prompt,
+        messages,
+        tools: Vec::new(),
+        temperature: params
+            .get("temperature")
+            .and_then(Value::as_f64)
+            .map(|v| v as f32),
+        max_tokens: params
+            .get("maxTokens")
+            .and_then(Value::as_u64)
+            .map(|v| v as u32),
+        thinking_budget_tokens: None,
+        stream,
+    };
+
+    let mut deltas = Vec::new();
+    let outcome = execute_live_request(
+        db,
+        &req,
+        strategy_override,
+        preferred_provider,
+        params.get("sessionId").and_then(Value::as_str),
+        |delta| {
+            if !delta.is_empty() {
+                deltas.push(delta.to_string());
+            }
+        },
+    )?;
+
+    Ok(json!({
+        "providerId": outcome.provider_id,
+        "presetId": outcome.preset_id,
+        "model": outcome.model,
+        "protocol": outcome.protocol,
+        "reply": outcome.reply,
+        "reasoning": outcome.reasoning,
+        "toolCalls": outcome.tool_calls,
+        "finishReason": outcome.finish_reason,
+        "deltas": deltas,
+        "maskedSecretsCount": outcome.masked_secrets_count,
+        "inputTokens": outcome.usage.input_tokens,
+        "outputTokens": outcome.usage.output_tokens,
+        "costUsd": outcome.cost_usd,
+        "latencyMs": outcome.latency_ms,
+        "failedOverFrom": outcome.failed_over_from,
+    }))
+}
+
+fn handle_rpc_local(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
     init_schema(conn)?;
     match submethod {
         "presets" => Ok(json!({
@@ -1536,6 +1931,10 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .get("allowNoKey")
                 .and_then(Value::as_bool)
                 .unwrap_or_else(|| preset.category == "local" || is_local_loopback_url(base_url));
+            let clear_api_key = params
+                .get("clearApiKey")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             let in_cost = params
                 .get("inputCostPer1M")
                 .and_then(Value::as_f64)
@@ -1545,46 +1944,95 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .and_then(Value::as_f64)
                 .unwrap_or(preset.output_cost_per_1m_usd);
 
-            conn.execute(
-                "INSERT INTO magpie_providers
-                (id, preset_id, name, protocol, base_url, api_key, default_model, priority, weight, enabled, allow_no_key, input_cost_per_1m_usd, output_cost_per_1m_usd, cooldown_until_ms, consecutive_failures)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 100, ?9, ?10, ?11, ?12, 0, 0)
-                ON CONFLICT(id) DO UPDATE SET
-                    preset_id = excluded.preset_id,
-                    name = excluded.name,
-                    protocol = excluded.protocol,
-                    base_url = excluded.base_url,
-                    api_key = COALESCE(excluded.api_key, magpie_providers.api_key),
-                    default_model = excluded.default_model,
-                    priority = excluded.priority,
-                    enabled = excluded.enabled,
-                    allow_no_key = excluded.allow_no_key,
-                    input_cost_per_1m_usd = excluded.input_cost_per_1m_usd,
-                    output_cost_per_1m_usd = excluded.output_cost_per_1m_usd,
-                    cooldown_until_ms = 0,
-                    consecutive_failures = 0",
-                params![
-                    id,
-                    preset.id,
-                    name,
-                    format!("{proto:?}"),
-                    base_url,
-                    api_key,
-                    model,
-                    priority,
-                    if enabled { 1 } else { 0 },
-                    if allow_no_key { 1 } else { 0 },
-                    in_cost,
-                    out_cost,
-                ],
-            )
-            .map_err(|e| e.to_string())?;
+            if clear_api_key {
+                conn.execute(
+                    "INSERT INTO magpie_providers
+                    (id, preset_id, name, protocol, base_url, api_key, default_model, priority, weight, enabled, allow_no_key, input_cost_per_1m_usd, output_cost_per_1m_usd, cooldown_until_ms, consecutive_failures)
+                    VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, 100, ?8, ?9, ?10, ?11, 0, 0)
+                    ON CONFLICT(id) DO UPDATE SET
+                        preset_id = excluded.preset_id,
+                        name = excluded.name,
+                        protocol = excluded.protocol,
+                        base_url = excluded.base_url,
+                        api_key = NULL,
+                        default_model = excluded.default_model,
+                        priority = excluded.priority,
+                        enabled = excluded.enabled,
+                        allow_no_key = excluded.allow_no_key,
+                        input_cost_per_1m_usd = excluded.input_cost_per_1m_usd,
+                        output_cost_per_1m_usd = excluded.output_cost_per_1m_usd,
+                        cooldown_until_ms = 0,
+                        consecutive_failures = 0",
+                    params![
+                        id,
+                        preset.id,
+                        name,
+                        format!("{proto:?}"),
+                        base_url,
+                        model,
+                        priority,
+                        if enabled { 1 } else { 0 },
+                        if allow_no_key { 1 } else { 0 },
+                        in_cost,
+                        out_cost,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            } else {
+                conn.execute(
+                    "INSERT INTO magpie_providers
+                    (id, preset_id, name, protocol, base_url, api_key, default_model, priority, weight, enabled, allow_no_key, input_cost_per_1m_usd, output_cost_per_1m_usd, cooldown_until_ms, consecutive_failures)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 100, ?9, ?10, ?11, ?12, 0, 0)
+                    ON CONFLICT(id) DO UPDATE SET
+                        preset_id = excluded.preset_id,
+                        name = excluded.name,
+                        protocol = excluded.protocol,
+                        base_url = excluded.base_url,
+                        api_key = COALESCE(excluded.api_key, magpie_providers.api_key),
+                        default_model = excluded.default_model,
+                        priority = excluded.priority,
+                        enabled = excluded.enabled,
+                        allow_no_key = excluded.allow_no_key,
+                        input_cost_per_1m_usd = excluded.input_cost_per_1m_usd,
+                        output_cost_per_1m_usd = excluded.output_cost_per_1m_usd,
+                        cooldown_until_ms = 0,
+                        consecutive_failures = 0",
+                    params![
+                        id,
+                        preset.id,
+                        name,
+                        format!("{proto:?}"),
+                        base_url,
+                        api_key,
+                        model,
+                        priority,
+                        if enabled { 1 } else { 0 },
+                        if allow_no_key { 1 } else { 0 },
+                        in_cost,
+                        out_cost,
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+
+            let persisted_has_key: bool = conn
+                .query_row(
+                    "SELECT api_key FROM magpie_providers WHERE id = ?1",
+                    params![&id],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .flatten()
+                .map(|k| !k.trim().is_empty())
+                .unwrap_or(false);
+
             Ok(json!({
                 "id": id,
                 "presetId": preset.id,
                 "protocol": proto,
                 "defaultModel": model,
-                "configuredForLive": api_key.is_some() || allow_no_key || is_local_loopback_url(base_url),
+                "configuredForLive": persisted_has_key || allow_no_key || is_local_loopback_url(base_url),
             }))
         }
 
@@ -1744,7 +2192,7 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .or_else(|| parsed.get("presetId"))
                 .and_then(Value::as_str)
                 .unwrap_or("openai");
-            let upserted = handle_rpc(
+            let upserted = handle_rpc_local(
                 conn,
                 "upsertProvider",
                 &json!({
@@ -1827,291 +2275,6 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 "outputTokens": out_tok,
                 "totalCostUsd": (total_cost * 1_000_000.0).round() / 1_000_000.0,
             }))
-        }
-
-        "chatComplete" | "chatStream" => {
-            let stream = submethod == "chatStream"
-                || params
-                    .get("stream")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(true);
-            let system_prompt = params
-                .get("system")
-                .or_else(|| params.get("systemPrompt"))
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string();
-            let model = params
-                .get("model")
-                .and_then(Value::as_str)
-                .unwrap_or("auto")
-                .to_string();
-            let preferred_provider = params.get("providerId").and_then(Value::as_str);
-            let strategy_override = params
-                .get("strategy")
-                .and_then(Value::as_str)
-                .map(RoutingStrategy::from_str_lossy);
-
-            let mut messages = Vec::new();
-            if let Some(arr) = params.get("messages").and_then(Value::as_array) {
-                for m in arr {
-                    let role = match m.get("role").and_then(Value::as_str).unwrap_or("user") {
-                        "system" => UnifiedRole::System,
-                        "assistant" | "model" => UnifiedRole::Assistant,
-                        "tool" => UnifiedRole::Tool,
-                        _ => UnifiedRole::User,
-                    };
-                    let content = m
-                        .get("content")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    messages.push(UnifiedMessage {
-                        role,
-                        content,
-                        name: m.get("name").and_then(Value::as_str).map(ToString::to_string),
-                        tool_call_id: m
-                            .get("toolCallId")
-                            .or_else(|| m.get("tool_call_id"))
-                            .and_then(Value::as_str)
-                            .map(ToString::to_string),
-                        tool_calls: Vec::new(),
-                        reasoning: None,
-                    });
-                }
-            } else {
-                let prompt = params
-                    .get("prompt")
-                    .or_else(|| params.get("text"))
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "chatComplete requires 'prompt', 'text', or 'messages'".to_string())?;
-                messages.push(UnifiedMessage {
-                    role: UnifiedRole::User,
-                    content: prompt.to_string(),
-                    name: None,
-                    tool_call_id: None,
-                    tool_calls: Vec::new(),
-                    reasoning: None,
-                });
-            }
-
-            let req = UnifiedRequest {
-                model,
-                system_prompt,
-                messages,
-                tools: Vec::new(),
-                temperature: params
-                    .get("temperature")
-                    .and_then(Value::as_f64)
-                    .map(|v| v as f32),
-                max_tokens: params
-                    .get("maxTokens")
-                    .and_then(Value::as_u64)
-                    .map(|v| v as u32),
-                thinking_budget_tokens: None,
-                stream,
-            };
-
-            let mut deltas = Vec::new();
-            let outcome = execute_live_request(
-                conn,
-                &req,
-                strategy_override,
-                preferred_provider,
-                params.get("sessionId").and_then(Value::as_str),
-                |delta| {
-                    if !delta.is_empty() {
-                        deltas.push(delta.to_string());
-                    }
-                },
-            )?;
-
-            Ok(json!({
-                "providerId": outcome.provider_id,
-                "presetId": outcome.preset_id,
-                "model": outcome.model,
-                "protocol": outcome.protocol,
-                "reply": outcome.reply,
-                "reasoning": outcome.reasoning,
-                "toolCalls": outcome.tool_calls,
-                "finishReason": outcome.finish_reason,
-                "deltas": deltas,
-                "maskedSecretsCount": outcome.masked_secrets_count,
-                "inputTokens": outcome.usage.input_tokens,
-                "outputTokens": outcome.usage.output_tokens,
-                "costUsd": outcome.cost_usd,
-                "latencyMs": outcome.latency_ms,
-                "failedOverFrom": outcome.failed_over_from,
-            }))
-        }
-
-        "parseModelsDevCatalog" => {
-            let raw_json = params
-                .get("json")
-                .or_else(|| params.get("raw"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| "magpie.parseModelsDevCatalog requires 'json' string".to_string())?;
-            let now_ms = chrono::Utc::now().timestamp_millis();
-            let catalog = magpie_gateway::parse_models_dev_json(raw_json, now_ms)?;
-            Ok(json!({
-                "source": catalog.source,
-                "fetchedAtMs": catalog.fetched_at_ms,
-                "providerCount": catalog.providers.len(),
-                "providers": catalog.providers,
-            }))
-        }
-
-        "fetchModelsDevCatalog" => {
-            let force_refresh = params
-                .get("forceRefresh")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let url = params
-                .get("url")
-                .and_then(Value::as_str)
-                .unwrap_or(magpie_gateway::MODELS_DEV_API_URL);
-            let cache_path = params
-                .get("cachePath")
-                .and_then(Value::as_str)
-                .map(std::path::PathBuf::from);
-            let agent = ureq::Agent::new();
-            let catalog = magpie_gateway::fetch_models_dev_catalog_from_url(
-                &agent,
-                url,
-                cache_path.as_deref(),
-                force_refresh,
-            )?;
-            Ok(json!({
-                "source": catalog.source,
-                "fetchedAtMs": catalog.fetched_at_ms,
-                "providerCount": catalog.providers.len(),
-                "providers": catalog.providers,
-            }))
-        }
-
-        "discoverModels" => {
-            let kind_raw = params
-                .get("subscriptionKind")
-                .or_else(|| params.get("providerId"))
-                .and_then(Value::as_str)
-                .unwrap_or("codex");
-            let kind = match kind_raw.trim().to_ascii_lowercase().as_str() {
-                "google-vertex" | "vertex" | "google_vertex" => {
-                    magpie_gateway::SubscriptionKind::GoogleVertex
-                }
-                "gemini" | "google" | "gemini_code_assist" => {
-                    magpie_gateway::SubscriptionKind::GeminiCodeAssist
-                }
-                "anthropic" | "claude" | "claude_code" => {
-                    magpie_gateway::SubscriptionKind::ClaudeCode
-                }
-                "github_copilot" | "copilot" => magpie_gateway::SubscriptionKind::GitHubCopilot,
-                "antigravity" => magpie_gateway::SubscriptionKind::Antigravity,
-                "grok" | "xai" => magpie_gateway::SubscriptionKind::GrokSuperGrok,
-                _ => magpie_gateway::SubscriptionKind::CodexChatGpt,
-            };
-
-            let base_url = params.get("baseUrl").and_then(Value::as_str);
-            let bearer = params
-                .get("apiKey")
-                .or_else(|| params.get("bearerToken"))
-                .and_then(Value::as_str);
-            let project_id = params.get("projectId").and_then(Value::as_str);
-            let location = params.get("location").and_then(Value::as_str);
-            let headers = std::collections::BTreeMap::new();
-
-            let mut live_models: Vec<String> = Vec::new();
-            let mut live_error: Option<String> = None;
-            if bearer.is_some() || base_url.is_some() {
-                let agent = ureq::Agent::new();
-                match magpie_gateway::fetch_live_upstream_models(
-                    &agent,
-                    kind,
-                    base_url,
-                    bearer,
-                    &headers,
-                    project_id,
-                    location,
-                ) {
-                    Ok(m) => live_models = m,
-                    Err(e) => live_error = Some(e),
-                }
-            }
-
-            let defaults: Vec<String> = magpie_gateway::default_models_for_subscription_kind(kind)
-                .iter()
-                .map(|s| (*s).to_string())
-                .collect();
-            let merged = magpie_gateway::merge_discovered_models(&[&live_models, &defaults]);
-            Ok(json!({
-                "subscriptionKind": format!("{kind:?}"),
-                "modelsDevProvider": magpie_gateway::models_dev_provider_id_for_subscription(kind),
-                "liveCount": live_models.len(),
-                "liveError": live_error,
-                "models": merged,
-            }))
-        }
-
-        "discoverSyncableSubscriptions" => {
-            let home_dir = params
-                .get("homeDir")
-                .and_then(Value::as_str)
-                .map(std::path::PathBuf::from)
-                .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from))
-                .unwrap_or_else(|| std::path::PathBuf::from("/"));
-            let target_is_remote = params
-                .get("targetIsRemote")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
-            let items = magpie_gateway::discover_syncable_subscriptions_in_home(
-                &home_dir,
-                None,
-                target_is_remote,
-            );
-            let redacted: Vec<Value> = items
-                .iter()
-                .map(|item| {
-                    json!({
-                        "id": item.account.id,
-                        "kind": format!("{:?}", item.account.kind),
-                        "label": item.account.label,
-                        "email": item.account.email,
-                        "plan": item.account.plan,
-                        "active": item.account.active,
-                        "baseUrl": item.account.base_url,
-                        "defaultModel": item.account.default_model,
-                        "regionId": item.region_id,
-                        "hasAccessToken": item.access_token.is_some(),
-                        "hasVertexAdc": item.vertex_adc.is_some(),
-                        "hasCodexOAuth": item.codex_oauth.is_some(),
-                        "availableModels": item.available_models,
-                    })
-                })
-                .collect();
-            Ok(json!({
-                "total": redacted.len(),
-                "subscriptions": redacted,
-            }))
-        }
-
-        "sanitizeVertexSchema" => {
-            let schema = params
-                .get("schema")
-                .ok_or_else(|| "magpie.sanitizeVertexSchema requires 'schema'".to_string())?;
-            Ok(json!({
-                "sanitized": magpie_gateway::sanitize_schema_for_gemini(schema),
-            }))
-        }
-
-        "mergeGeminiFunctionResponses" => {
-            let req_val = params
-                .get("request")
-                .cloned()
-                .unwrap_or_else(|| params.clone());
-            let unified: UnifiedRequest = serde_json::from_value(req_val)
-                .map_err(|e| format!("Invalid UnifiedRequest JSON: {e}"))?;
-            let payload = magpie_gateway::build_gemini_generate_content_payload(&unified);
-            Ok(json!({ "payload": payload }))
         }
 
         other => Err(format!("Unsupported magpie method: {other}")),

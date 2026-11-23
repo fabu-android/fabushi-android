@@ -45,34 +45,81 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 enum class TelegramThemePreset(val wire: String, val label: String, val isDark: Boolean) {
-    APPLE_DAY("apple_day", "Apple Messages 明亮 (v1.6)", false),
-    APPLE_NIGHT("apple_night", "Apple Messages 深邃 (v1.6)", true),
-    APPLE_TINTED("apple_tinted", "Apple Messages 靛蓝夜色 (v1.6)", true),
-    DAY_BLUE("day_blue", "Telegram 经典蓝 (日间)", false),
-    NIGHT("night", "Telegram 深夜模式", true),
-    NIGHT_TINTED("night_tinted", "Telegram 深海蓝调", true),
-    CLASSIC_GREEN("classic_green", "经典翠绿气泡", false),
+    APPLE_DAY("apple_day", "Apple 明亮", false),
+    APPLE_NIGHT("apple_night", "Apple 深色", true),
+    APPLE_TINTED("apple_tinted", "Apple 靛蓝深色", true),
+    DAY_BLUE("day_blue", "经典蓝 (日间)", false),
+    NIGHT("night", "深夜模式", true),
+    NIGHT_TINTED("night_tinted", "深海蓝调", true),
+    CLASSIC_GREEN("classic_green", "经典翠绿", false),
     CUSTOM_ACCENT("custom_accent", "自定义主题色", false),
 }
 
 enum class TelegramWallpaperStyle(val wire: String, val label: String) {
-    DOODLE_CLASSIC("doodle_classic", "Telegram 几何涂鸦壁纸"),
+    DOODLE_CLASSIC("doodle_classic", "经典几何涂鸦"),
     OCEAN_MIST("ocean_mist", "晴空蔚蓝渐变"),
     AURORA_NIGHT("aurora_night", "极光星云深邃"),
     LOTUS_GOLD("lotus_gold", "琉璃金莲禅韵"),
     FOREST_ZEN("forest_zen", "竹林松风护眼"),
-    SOLID_MINIMAL("solid_minimal", "极简纯色无纹理"),
+    SOLID_MINIMAL("solid_minimal", "极简纯色"),
+}
+
+/** Desktop v1.6.6 canonical 8 accent swatches. */
+val DesktopV166AccentSwatches: List<Long> = listOf(
+    0xFF007AFFL,
+    0xFF40A7E3L,
+    0xFF3FC1B0L,
+    0xFF34C759L,
+    0xFFE5A030L,
+    0xFFE86C52L,
+    0xFFE16794L,
+    0xFF8544D6L,
+)
+
+/** Desktop v1.6.6 canonical 7 peer name colors per theme mode. */
+val DesktopV166PeerNameColorsDay: List<Color> = listOf(
+    Color(0xFFC03D33), Color(0xFF4FAD2D), Color(0xFFD09306), Color(0xFF168ACD),
+    Color(0xFF8544D6), Color(0xFFCD4073), Color(0xFF2996AD),
+)
+
+val DesktopV166PeerNameColorsNight: List<Color> = listOf(
+    Color(0xFFFB6169), Color(0xFF85DE85), Color(0xFFF3BC5C), Color(0xFF65BDF3),
+    Color(0xFFB48BF2), Color(0xFFFF5694), Color(0xFF62D4E3),
+)
+
+val DesktopV166PeerNameColorsTinted: List<Color> = listOf(
+    Color(0xFFEC7577), Color(0xFF86D67F), Color(0xFFE4C054), Color(0xFF68C7F3),
+    Color(0xFFB383F3), Color(0xFFE16794), Color(0xFF57C9E0),
+)
+
+/** Desktop v1.6.6 canonical 7 peer avatar gradients (indexed by peer_id % 7). */
+val DesktopV166PeerAvatarGradients: List<Pair<Color, Color>> = listOf(
+    Color(0xFFFF845E) to Color(0xFFD45246),
+    Color(0xFF9AD164) to Color(0xFF46BA43),
+    Color(0xFFECC65B) to Color(0xFFD59F36),
+    Color(0xFF5CAFFA) to Color(0xFF408ACF),
+    Color(0xFFB694F9) to Color(0xFF6C61DF),
+    Color(0xFFFF8AAC) to Color(0xFFD95574),
+    Color(0xFF5BCBE3) to Color(0xFF359AD4),
+)
+
+fun resolvePeerNameColor(peerSeed: String, palette: TelegramPalette): Color {
+    val idx = (peerSeed.hashCode() and 0x7FFFFFFF) % 7
+    return when (palette.settings.preset) {
+        TelegramThemePreset.APPLE_TINTED, TelegramThemePreset.NIGHT_TINTED -> DesktopV166PeerNameColorsTinted[idx]
+        else -> if (palette.isDark) DesktopV166PeerNameColorsNight[idx] else DesktopV166PeerNameColorsDay[idx]
+    }
 }
 
 @Immutable
 data class TelegramThemeSettings(
     val preset: TelegramThemePreset = TelegramThemePreset.APPLE_DAY,
-    val customAccentArgb: Long = 0xFF8E44ADL,
+    val customAccentArgb: Long = 0xFF007AFFL,
     val customDark: Boolean = false,
     val bubbleCornerRadiusDp: Int = 18,
     val messageFontSizeSp: Int = 16,
     val wallpaperStyle: TelegramWallpaperStyle = TelegramWallpaperStyle.SOLID_MINIMAL,
-    val wallpaperDimPercent: Int = 12,
+    val wallpaperDimPercent: Int = 0,
     val animationsEnabled: Boolean = true,
     val autoNightMode: Boolean = false,
 ) {
@@ -123,6 +170,46 @@ data class TelegramPalette(
     val isAppleStyle: Boolean = false,
     val outgoingBubbleTop: Color = outgoingBubble,
     val outgoingBubbleBottom: Color = outgoingBubble,
+    // Desktop v1.6.6 surface & interaction tokens
+    val groupedBackground: Color = appBackground,
+    val accentHover: Color = primaryAccent,
+    val inputBg: Color = elevatedSurface,
+    val cardBg: Color = surfaceColor,
+    val modalBg: Color = surfaceColor,
+    val hoverBg: Color = elevatedSurface,
+    val borderColor: Color = dividerColor,
+    val servicePillBg: Color = elevatedSurface,
+    val servicePillFg: Color = secondaryText,
+    val codeForeground: Color = primaryText,
+    // 9 mandatory WCAG/iOS contrast tokens (TEST_INFRA.md §3.3 & §5.3) + outgoing code bg
+    val outgoingCheckMarkColor: Color = checkMarkColor,
+    val outgoingLinkColor: Color = linkColor,
+    val outgoingReplyBarColor: Color = primaryAccent,
+    val outgoingReactionTextColor: Color = outgoingText,
+    val topBarActionColor: Color = if (isAppleStyle) primaryAccent else topBarContent,
+    val searchCursorColor: Color = primaryAccent,
+    val selectedPillBackground: Color = primaryAccent,
+    val selectedPillContent: Color = Color.White,
+    val unreadBadgeContent: Color = Color.White,
+    val unreadBadgeMutedContent: Color = if (isDark) Color.White else Color(0xFF1D1D1F),
+    val outgoingCodeBg: Color = when {
+        isAppleStyle -> Color(0x33000000)
+        isDark -> codeBackground
+        else -> Color.Black.copy(alpha = 0.08f)
+    },
+    val outgoingSubCardBg: Color = when {
+        isAppleStyle -> Color.Black.copy(alpha = 0.20f)
+        isDark -> Color.Black.copy(alpha = 0.20f)
+        else -> Color.Black.copy(alpha = 0.06f)
+    },
+    val outgoingSubCardSelectedBg: Color = when {
+        isAppleStyle -> Color.Black.copy(alpha = 0.30f)
+        isDark -> Color.Black.copy(alpha = 0.30f)
+        else -> Color.Black.copy(alpha = 0.12f)
+    },
+    val approveActionBg: Color = Color(0xFF1A7F37),
+    val approveActionContent: Color = Color.White,
+    val statusGreenText: Color = if (isDark) Color(0xFF30D158) else Color(0xFF146C2E),
 ) {
     val outgoingBubbleBrush: Brush
         get() = Brush.verticalGradient(listOf(outgoingBubbleTop, outgoingBubbleBottom))
@@ -137,9 +224,9 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             topBarSubtitle = Color(0xFF86868B),
             drawerHeaderStart = Color(0xFF2C95FF),
             drawerHeaderEnd = Color(0xFF007AFF),
-            appBackground = Color(0xFFF5F5F7),
+            appBackground = Color(0xFFFFFFFF),
             surfaceColor = Color(0xFFFFFFFF),
-            elevatedSurface = Color(0xFFF2F2F7),
+            elevatedSurface = Color(0xFFF3F3F5),
             primaryAccent = Color(0xFF007AFF),
             outgoingBubble = Color(0xFF007AFF),
             incomingBubble = Color(0xFFE9E9EB),
@@ -155,7 +242,7 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             goldMerit = Color(0xFFD99B26),
             linkColor = Color(0xFF007AFF),
             codeBackground = Color(0xFFE6E8EB),
-            dividerColor = Color(0x14000000),
+            dividerColor = Color.Black.copy(alpha = 0.07f),
             primaryText = Color(0xFF1D1D1F),
             secondaryText = Color(0xFF86868B),
             hintText = Color(0xFFAEAEB2),
@@ -166,6 +253,32 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             isAppleStyle = true,
             outgoingBubbleTop = Color(0xFF2C95FF),
             outgoingBubbleBottom = Color(0xFF007AFF),
+            groupedBackground = Color(0xFFF2F2F7),
+            accentHover = Color(0xFF0062CC),
+            inputBg = Color(0xFFF3F3F5),
+            cardBg = Color(0xFFF7F7F8),
+            modalBg = Color(0xFFFFFFFF),
+            hoverBg = Color(0xFFE8E8ED),
+            borderColor = Color(0xFFE5E5EA),
+            servicePillBg = Color(0xFFF2F2F7),
+            servicePillFg = Color(0xFF8E8E93),
+            codeForeground = Color(0xFF1D1D1F),
+            outgoingCheckMarkColor = Color(0xFFFFFFFF),
+            outgoingLinkColor = Color(0xFFFFFFFF),
+            outgoingReplyBarColor = Color(0xFFFFFFFF),
+            outgoingReactionTextColor = Color(0xFFFFFFFF),
+            topBarActionColor = Color(0xFF007AFF),
+            searchCursorColor = Color(0xFF007AFF),
+            selectedPillBackground = Color(0xFF007AFF),
+            selectedPillContent = Color(0xFFFFFFFF),
+            unreadBadgeContent = Color(0xFFFFFFFF),
+            unreadBadgeMutedContent = Color(0xFF1D1D1F),
+            outgoingCodeBg = Color(0x33000000),
+            outgoingSubCardBg = Color.Black.copy(alpha = 0.20f),
+            outgoingSubCardSelectedBg = Color.Black.copy(alpha = 0.30f),
+            approveActionBg = Color(0xFF1A7F37),
+            approveActionContent = Color.White,
+            statusGreenText = Color(0xFF146C2E),
         )
 
         TelegramThemePreset.APPLE_NIGHT -> TelegramPalette(
@@ -176,7 +289,7 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             drawerHeaderStart = Color(0xFF1E8FFF),
             drawerHeaderEnd = Color(0xFF0A84FF),
             appBackground = Color(0xFF1E1E1E),
-            surfaceColor = Color(0xFF1C1C1E),
+            surfaceColor = Color(0xFF242426),
             elevatedSurface = Color(0xFF2A2A2D),
             primaryAccent = Color(0xFF0A84FF),
             outgoingBubble = Color(0xFF0A84FF),
@@ -193,7 +306,7 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             goldMerit = Color(0xFFF5B841),
             linkColor = Color(0xFF409CFF),
             codeBackground = Color(0xFF2C2C2E),
-            dividerColor = Color(0x17FFFFFF),
+            dividerColor = Color.White.copy(alpha = 0.08f),
             primaryText = Color(0xFFF5F5F7),
             secondaryText = Color(0xFF98989D),
             hintText = Color(0xFF636366),
@@ -204,6 +317,32 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             isAppleStyle = true,
             outgoingBubbleTop = Color(0xFF1E8FFF),
             outgoingBubbleBottom = Color(0xFF0A84FF),
+            groupedBackground = Color(0xFF000000),
+            accentHover = Color(0xFF2994FF),
+            inputBg = Color(0xFF2A2A2D),
+            cardBg = Color(0xFF262629),
+            modalBg = Color(0xFF242426),
+            hoverBg = Color(0xFF2C2C2E),
+            borderColor = Color(0xFF38383A),
+            servicePillBg = Color(0xFF2C2C2E),
+            servicePillFg = Color(0xFF8E8E93),
+            codeForeground = Color(0xFFE5E5EA),
+            outgoingCheckMarkColor = Color(0xFFFFFFFF),
+            outgoingLinkColor = Color(0xFFFFFFFF),
+            outgoingReplyBarColor = Color(0xFFFFFFFF),
+            outgoingReactionTextColor = Color(0xFFFFFFFF),
+            topBarActionColor = Color(0xFF0A84FF),
+            searchCursorColor = Color(0xFF0A84FF),
+            selectedPillBackground = Color(0xFF0A84FF),
+            selectedPillContent = Color(0xFFFFFFFF),
+            unreadBadgeContent = Color(0xFFFFFFFF),
+            unreadBadgeMutedContent = Color(0xFFFFFFFF),
+            outgoingCodeBg = Color(0x33000000),
+            outgoingSubCardBg = Color.Black.copy(alpha = 0.20f),
+            outgoingSubCardSelectedBg = Color.Black.copy(alpha = 0.30f),
+            approveActionBg = Color(0xFF1A7F37),
+            approveActionContent = Color.White,
+            statusGreenText = Color(0xFF30D158),
         )
 
         TelegramThemePreset.APPLE_TINTED -> TelegramPalette(
@@ -214,8 +353,8 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             drawerHeaderStart = Color(0xFF1E8FFF),
             drawerHeaderEnd = Color(0xFF0A84FF),
             appBackground = Color(0xFF181C22),
-            surfaceColor = Color(0xFF161A20),
-            elevatedSurface = Color(0xFF222831),
+            surfaceColor = Color(0xFF1E232B),
+            elevatedSurface = Color(0xFF242A33),
             primaryAccent = Color(0xFF0A84FF),
             outgoingBubble = Color(0xFF0A84FF),
             incomingBubble = Color(0xFF242A33),
@@ -231,7 +370,7 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             goldMerit = Color(0xFFF5B841),
             linkColor = Color(0xFF409CFF),
             codeBackground = Color(0xFF242A33),
-            dividerColor = Color(0x17FFFFFF),
+            dividerColor = Color.White.copy(alpha = 0.08f),
             primaryText = Color(0xFFF5F7FA),
             secondaryText = Color(0xFF949DA8),
             hintText = Color(0xFF5A6370),
@@ -242,6 +381,32 @@ fun resolveTelegramPalette(settings: TelegramThemeSettings): TelegramPalette {
             isAppleStyle = true,
             outgoingBubbleTop = Color(0xFF1E8FFF),
             outgoingBubbleBottom = Color(0xFF0A84FF),
+            groupedBackground = Color(0xFF11151B),
+            accentHover = Color(0xFF2994FF),
+            inputBg = Color(0xFF242A33),
+            cardBg = Color(0xFF222831),
+            modalBg = Color(0xFF1E232B),
+            hoverBg = Color(0xFF242A33),
+            borderColor = Color(0xFF303844),
+            servicePillBg = Color(0xFF242A33),
+            servicePillFg = Color(0xFF8E96A0),
+            codeForeground = Color(0xFFE5EAF0),
+            outgoingCheckMarkColor = Color(0xFFFFFFFF),
+            outgoingLinkColor = Color(0xFFFFFFFF),
+            outgoingReplyBarColor = Color(0xFFFFFFFF),
+            outgoingReactionTextColor = Color(0xFFFFFFFF),
+            topBarActionColor = Color(0xFF0A84FF),
+            searchCursorColor = Color(0xFF0A84FF),
+            selectedPillBackground = Color(0xFF0A84FF),
+            selectedPillContent = Color(0xFFFFFFFF),
+            unreadBadgeContent = Color(0xFFFFFFFF),
+            unreadBadgeMutedContent = Color(0xFFFFFFFF),
+            outgoingCodeBg = Color(0x33000000),
+            outgoingSubCardBg = Color.Black.copy(alpha = 0.20f),
+            outgoingSubCardSelectedBg = Color.Black.copy(alpha = 0.30f),
+            approveActionBg = Color(0xFF1A7F37),
+            approveActionContent = Color.White,
+            statusGreenText = Color(0xFF30D158),
         )
 
         TelegramThemePreset.DAY_BLUE -> TelegramPalette(
@@ -526,7 +691,7 @@ fun TelegramHairlineDivider(modifier: Modifier = Modifier) {
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(0.6.dp)
+            .height(0.5.dp)
             .background(palette.dividerColor),
     )
 }

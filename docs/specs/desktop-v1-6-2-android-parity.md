@@ -1,9 +1,11 @@
 # Desktop v1.6.2 Parity Alignment for Fabushi Android — Specification
 
-Status: active
+Status: superseded
 Owner: fabu-android
-Last updated: 2026-11-22
-Related issue/task/PR: Follow-up to `docs/specs/gpui-telegram-android-production-parity.md`, aligning `fabu-android/fabushi-android` from desktop baseline `bhrum/gpui-telegram@889246e` (v1.3.0-pre) up to canonical desktop `bhrumom/gpui-telegram@9542524` (`v1.6.2`).
+Last updated: 2026-11-23
+Related issue/task/PR: Follow-up to `docs/specs/gpui-telegram-android-production-parity.md`, aligning `fabu-android/fabushi-android` from desktop baseline `bhrum/gpui-telegram@889246e` (v1.3.0-pre) up to canonical desktop `bhrumom/gpui-telegram@9542524` (`v1.6.2`); superseded on 2026-11-23 by `docs/specs/desktop-v1-6-6-apple-ios-refactor-and-real-backend.md` (`v2.3.0`, `bhrumom/gpui-telegram@6ca754cbadaad2018dfab3109a8d4a874f0c958d`).
+
+> **Supersession & Audit Notice (2026-11-23)**: This Spec trailed canonical desktop (`v1.6.2` vs `v1.6.6` `6ca754c`), and post-`v2.2.0` code audit revealed that multiple requirements marked `passed` in Section 17 were implemented only as local SQLite stubs or partial themes: (1) `R4`/`AC-4` (`codingAgent.*`) had zero `/api/v1/fabushi-bots` or `/api/v1/coding-agents/probe` calls, generated synthetic commit hashes, hardcoded all 6 providers `installed: false`, and inserted local-only fake bot chats falling through to canned AI echo; (2) `R5`/`AC-5` (`remote.*`/`computer.*`) unconditionally seeded two fake cloud nodes (`cloud-ubuntu-cua`, `cloud-ephemeral-sandbox`), ran no-op SQLite audit inserts for `computer.executeOp` (with Kotlin omitting required `"generation"`), and returned hardcoded `DirectUdp` / `rtt_ms: 18` / `fps: 60` / fake `relay_<uuid>` tokens from `remote.startAssist` with zero `/api/v1/computers*`, `/api/v1/remote/assist/*`, `/api/v1/remote/sessions*`, or `/api/v1/mcp/grants*` server calls; (3) `R3`/`AC-3` device trust ring sync never contacted `/api/v1/user-vault/*`; and (4) `R8`/`AC-8` layered `APPLE_DAY`/`APPLE_NIGHT`/`APPLE_TINTED` onto the legacy Material 3 Drawer + dual-FAB shell with severe `APPLE_DAY` contrast failures. All remaining parity and real-backend requirements are superseded and governed by **`docs/specs/desktop-v1-6-6-apple-ios-refactor-and-real-backend.md`**.
 
 ## 1. Context / problem
 

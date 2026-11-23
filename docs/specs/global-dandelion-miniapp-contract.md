@@ -1,7 +1,7 @@
 # Global Dandelion Mini App contract on Android
 
-Status: active; contract slice 2026-10-19. Android support baseline: minSdk 26,
-compileSdk/targetSdk 36 on the current GitHub Actions runner.
+Status: active; contract slice 2026-10-19. Android support baseline: minSdk 29,
+compileSdk/targetSdk 37 on the current GitHub Actions runner.
 
 ## Scope
 

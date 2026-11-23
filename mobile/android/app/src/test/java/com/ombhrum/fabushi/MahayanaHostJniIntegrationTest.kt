@@ -137,6 +137,8 @@ class MahayanaHostJniIntegrationTest {
             MahayanaHost(context, featureHostTest = false).use { host ->
                 val info = host.request("feature.info")
                 assertEquals("2.0.0", info.getString("runtimeVersion"))
+                assertEquals("1.6.6", info.getString("desktopParityVersion"))
+                assertEquals("6ca754c", info.getString("desktopParityCommit"))
 
                 // 1. 5-bit 100-bar Waveform & <60ms VAD Barge-in
                 val bars = JSONArray((0 until 100).map { it % 32 })
@@ -169,7 +171,7 @@ class MahayanaHostJniIntegrationTest {
                 val createdWallet = host.request("wallet.createWallet", JSONObject().put("label", "Android TON Vault"))
                 assertEquals(24, createdWallet.getJSONArray("mnemonic").length())
                 val nfts = host.request("wallet.collectibles")
-                assertTrue(nfts.getJSONArray("collectibles").length() >= 3)
+                assertEquals(0, nfts.getJSONArray("collectibles").length())
 
                 // 4. 全球法布施 240+ Country Globe & Sutras
                 val countries = host.request("fabushiMiniapp.countries")
@@ -188,14 +190,16 @@ class MahayanaHostJniIntegrationTest {
                 )
                 assertFalse(masked.getString("maskedText").contains("sk-1234567890abcdef"))
 
-                // 6. Cloud Computer Nodes & Mika Phone Agent Bridge Audit
+                // 6. Cloud Computer Nodes & Mika Phone Agent Bridge Audit (zero fake cloud seeds)
                 val nodes = host.request("computer.nodes")
-                assertTrue(nodes.getJSONArray("nodes").length() >= 2)
-                host.request("mika.bindChat", JSONObject().put("chatId", "bot-mika-phone").put("autoExecute", true))
+                assertEquals(1, nodes.getJSONArray("nodes").length())
+                assertEquals("local-android-mika", nodes.getJSONArray("nodes").getJSONObject(0).getString("nodeId"))
+                host.request("mika.bindChat", JSONObject().put("chatId", "mika-local-chat").put("autoExecute", true))
                 host.request(
                     "mika.registerTaskEvent",
                     JSONObject()
                         .put("taskId", "mika-jni-01")
+                        .put("stepIndex", 1)
                         .put("phase", "running")
                         .put("summary", "Verified Accessibility + VirtualDisplay bridge"),
                 )

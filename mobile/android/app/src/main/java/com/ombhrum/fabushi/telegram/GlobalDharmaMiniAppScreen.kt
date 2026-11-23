@@ -31,6 +31,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -279,10 +280,10 @@ private fun EarthOfferingGlobeTab(
     var zoomFactor by remember { mutableFloatStateOf(1.0f) }
     var autoRotate by remember { mutableStateOf(true) }
     var arcAnimPhase by remember { mutableFloatStateOf(0f) }
-    var blessingInput by remember { mutableStateOf("愿以此心灯遍照十方，世界和平，众生安乐") }
+    var blessingInput by remember { mutableStateOf("") }
     var countrySearch by remember { mutableStateOf("") }
 
-    var projectedCache by remember { mutableStateOf<List<ProjectedNode>>(emptyList()) }
+    val projectedCache = remember { java.util.concurrent.atomic.AtomicReference<List<ProjectedNode>>(emptyList()) }
 
     LaunchedEffect(autoRotate) {
         while (isActive) {
@@ -295,7 +296,7 @@ private fun EarthOfferingGlobeTab(
     }
 
     val selectedCountry = remember(dharmaState.countries, dharmaState.selectedCountryCode) {
-        dharmaState.countries.firstOrNull { it.code == dharmaState.selectedCountryCode } ?: dharmaState.countries.first()
+        dharmaState.countries.firstOrNull { it.code == dharmaState.selectedCountryCode } ?: dharmaState.countries.firstOrNull()
     }
 
     val filteredCountries = remember(dharmaState.countries, countrySearch) {
@@ -337,9 +338,9 @@ private fun EarthOfferingGlobeTab(
                             },
                         )
                     }
-                    .pointerInput(projectedCache) {
+                    .pointerInput(Unit) {
                         detectTapGestures { tap ->
-                            val hit = projectedCache
+                            val hit = projectedCache.get()
                                 .filter { it.zDepth > 0.0 }
                                 .minByOrNull { hypot((it.screenX - tap.x).toDouble(), (it.screenY - tap.y).toDouble()) }
                             if (hit != null && hypot(hit.screenX - tap.x, hit.screenY - tap.y) <= 44f) {
@@ -423,7 +424,7 @@ private fun EarthOfferingGlobeTab(
                     val (sx, sy, z) = project3D(c.latitude, c.longitude)
                     nextProjected += ProjectedNode(c, sx, sy, z)
                     if (z > 0.02) {
-                        val isSelected = c.code == selectedCountry.code
+                        val isSelected = selectedCountry != null && c.code == selectedCountry.code
                         val dotColor = when {
                             isSelected -> Color(0xFFFFF59D)
                             c.lampLitByMe -> Color(0xFFFFB300)
@@ -440,7 +441,7 @@ private fun EarthOfferingGlobeTab(
                         drawCircle(dotColor, radius = dotR, center = Offset(sx, sy))
                     }
                 }
-                projectedCache = nextProjected
+                projectedCache.set(nextProjected)
 
                 // Draw Animated Golden Offering Arcs
                 dharmaState.activeArcs.forEach { arc ->
@@ -523,73 +524,113 @@ private fun EarthOfferingGlobeTab(
             }
         }
 
+        val dharmaInputColors = OutlinedTextFieldDefaults.colors(
+            focusedTextColor = Color(0xFFFFF4D4),
+            unfocusedTextColor = Color(0xFFF5EFE0),
+            cursorColor = Color(0xFFF7D070),
+            focusedBorderColor = Color(0xFFF7D070),
+            unfocusedBorderColor = Color(0x55FFF4D4),
+            focusedContainerColor = Color(0x14FFFFFF),
+            unfocusedContainerColor = Color(0x0DFFFFFF),
+            focusedLabelColor = Color(0xFFF7D070),
+            unfocusedLabelColor = Color(0xFFD9B468),
+        )
+
         // Selected Country Offering Card
         Surface(
             shape = RoundedCornerShape(18.dp),
             color = Color.White.copy(alpha = 0.08f),
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text(
-                            text = "${selectedCountry.nameZh} · ${selectedCountry.nameEn} (${selectedCountry.code})",
-                            color = Color(0xFFFFF4D4),
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 16.sp,
-                        )
-                        Text(
-                            text = "${selectedCountry.region} · 坐标 (%.1f°, %.1f°) · 已点亮 ${"%,d".format(selectedCountry.offeringsCount)} 盏".format(
-                                selectedCountry.latitude,
-                                selectedCountry.longitude,
-                            ),
-                            color = Color(0xFFB8C7DC),
-                            fontSize = 12.sp,
-                        )
-                    }
-                    if (selectedCountry.lampLitByMe) {
-                        Surface(shape = RoundedCornerShape(10.dp), color = Color(0x33FFB300)) {
-                            Text("🪔 我已供灯", color = Color(0xFFFFD54F), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+            if (selectedCountry == null) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "正在加载真实国家/地区地理数据…",
+                        color = Color(0xFFFFF4D4),
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 15.sp,
+                    )
+                    Text(
+                        text = "国家列表来自本地 Rust 地理数据库，加载完成后即可选择任意国家点亮法灯。",
+                        color = Color(0xFFB8C7DC),
+                        fontSize = 12.sp,
+                    )
+                }
+            } else {
+                Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column {
+                            Text(
+                                text = "${selectedCountry.nameZh} · ${selectedCountry.nameEn} (${selectedCountry.code})",
+                                color = Color(0xFFFFF4D4),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                            )
+                            Text(
+                                text = "${selectedCountry.region} · 坐标 (%.1f°, %.1f°) · 已点亮 ${"%,d".format(selectedCountry.offeringsCount)} 盏".format(
+                                    selectedCountry.latitude,
+                                    selectedCountry.longitude,
+                                ),
+                                color = Color(0xFFB8C7DC),
+                                fontSize = 12.sp,
+                            )
+                        }
+                        if (selectedCountry.lampLitByMe) {
+                            Surface(shape = RoundedCornerShape(10.dp), color = Color(0x33FFB300)) {
+                                Text("已供灯", color = Color(0xFFFFD54F), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                            }
                         }
                     }
-                }
 
-                OutlinedTextField(
-                    value = blessingInput,
-                    onValueChange = { blessingInput = it },
-                    label = { Text("回向祈愿文", color = Color(0xFFD9B468)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    OutlinedTextField(
+                        value = blessingInput,
+                        onValueChange = { blessingInput = it },
+                        label = { Text("回向祈愿文") },
+                        placeholder = { Text("愿以此心灯遍照十方，世界和平，众生安乐", color = Color(0x88FFF4D4)) },
+                        singleLine = true,
+                        colors = dharmaInputColors,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
 
-                Button(
-                    onClick = { onOfferDharma(selectedCountry.code, blessingInput) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD99B26), contentColor = Color(0xFF1C1304)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("global-dharma-offer-button"),
-                ) {
-                    Text("🪔 向 ${selectedCountry.nameZh} 点亮祈福法灯 (+18 功德)", fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = { onOfferDharma(selectedCountry.code, blessingInput.trim()) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD99B26), contentColor = Color(0xFF1C1304)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("global-dharma-offer-button"),
+                    ) {
+                        Text("向 ${selectedCountry.nameZh} 点亮祈福法灯 (+18 功德)", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
 
-        // Quick Search & Country Selector Strip (240+ Regions)
+        // Quick Search & Country Selector Strip
         OutlinedTextField(
             value = countrySearch,
             onValueChange = { countrySearch = it },
-            placeholder = { Text("搜索全球 242 个国家/地区名称或 ISO 代码…", color = Color.Gray) },
+            placeholder = {
+                Text(
+                    text = if (dharmaState.countries.isNotEmpty()) {
+                        "搜索 ${dharmaState.countries.size} 个国家/地区名称或 ISO 代码…"
+                    } else {
+                        "搜索国家/地区名称或 ISO 代码…"
+                    },
+                    color = Color(0x88FFF4D4),
+                )
+            },
             singleLine = true,
+            colors = dharmaInputColors,
             modifier = Modifier.fillMaxWidth(),
         )
 
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(filteredCountries, key = { it.code }) { c ->
-                val isSel = c.code == selectedCountry.code
+                val isSel = selectedCountry != null && c.code == selectedCountry.code
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = if (isSel) Color(0xFFD99B26) else Color.White.copy(alpha = 0.08f),
@@ -601,7 +642,7 @@ private fun EarthOfferingGlobeTab(
                     },
                 ) {
                     Text(
-                        text = "${if (c.lampLitByMe) "🪔 " else ""}${c.nameZh} (${c.code})",
+                        text = "${c.nameZh} (${c.code})",
                         color = if (isSel) Color(0xFF1A1205) else Color.White,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
@@ -752,7 +793,7 @@ private fun SutrasAndMeditationTab(
     onCompletePractice: (Int) -> Unit,
 ) {
     val haptic = LocalHapticFeedback.current
-    var selectedSutraId by remember { mutableStateOf(dharmaState.sutras.first().id) }
+    var selectedSutraId by remember { mutableStateOf(dharmaState.sutras.firstOrNull()?.id.orEmpty()) }
     var sutraFontSp by remember { mutableIntStateOf(17) }
     var selectedMinutes by remember { mutableIntStateOf(15) }
     var timerRunning by remember { mutableStateOf(false) }
@@ -771,7 +812,7 @@ private fun SutrasAndMeditationTab(
         }
     }
 
-    val activeSutra = dharmaState.sutras.firstOrNull { it.id == selectedSutraId } ?: dharmaState.sutras.first()
+    val activeSutra = dharmaState.sutras.firstOrNull { it.id == selectedSutraId } ?: dharmaState.sutras.firstOrNull()
 
     Column(
         modifier = Modifier
@@ -782,7 +823,7 @@ private fun SutrasAndMeditationTab(
     ) {
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             items(dharmaState.sutras, key = { it.id }) { sutra ->
-                val sel = sutra.id == selectedSutraId
+                val sel = sutra.id == activeSutra?.id
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = if (sel) Color(0xFFD99B26) else Color.White.copy(alpha = 0.08f),
@@ -801,34 +842,40 @@ private fun SutrasAndMeditationTab(
 
         // Sutra Text Card
         Surface(shape = RoundedCornerShape(18.dp), color = Color.White.copy(alpha = 0.07f), modifier = Modifier.fillMaxWidth()) {
-            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(activeSutra.title, color = Color(0xFFFFF4D4), fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                        Text(activeSutra.tradition, color = Color(0xFFD9B468), fontSize = 12.sp)
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.12f), modifier = Modifier.size(30.dp).clickable { sutraFontSp = (sutraFontSp - 2).coerceAtLeast(13) }) {
-                            Box(contentAlignment = Alignment.Center) { Text("A-", color = Color.White, fontSize = 12.sp) }
-                        }
-                        Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.12f), modifier = Modifier.size(30.dp).clickable { sutraFontSp = (sutraFontSp + 2).coerceAtMost(26) }) {
-                            Box(contentAlignment = Alignment.Center) { Text("A+", color = Color.White, fontSize = 12.sp) }
-                        }
-                    }
+            if (activeSutra == null) {
+                Box(modifier = Modifier.fillMaxWidth().padding(20.dp), contentAlignment = Alignment.Center) {
+                    Text("暂无经典文本", color = Color(0xFFB8C7DC), fontSize = 13.sp)
                 }
-                Text(
-                    text = activeSutra.content,
-                    color = Color(0xFFF5EFE0),
-                    fontSize = sutraFontSp.sp,
-                    lineHeight = (sutraFontSp * 1.65f).sp,
-                )
-                Surface(shape = RoundedCornerShape(10.dp), color = Color(0x26FFD54F), modifier = Modifier.fillMaxWidth()) {
+            } else {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(activeSutra.title, color = Color(0xFFFFF4D4), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                            Text(activeSutra.tradition, color = Color(0xFFD9B468), fontSize = 12.sp)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.12f), modifier = Modifier.size(30.dp).clickable { sutraFontSp = (sutraFontSp - 2).coerceAtLeast(13) }) {
+                                Box(contentAlignment = Alignment.Center) { Text("A-", color = Color.White, fontSize = 12.sp) }
+                            }
+                            Surface(shape = CircleShape, color = Color.White.copy(alpha = 0.12f), modifier = Modifier.size(30.dp).clickable { sutraFontSp = (sutraFontSp + 2).coerceAtMost(26) }) {
+                                Box(contentAlignment = Alignment.Center) { Text("A+", color = Color.White, fontSize = 12.sp) }
+                            }
+                        }
+                    }
                     Text(
-                        text = "🙏 回向偈：${activeSutra.dedicationVerse}",
-                        color = Color(0xFFFFECB3),
-                        fontSize = 13.sp,
-                        modifier = Modifier.padding(10.dp),
+                        text = activeSutra.content,
+                        color = Color(0xFFF5EFE0),
+                        fontSize = sutraFontSp.sp,
+                        lineHeight = (sutraFontSp * 1.65f).sp,
                     )
+                    Surface(shape = RoundedCornerShape(10.dp), color = Color(0x26FFD54F), modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "回向偈：${activeSutra.dedicationVerse}",
+                            color = Color(0xFFFFECB3),
+                            fontSize = 13.sp,
+                            modifier = Modifier.padding(10.dp),
+                        )
+                    }
                 }
             }
         }
@@ -921,68 +968,114 @@ private fun MeritLeaderboardAndAiTab(
     onAskDharmaAi: (String) -> Unit,
 ) {
     var question by remember { mutableStateOf("") }
+    val aiInputColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color(0xFFFFF4D4),
+        unfocusedTextColor = Color(0xFFF5EFE0),
+        cursorColor = Color(0xFFF7D070),
+        focusedBorderColor = Color(0xFFF7D070),
+        unfocusedBorderColor = Color(0x55FFF4D4),
+        focusedContainerColor = Color(0x14FFFFFF),
+        unfocusedContainerColor = Color(0x0DFFFFFF),
+    )
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(14.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("🏅 修行成就勋章", color = Color(0xFFF7D070), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("修行成就勋章", color = Color(0xFFF7D070), fontWeight = FontWeight.Bold, fontSize = 15.sp)
             Spacer(Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                dharmaState.achievements.forEach { ach ->
-                    Surface(
-                        shape = RoundedCornerShape(14.dp),
-                        color = if (ach.unlocked) Color(0x28FFD54F) else Color.White.copy(alpha = 0.05f),
-                        modifier = Modifier.weight(1f),
+            if (dharmaState.achievements.isEmpty()) {
+                Surface(shape = RoundedCornerShape(14.dp), color = Color.White.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "开始供灯、转经或禅修后将记录您的真实修行成就。",
+                        color = Color(0xFFB8C7DC),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    dharmaState.achievements.forEach { ach ->
+                        Surface(
+                            shape = RoundedCornerShape(14.dp),
+                            color = if (ach.unlocked) Color(0x28FFD54F) else Color.White.copy(alpha = 0.05f),
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text(ach.icon, fontSize = 24.sp)
+                                Text(ach.title, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Text("全球共修功德随喜榜", color = Color(0xFFF7D070), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        }
+        if (dharmaState.leaderboard.isEmpty()) {
+            item {
+                Surface(shape = RoundedCornerShape(14.dp), color = Color.White.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "暂无共修排行数据。",
+                        color = Color(0xFFB8C7DC),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
+            }
+        } else {
+            items(dharmaState.leaderboard, key = { it.rank }) { row ->
+                Surface(shape = RoundedCornerShape(14.dp), color = Color.White.copy(alpha = 0.07f), modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Column(modifier = Modifier.padding(10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(ach.icon, fontSize = 24.sp)
-                            Text(ach.title, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("#${row.rank}", color = Color(0xFFF7D070), fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.width(32.dp))
+                            Column {
+                                Text("${row.name} (${row.countryCode})", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                                Text("转经 ${row.wheelsSpun} 圈", color = Color(0xFFB8C7DC), fontSize = 11.sp)
+                            }
                         }
+                        Text("${"%,d".format(row.meritPoints)} 功德", color = Color(0xFFFFD54F), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
             }
         }
 
         item {
-            Text("🌍 全球共修功德随喜榜", color = Color(0xFFF7D070), fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            Text("AI 法义问答", color = Color(0xFFF7D070), fontWeight = FontWeight.Bold, fontSize = 15.sp)
         }
-        items(dharmaState.leaderboard, key = { it.rank }) { row ->
-            Surface(shape = RoundedCornerShape(14.dp), color = Color.White.copy(alpha = 0.07f), modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+        if (dharmaState.aiDharmaMessages.isEmpty()) {
+            item {
+                Surface(shape = RoundedCornerShape(14.dp), color = Color.White.copy(alpha = 0.06f), modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "法义问答通过已配置的 Magpie AI 网关通道实时调用大模型；若尚未配置 API Key，将返回明确提示而非预设话术。",
+                        color = Color(0xFFB8C7DC),
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(12.dp),
+                    )
+                }
+            }
+        } else {
+            items(dharmaState.aiDharmaMessages) { (isUser, msg) ->
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = if (isUser) Color(0x332AABEE) else Color.White.copy(alpha = 0.09f),
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("#${row.rank}", color = Color(0xFFF7D070), fontWeight = FontWeight.Bold, fontSize = 15.sp, modifier = Modifier.width(32.dp))
-                        Column {
-                            Text("${row.name} (${row.countryCode})", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            Text("转经 ${row.wheelsSpun} 圈", color = Color(0xFFB8C7DC), fontSize = 11.sp)
-                        }
-                    }
-                    Text("${"%,d".format(row.meritPoints)} 功德", color = Color(0xFFFFD54F), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Text(
+                        text = "${if (isUser) "请益：" else "答疑："}$msg",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        lineHeight = 20.sp,
+                        modifier = Modifier.padding(12.dp),
+                    )
                 }
-            }
-        }
-
-        item {
-            Text("🪷 AI 法义善知识问答", color = Color(0xFFF7D070), fontWeight = FontWeight.Bold, fontSize = 15.sp)
-        }
-        items(dharmaState.aiDharmaMessages) { (isUser, msg) ->
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = if (isUser) Color(0x332AABEE) else Color.White.copy(alpha = 0.09f),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    text = "${if (isUser) "🙋 请益：" else "☸️ 答疑："}$msg",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    lineHeight = 20.sp,
-                    modifier = Modifier.padding(12.dp),
-                )
             }
         }
         item {
@@ -990,14 +1083,16 @@ private fun MeritLeaderboardAndAiTab(
                 OutlinedTextField(
                     value = question,
                     onValueChange = { question = it },
-                    placeholder = { Text("请益《心经》《金刚经》或日常正念修持…", color = Color.Gray) },
+                    placeholder = { Text("请益《心经》《金刚经》或日常正念修持…", color = Color(0x88FFF4D4)) },
                     singleLine = true,
+                    colors = aiInputColors,
                     modifier = Modifier.weight(1f),
                 )
                 Spacer(Modifier.width(8.dp))
                 Button(
+                    enabled = question.isNotBlank(),
                     onClick = {
-                        onAskDharmaAi(question)
+                        onAskDharmaAi(question.trim())
                         question = ""
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD99B26), contentColor = Color.Black),
@@ -1019,7 +1114,14 @@ private fun DharmaMetricBox(label: String, value: String, modifier: Modifier = M
     }
 }
 
-private fun buildEmbeddedGlobalDharmaWebMcpHtml(state: GlobalDharmaUiState): String = """
+private val SAFE_COUNTRY_CODE_REGEX = Regex("^[A-Za-z0-9_-]{1,8}$")
+
+internal fun sanitizeGlobalDharmaCountryCode(raw: String): String =
+    raw.trim().takeIf { SAFE_COUNTRY_CODE_REGEX.matches(it) } ?: "CN"
+
+internal fun buildEmbeddedGlobalDharmaWebMcpHtml(state: GlobalDharmaUiState): String {
+    val safeCode = sanitizeGlobalDharmaCountryCode(state.selectedCountryCode)
+    return """
 <!doctype html>
 <html>
 <head>
@@ -1036,9 +1138,10 @@ private fun buildEmbeddedGlobalDharmaWebMcpHtml(state: GlobalDharmaUiState): Str
     <h3>☸️ 全球法布施 · 本地 WebMCP 宿主桥</h3>
     <p>全球供养：<b>${state.totalGlobalOfferings}</b> 盏 · 我的功德：<b>${state.myMeritPoints}</b></p>
     <button onclick="window.__fabushiWebMcp.call('offline.capabilities',{}).then(r=>document.getElementById('out').innerText=JSON.stringify(r,null,2))">探测宿主能力</button>
-    <button onclick="window.__fabushiWebMcp.call('transfer.merit',{code:'${state.selectedCountryCode}',note:'WebMCP 祈福供灯'}).then(r=>document.getElementById('out').innerText=JSON.stringify(r,null,2))">WebMCP 供灯祈福</button>
+    <button onclick="window.__fabushiWebMcp.call('transfer.merit',{code:'$safeCode',note:'WebMCP 祈福供灯'}).then(r=>document.getElementById('out').innerText=JSON.stringify(r,null,2))">WebMCP 供灯祈福</button>
     <pre id="out" style="margin-top:12px;font-size:12px;color:#8be8ff;">就绪 · 点击按钮调用原生 WebMCP 工具</pre>
   </div>
 </body>
 </html>
 """.trimIndent()
+}

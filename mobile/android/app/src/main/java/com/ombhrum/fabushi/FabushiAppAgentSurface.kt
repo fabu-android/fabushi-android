@@ -25,6 +25,7 @@ class FabushiAppAgentSurface(
         const val WaitTool = "fabushi.app.wait"
         const val AssertTool = "fabushi.app.assert"
         val ToolNames = listOf(StatusTool, SnapshotTool, FindTool, ActionTool, WaitTool, AssertTool)
+        val CanonicalActions = setOf("invoke", "focus", "setValue", "pressKey", "scroll", "selectOption", "toggle")
     }
 
     data class Element(
@@ -229,7 +230,7 @@ class FabushiAppAgentSurface(
             require(!(element.sensitive && value != null)) { "sensitive_app_surface_input_requires_secure_input" }
             require(value == null || value.length <= 20_000) { "app_surface_value_too_large" }
             val binding = actions[agentId] ?: error("app_surface_action_unavailable")
-            require(action in binding.allowed) { "unsupported_app_surface_action" }
+            require(action in CanonicalActions && action in binding.allowed) { "unsupported_app_surface_action" }
             binding.invoke
         }
         callback(value)
@@ -248,6 +249,9 @@ class FabushiAppAgentSurface(
             require(element.role.length <= 80 && element.name.length <= 240) { "invalid_app_surface_element" }
         }
         require(actions.keys.all(ids::contains)) { "app_surface_action_target_missing" }
+        require(actions.values.all { binding -> binding.allowed.isNotEmpty() && binding.allowed.all(CanonicalActions::contains) }) {
+            "unsupported_app_surface_action"
+        }
     }
 
     private fun rebuildLocked() {

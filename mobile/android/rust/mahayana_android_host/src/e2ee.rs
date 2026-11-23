@@ -84,6 +84,9 @@ pub fn decode_hex_64(hex: &str) -> Result<[u8; 64], String> {
 
 pub fn decode_hex_vec(hex: &str) -> Result<Vec<u8>, String> {
     let clean = hex.trim();
+    if !clean.is_ascii() {
+        return Err("Hex string must be ASCII".into());
+    }
     if clean.len() % 2 != 0 {
         return Err("Odd hex length".into());
     }

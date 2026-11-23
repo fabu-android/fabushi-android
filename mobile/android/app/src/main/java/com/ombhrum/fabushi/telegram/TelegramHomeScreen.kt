@@ -1,23 +1,23 @@
 package com.ombhrum.fabushi.telegram
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,1248 +26,1167 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ombhrum.fabushi.ConversationKind
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
 
+/**
+ * Apple iOS Messages Home Screen (`F13`, Master Spec §8.8):
+ * - Zero Material FABs, zero Drawer hamburger button, zero raw emojis, zero duplicate search icons
+ * - Large iOS title (`信息` / `Messages`), top-left `编辑` bulk edit mode (operating on ALL selected chats),
+ *   top-right iOS Compose square-and-pen button (always accessible for Add Contact / DM / Group / Channel / Secret / Bot)
+ * - Single inline rounded `10dp` search pill wired to real `serverSearchResults` + local chat matches
+ * - Authentic 3-column circular Pinned Chats avatar grid powered by `partitionPinnedChatsGrid(chats)`
+ * - Clean `68dp` iOS conversation rows with `0.5dp` indented hairlines and dp-density smooth swipe actions
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun TelegramHomeScreen(
     state: TelegramUiState,
-    onOpenDrawer: () -> Unit,
-    onLockAppNow: () -> Unit,
-    onSetGlobalSearch: (Boolean, String, GlobalSearchFilter) -> Unit,
     onSelectFolder: (String) -> Unit,
-    onOpenFolderSettings: () -> Unit,
     onToggleArchiveExpanded: () -> Unit,
-    onOpenStory: (String) -> Unit,
-    onCloseStory: () -> Unit,
-    onCreateStory: (String, String, Int) -> Unit,
+    onGlobalSearchChange: (Boolean, String, GlobalSearchFilter) -> Unit,
     onOpenChat: (String) -> Unit,
-    onToggleChatSelection: (String) -> Unit,
-    onClearChatSelection: () -> Unit,
-    onPinChat: (String) -> Unit,
-    onArchiveChat: (String) -> Unit,
-    onMuteChat: (String) -> Unit,
+    onToggleSelectChat: (String) -> Unit,
+    onClearSelection: () -> Unit,
+    onTogglePinChat: (String) -> Unit,
+    onToggleArchiveChat: (String) -> Unit,
+    onToggleMuteChat: (String) -> Unit,
     onToggleUnreadChat: (String) -> Unit,
-    onRequestCreateKind: (ConversationKind) -> Unit,
-    onAddContact: (username: String, kind: String) -> Unit = { _, _ -> },
-    onSignOut: () -> Unit = {},
-    onNavigateSubScreen: (TelegramSubScreen) -> Unit = {},
+    onDeleteChat: (String) -> Unit,
+    onCreateDialogKind: (ConversationKind) -> Unit,
+    onOpenBotFather: () -> Unit,
+    onAddContactByUsername: (String) -> Unit,
+    onLockAppNow: () -> Unit,
+    onRefreshChats: () -> Unit,
 ) {
     val palette = LocalTelegramPalette.current
-    var showCreateStoryDialog by remember { mutableStateOf(false) }
-    var showNewMessageSheet by remember { mutableStateOf(false) }
+    val strings = LocalAppleUiStrings.current
+    val density = LocalDensity.current
+
+    var editMode by remember { mutableStateOf(false) }
+    var showComposeSheet by remember { mutableStateOf(false) }
     var showAddContactDialog by remember { mutableStateOf(false) }
-    var storiesCollapsed by remember { mutableStateOf(false) }
+    var addContactInput by remember { mutableStateOf("") }
+    var pinnedContextChatId by remember { mutableStateOf<String?>(null) }
 
-    val activeFolder = state.folderTabs.firstOrNull { it.id == state.selectedFolderId } ?: state.folderTabs.first()
+    val selectedTab = remember(state.folderTabs, state.selectedFolderId) {
+        state.folderTabs.firstOrNull { it.id == state.selectedFolderId } ?: state.folderTabs.firstOrNull()
+    }
+
+    val nonArchivedChats = remember(state.chats, selectedTab) {
+        state.chats.filter { ch ->
+            !ch.isArchived && (selectedTab == null || TelegramFolderFilter.matches(selectedTab, ch))
+        }
+    }
     val archivedChats = remember(state.chats) { state.chats.filter { it.isArchived } }
-    val visibleChats = remember(state.chats, activeFolder, state.globalSearchActive, state.globalSearchQuery) {
-        if (state.globalSearchActive && state.globalSearchQuery.isNotBlank()) {
-            val q = state.globalSearchQuery.trim()
-            state.chats.filter {
-                it.title.contains(q, ignoreCase = true) ||
-                    it.preview.contains(q, ignoreCase = true) ||
-                    (it.username?.contains(q, ignoreCase = true) == true)
-            }
-        } else {
-            state.chats.filter { TelegramFolderFilter.matches(activeFolder, it) }
+    val pinnedLayout = remember(nonArchivedChats) { partitionPinnedChatsGrid(nonArchivedChats) }
+    val unpinnedChats = remember(nonArchivedChats) { nonArchivedChats.filter { !it.isPinned } }
+
+    // Search results merging local chats + real serverSearchResults + local cached messages
+    val searchQuery = state.globalSearchQuery.trim()
+    val matchedChats = remember(state.chats, searchQuery) {
+        if (searchQuery.isBlank()) emptyList()
+        else state.chats.filter {
+            it.title.contains(searchQuery, ignoreCase = true) ||
+                it.preview.contains(searchQuery, ignoreCase = true) ||
+                (it.username?.contains(searchQuery, ignoreCase = true) == true)
         }
     }
-    // Stable pinned vs regular split (matches desktop v1.6.5 render_pinned_chats_grid anti-flicker ordering)
-    val pinnedChats = remember(visibleChats, palette.isAppleStyle, state.globalSearchActive) {
-        if (palette.isAppleStyle && !state.globalSearchActive) {
-            visibleChats.filter { it.isPinned }.sortedBy { it.id }
-        } else emptyList()
-    }
-    val listChats = remember(visibleChats, pinnedChats) {
-        if (pinnedChats.isEmpty()) visibleChats
+    val matchedMessages = remember(state.serverSearchResults, state.messagesByChat, searchQuery) {
+        if (searchQuery.isBlank()) emptyList()
         else {
-            val pinnedIds = pinnedChats.map { it.id }.toSet()
-            visibleChats.filterNot { it.id in pinnedIds }
+            val combined = LinkedHashMap<String, TelegramMessageItem>()
+            state.serverSearchResults.forEach { combined["${it.conversationId}:${it.id}"] = it }
+            state.messagesByChat.values.flatten()
+                .filter { it.text.contains(searchQuery, ignoreCase = true) }
+                .forEach { combined.putIfAbsent("${it.conversationId}:${it.id}", it) }
+            combined.values.toList()
         }
     }
 
-    val globalMessageMatches = remember(state.messagesByChat, state.globalSearchActive, state.globalSearchQuery, state.globalSearchFilter) {
-        if (!state.globalSearchActive) emptyList()
-        else {
-            val q = state.globalSearchQuery.trim()
-            state.messagesByChat.values.flatten().filter { msg ->
-                val filterMatch = when (state.globalSearchFilter) {
-                    GlobalSearchFilter.CHATS -> q.isNotBlank() && msg.text.contains(q, ignoreCase = true)
-                    GlobalSearchFilter.MEDIA -> msg.contentType in setOf("photo", "video", "videoNote", "gif")
-                    GlobalSearchFilter.LINKS -> msg.entities.any { it.type == MessageEntityType.URL || it.type == MessageEntityType.TEXT_URL } || msg.text.contains("http")
-                    GlobalSearchFilter.FILES -> msg.contentType == "document"
-                    GlobalSearchFilter.MUSIC -> msg.contentType == "audio"
-                    GlobalSearchFilter.VOICE -> msg.contentType == "voice"
-                }
-                filterMatch && (q.isBlank() || msg.text.contains(q, ignoreCase = true) || (msg.mediaFileName?.contains(q, ignoreCase = true) == true))
-            }
-        }
-    }
+    val isSelecting = editMode || state.selectedChatIds.isNotEmpty()
 
-    Box(modifier = Modifier.fillMaxSize().background(palette.surfaceColor)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(palette.appBackground)
+            .testTag("telegram-home-screen"),
+    ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            when {
-                state.selectedChatIds.isNotEmpty() -> {
-                    BackHandler(onBack = onClearChatSelection)
-                    val firstSelected = state.selectedChatIds.first()
+            // Apple iOS Top Navigation Bar (Edit | Title | Lock? + Compose)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(palette.topBarBackground)
+                    .statusBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = if (isSelecting) strings.done else strings.edit,
+                        color = palette.topBarActionColor,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                if (isSelecting) {
+                                    editMode = false
+                                    onClearSelection()
+                                } else {
+                                    editMode = true
+                                }
+                            }
+                            .padding(horizontal = 4.dp, vertical = 4.dp)
+                            .testTag("home-edit-button"),
+                    )
+
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(palette.topBarBackground)
-                            .statusBarsPadding()
-                            .height(56.dp)
-                            .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Box(
-                            modifier = Modifier.size(40.dp).clip(CircleShape).clickable(onClick = onClearChatSelection),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            TelegramIcon(TelegramGlyph.CLOSE, tint = palette.topBarContent)
-                        }
-                        Spacer(Modifier.width(12.dp))
-                        Text(
-                            text = "已选 ${state.selectedChatIds.size} 项",
-                            color = palette.topBarContent,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        IconButtonCircle(TelegramGlyph.PIN, palette.topBarContent) {
-                            state.selectedChatIds.forEach(onPinChat)
-                        }
-                        IconButtonCircle(TelegramGlyph.MUTE, palette.topBarContent) {
-                            state.selectedChatIds.forEach(onMuteChat)
-                        }
-                        IconButtonCircle(TelegramGlyph.ARCHIVE, palette.topBarContent) {
-                            state.selectedChatIds.forEach(onArchiveChat)
-                        }
-                        TextButton(onClick = { onToggleUnreadChat(firstSelected) }) {
-                            Text("未读/已读", color = palette.topBarContent, fontSize = 12.sp)
-                        }
-                    }
-                }
-
-                state.globalSearchActive -> {
-                    BackHandler { onSetGlobalSearch(false, "", GlobalSearchFilter.CHATS) }
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(palette.topBarBackground)
-                            .statusBarsPadding(),
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButtonCircle(TelegramGlyph.BACK, palette.topBarContent) {
-                                onSetGlobalSearch(false, "", GlobalSearchFilter.CHATS)
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            BasicTextField(
-                                value = state.globalSearchQuery,
-                                onValueChange = { onSetGlobalSearch(true, it, state.globalSearchFilter) },
-                                singleLine = true,
-                                textStyle = TextStyle(color = palette.topBarContent, fontSize = 16.sp),
-                                cursorBrush = SolidColor(Color.White),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("telegram-global-search-input"),
-                                decorationBox = { inner ->
-                                    if (state.globalSearchQuery.isEmpty()) {
-                                        Text("搜索对话、消息、链接、语音…", color = palette.topBarSubtitle, fontSize = 15.sp)
-                                    }
-                                    inner()
-                                },
-                            )
-                            if (state.globalSearchQuery.isNotEmpty()) {
-                                IconButtonCircle(TelegramGlyph.CLOSE, palette.topBarContent) {
-                                    onSetGlobalSearch(true, "", state.globalSearchFilter)
-                                }
-                            }
-                        }
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            items(GlobalSearchFilter.entries) { filter ->
-                                val selected = state.globalSearchFilter == filter
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(if (selected) Color.White.copy(alpha = 0.22f) else Color.Transparent)
-                                        .clickable { onSetGlobalSearch(true, state.globalSearchQuery, filter) }
-                                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                                ) {
-                                    Text(
-                                        text = filter.label,
-                                        color = if (selected) Color.White else palette.topBarSubtitle,
-                                        fontSize = 13.sp,
-                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                else -> {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(palette.topBarBackground)
-                            .statusBarsPadding(),
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(56.dp)
-                                .padding(horizontal = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
+                        if (state.passcodeConfigured) {
                             Box(
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(32.dp)
                                     .clip(CircleShape)
-                                    .clickable(onClick = onOpenDrawer)
-                                    .testTag("telegram-drawer-button"),
+                                    .clickable(onClick = onLockAppNow)
+                                    .testTag("telegram-passcode-lock-button"),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                TelegramIcon(TelegramGlyph.HAMBURGER, tint = palette.topBarContent, size = 22.dp)
-                            }
-                            Spacer(Modifier.width(8.dp))
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable { storiesCollapsed = !storiesCollapsed },
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        text = state.syncStatusLabel,
-                                        color = palette.topBarContent,
-                                        fontSize = 19.sp,
-                                        fontWeight = FontWeight.Bold,
-                                    )
-                                    val totalUnread = state.chats.filter { !it.isArchived }.sumOf { it.unreadCount }
-                                    if (totalUnread > 0) {
-                                        Spacer(Modifier.width(8.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(10.dp))
-                                                .background(Color.White.copy(alpha = 0.22f))
-                                                .padding(horizontal = 7.dp, vertical = 1.dp),
-                                        ) {
-                                            Text(totalUnread.toString(), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            }
-                            IconButtonCircle(
-                                glyph = if (state.passcodeConfigured) TelegramGlyph.LOCK_OPEN else TelegramGlyph.LOCK_CLOSED,
-                                tint = palette.topBarContent,
-                                testTag = "telegram-passcode-lock-button",
-                                onClick = onLockAppNow,
-                            )
-                            IconButtonCircle(
-                                glyph = TelegramGlyph.SEARCH,
-                                tint = palette.topBarContent,
-                                testTag = "telegram-search-button",
-                                onClick = { onSetGlobalSearch(true, "", GlobalSearchFilter.CHATS) },
-                            )
-                        }
-
-                        AnimatedVisibility(visible = !storiesCollapsed && state.stories.isNotEmpty()) {
-                            LazyRow(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 10.dp),
-                                contentPadding = PaddingValues(horizontal = 14.dp),
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            ) {
-                                item(key = "add-story") {
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .width(62.dp)
-                                            .clickable { showCreateStoryDialog = true },
-                                    ) {
-                                        Box(modifier = Modifier.size(54.dp), contentAlignment = Alignment.Center) {
-                                            TelegramAvatar(
-                                                idSeed = state.activeAccount?.avatarSeed ?: "me",
-                                                title = state.activeAccount?.displayName ?: "我",
-                                                size = 50.dp,
-                                            )
-                                            Box(
-                                                modifier = Modifier
-                                                    .align(Alignment.BottomEnd)
-                                                    .size(20.dp)
-                                                    .clip(CircleShape)
-                                                    .background(Color.White),
-                                                contentAlignment = Alignment.Center,
-                                            ) {
-                                                TelegramIcon(TelegramGlyph.PLUS, tint = palette.topBarBackground, size = 13.dp)
-                                            }
-                                        }
-                                        Spacer(Modifier.height(4.dp))
-                                        Text("发快拍", color = palette.topBarContent, fontSize = 11.sp, maxLines = 1)
-                                    }
-                                }
-                                items(state.stories, key = { it.id }) { story ->
-                                    Column(
-                                        horizontalAlignment = Alignment.CenterHorizontally,
-                                        modifier = Modifier
-                                            .width(62.dp)
-                                            .clickable { onOpenStory(story.id) },
-                                    ) {
-                                        val ringBrush = if (story.viewed) {
-                                            Brush.linearGradient(listOf(Color.White.copy(alpha = 0.35f), Color.White.copy(alpha = 0.35f)))
-                                        } else {
-                                            Brush.linearGradient(listOf(Color(0xFF38EF7D), Color(0xFF2AABEE), Color(0xFFFFD54F)))
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .size(54.dp)
-                                                .clip(CircleShape)
-                                                .border(2.2.dp, ringBrush, CircleShape)
-                                                .padding(3.dp),
-                                            contentAlignment = Alignment.Center,
-                                        ) {
-                                            TelegramAvatar(idSeed = story.avatarSeed, title = story.authorName, size = 46.dp)
-                                        }
-                                        Spacer(Modifier.height(4.dp))
-                                        Text(
-                                            text = story.authorName,
-                                            color = palette.topBarContent,
-                                            fontSize = 11.sp,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                        )
-                                    }
-                                }
+                                TelegramIcon(TelegramGlyph.LOCK_CLOSED, tint = palette.topBarActionColor, size = 18.dp)
                             }
                         }
-
-                        if (palette.isAppleStyle) {
-                            // Inline Apple Messages Pill Search Bar (matches desktop sidebar_main_render)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 14.dp, vertical = 6.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(palette.elevatedSurface)
-                                    .clickable { onSetGlobalSearch(true, "", GlobalSearchFilter.CHATS) }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp)
-                                    .testTag("apple-inline-search-pill"),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                TelegramIcon(TelegramGlyph.SEARCH, tint = palette.hintText, size = 15.dp)
-                                Spacer(Modifier.width(8.dp))
-                                Text("搜索会话、联系人、消息…", color = palette.hintText, fontSize = 14.sp)
-                            }
-                        }
-
-                        LazyRow(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = if (palette.isAppleStyle) 4.dp else 0.dp),
-                            horizontalArrangement = Arrangement.spacedBy(if (palette.isAppleStyle) 6.dp else 4.dp),
-                        ) {
-                            items(state.folderTabs, key = { it.id }) { tab ->
-                                val isSelected = tab.id == state.selectedFolderId
-                                val tabUnread = state.chats.count { TelegramFolderFilter.matches(tab, it) && (it.unreadCount > 0 || it.markedUnread) }
-                                val selectedTabFg = if (palette.isAppleStyle) Color.White else Color.White
-                                val unselectedTabFg = if (palette.isAppleStyle) palette.secondaryText else palette.topBarSubtitle
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(if (palette.isAppleStyle) 999.dp else 8.dp))
-                                        .background(
-                                            if (palette.isAppleStyle && isSelected) palette.primaryAccent
-                                            else if (palette.isAppleStyle) palette.elevatedSurface
-                                            else Color.Transparent,
-                                        )
-                                        .clickable { onSelectFolder(tab.id) }
-                                        .padding(horizontal = 12.dp, vertical = if (palette.isAppleStyle) 6.dp else 8.dp),
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = tab.title,
-                                            color = if (isSelected) selectedTabFg else unselectedTabFg,
-                                            fontSize = 13.5.sp,
-                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium,
-                                        )
-                                        if (tabUnread > 0) {
-                                            Spacer(Modifier.width(5.dp))
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(9.dp))
-                                                    .background(
-                                                        if (palette.isAppleStyle && isSelected) Color.White.copy(alpha = 0.28f)
-                                                        else if (palette.isAppleStyle) palette.primaryAccent
-                                                        else if (isSelected) Color.White
-                                                        else Color.White.copy(alpha = 0.25f),
-                                                    )
-                                                    .padding(horizontal = 6.dp, vertical = 1.dp),
-                                            ) {
-                                                Text(
-                                                    text = tabUnread.toString(),
-                                                    color = if (!palette.isAppleStyle && isSelected) palette.topBarBackground else Color.White,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                )
-                                            }
-                                        }
-                                    }
-                                    if (!palette.isAppleStyle) {
-                                        Spacer(Modifier.height(6.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .width(28.dp)
-                                                .height(3.dp)
-                                                .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
-                                                .background(if (isSelected) Color.White else Color.Transparent),
-                                        )
-                                    }
-                                }
-                            }
-                            item(key = "manage-folders") {
-                                Box(
-                                    modifier = Modifier
-                                        .padding(horizontal = 4.dp, vertical = 4.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .clickable(onClick = onOpenFolderSettings)
-                                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    TelegramIcon(TelegramGlyph.FOLDER, tint = palette.topBarSubtitle, size = 18.dp)
-                                }
-                            }
-                        }
-                        if (palette.isAppleStyle) {
-                            Spacer(Modifier.height(4.dp))
-                            TelegramHairlineDivider()
-                        }
-                    }
-                }
-            }
-
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(palette.surfaceColor)
-                    .testTag("telegram-chat-list"),
-                contentPadding = PaddingValues(bottom = 84.dp),
-            ) {
-                // Desktop v1.6.0-v1.6.5 Apple Messages 3-Column Pinned Chats Avatar Grid
-                if (pinnedChats.isNotEmpty()) {
-                    item(key = "apple-pinned-grid") {
-                        Column(
+                        Box(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
-                                .testTag("apple-pinned-chats-grid"),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .clickable { showComposeSheet = true }
+                                .testTag("home-compose-button"),
+                            contentAlignment = Alignment.Center,
                         ) {
-                            pinnedChats.chunked(3).forEach { rowItems ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = if (rowItems.size < 3) Arrangement.SpaceEvenly else Arrangement.SpaceBetween,
-                                ) {
-                                    rowItems.forEach { pinned ->
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier
-                                                .width(92.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .combinedClickable(
-                                                    onClick = { onOpenChat(pinned.id) },
-                                                    onLongClick = { onToggleChatSelection(pinned.id) },
-                                                )
-                                                .padding(vertical = 4.dp),
-                                        ) {
-                                            Box(contentAlignment = Alignment.Center) {
-                                                TelegramAvatar(
-                                                    idSeed = pinned.id,
-                                                    title = pinned.title,
-                                                    size = 56.dp,
-                                                    kind = pinned.kind,
-                                                    online = pinned.online,
-                                                    isSecret = pinned.isSecretChat,
-                                                    isCompanionGhost = pinned.isCompanionGhost,
-                                                )
-                                                if (pinned.unreadCount > 0) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .align(Alignment.TopEnd)
-                                                            .clip(CircleShape)
-                                                            .background(if (pinned.isMuted) palette.unreadBadgeMuted else palette.primaryAccent)
-                                                            .padding(horizontal = 6.dp, vertical = 1.dp),
-                                                    ) {
-                                                        Text(
-                                                            text = if (pinned.unreadCount > 99) "99+" else pinned.unreadCount.toString(),
-                                                            color = Color.White,
-                                                            fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Bold,
-                                                        )
-                                                    }
-                                                }
-                                            }
-                                            Spacer(Modifier.height(5.dp))
-                                            Text(
-                                                text = pinned.title,
-                                                color = palette.primaryText,
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            TelegramHairlineDivider()
+                            TelegramIcon(TelegramGlyph.COMPOSE_SQUARE_PEN, tint = palette.topBarActionColor, size = 21.dp)
                         }
                     }
                 }
 
-                if (!state.globalSearchActive && state.selectedFolderId == "all" && archivedChats.isNotEmpty()) {
-                    item(key = "archived-header") {
-                        Column {
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(palette.elevatedSurface.copy(alpha = 0.55f))
-                                    .clickable(onClick = onToggleArchiveExpanded)
-                                    .padding(horizontal = 14.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(46.dp)
-                                        .clip(CircleShape)
-                                        .background(palette.unreadBadgeMuted),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    TelegramIcon(TelegramGlyph.ARCHIVE, tint = Color.White, size = 22.dp)
-                                }
-                                Spacer(Modifier.width(12.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("已归档对话", color = palette.primaryText, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                                    Text(
-                                        text = archivedChats.joinToString(" · ") { it.title },
-                                        color = palette.secondaryText,
-                                        fontSize = 13.sp,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(palette.unreadBadgeMuted)
-                                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                                ) {
-                                    Text("${archivedChats.size} ${if (state.archiveExpanded) "▴" else "▾"}", color = Color.White, fontSize = 12.sp)
-                                }
-                            }
-                            TelegramHairlineDivider()
-                        }
-                    }
-                    if (state.archiveExpanded) {
-                        items(archivedChats, key = { "arch-${it.id}" }) { archivedChat ->
-                            SwipeableTelegramChatRow(
-                                chat = archivedChat,
-                                selected = archivedChat.id in state.selectedChatIds,
-                                selectionMode = state.selectedChatIds.isNotEmpty(),
-                                onClick = {
-                                    if (state.selectedChatIds.isNotEmpty()) onToggleChatSelection(archivedChat.id)
-                                    else onOpenChat(archivedChat.id)
-                                },
-                                onLongClick = { onToggleChatSelection(archivedChat.id) },
-                                onSwipeArchive = { onArchiveChat(archivedChat.id) },
-                                onSwipePin = { onPinChat(archivedChat.id) },
-                            )
-                        }
-                    }
-                }
+                Spacer(Modifier.height(4.dp))
 
-                if (!state.globalSearchActive || state.globalSearchFilter == GlobalSearchFilter.CHATS) {
-                    items(listChats, key = { it.id }) { chat ->
-                        SwipeableTelegramChatRow(
-                            chat = chat,
-                            selected = chat.id in state.selectedChatIds,
-                            selectionMode = state.selectedChatIds.isNotEmpty(),
-                            onClick = {
-                                if (state.selectedChatIds.isNotEmpty()) onToggleChatSelection(chat.id)
-                                else onOpenChat(chat.id)
-                            },
-                            onLongClick = { onToggleChatSelection(chat.id) },
-                            onSwipeArchive = { onArchiveChat(chat.id) },
-                            onSwipePin = { onPinChat(chat.id) },
-                        )
-                    }
-                }
-
-                if (state.globalSearchActive && globalMessageMatches.isNotEmpty()) {
-                    item(key = "global-msg-header") {
-                        Text(
-                            text = "全局消息与内容检索 (${globalMessageMatches.size})",
-                            color = palette.primaryAccent,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(palette.elevatedSurface)
-                                .padding(horizontal = 16.dp, vertical = 8.dp),
-                        )
-                    }
-                    items(globalMessageMatches, key = { "fts-${it.id}" }) { msg ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { onOpenChat(msg.conversationId) }
-                                .padding(horizontal = 16.dp, vertical = 10.dp),
+                // Large iOS Title + subtle real sync status pill
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = strings.tabMessages,
+                        color = palette.topBarContent,
+                        fontSize = 32.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    if (state.syncStatusLabel == "同步中…" || !state.serverWsConnected && state.isAuthenticated) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = palette.inputBg,
+                            modifier = Modifier.clickable(onClick = onRefreshChats),
                         ) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text(msg.senderName, color = palette.primaryText, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                                Text(msg.time, color = palette.hintText, fontSize = 12.sp)
-                            }
-                            Spacer(Modifier.height(2.dp))
-                            Text(msg.text, color = palette.secondaryText, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                        TelegramHairlineDivider()
-                    }
-                }
-
-                if (visibleChats.isEmpty() && (!state.globalSearchActive || globalMessageMatches.isEmpty())) {
-                    item(key = "empty-folder") {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 28.dp, vertical = 48.dp)
-                                .testTag("telegram-empty-chats-state"),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            Text("💬", fontSize = 36.sp)
                             Text(
-                                text = if (state.isAuthenticated) "暂无会话" else "本机离线模式 · 暂无会话",
-                                color = palette.primaryText,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = if (state.isAuthenticated) {
-                                    "已连接 ${state.serverEndpoint} · 添加联系人或新建群组开始对话"
-                                } else {
-                                    "登录与桌面端一致的账号同步云端消息，或直接新建本地会话 / 打开 Mika 智能体"
-                                },
+                                text = state.syncStatusLabel.ifBlank { if (strings.isEnglish) "Syncing" else "连接中" },
                                 color = palette.secondaryText,
-                                fontSize = 13.sp,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                             )
-                            Spacer(Modifier.height(4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Button(
-                                    onClick = { showAddContactDialog = true },
-                                    shape = RoundedCornerShape(999.dp),
-                                ) {
-                                    Text("添加联系人 / 机器人")
-                                }
-                                TextButton(onClick = { onRequestCreateKind(ConversationKind.GROUP) }) {
-                                    Text("新建群组", color = palette.primaryAccent)
-                                }
-                            }
-                            if (!state.isAuthenticated) {
-                                TextButton(onClick = onSignOut) {
-                                    Text("去登录云端账号 →", color = palette.primaryAccent, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
                         }
                     }
                 }
-            }
 
-            // Desktop UnifiedNavRail parity: Apple Messages translucent bottom navigation bar
-            if (!state.globalSearchActive && state.selectedChatIds.isEmpty()) {
-                TelegramHairlineDivider()
+                Spacer(Modifier.height(10.dp))
+
+                // Single Inline Rounded Pill Search Bar (10dp radius, contrast-safe cursor!)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(palette.topBarBackground)
-                        .navigationBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                        .testTag("apple-bottom-nav-bar"),
-                    horizontalArrangement = Arrangement.SpaceAround,
+                        .height(38.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(palette.inputBg)
+                        .padding(horizontal = 10.dp)
+                        .testTag("apple-inline-search-pill"),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    listOf(
-                        Triple(TelegramSubScreen.HOME, "💬", "信息"),
-                        Triple(TelegramSubScreen.CONTACTS, "👥", "联系人"),
-                        Triple(TelegramSubScreen.BOTFATHER, "🤖", "智能体"),
-                        Triple(TelegramSubScreen.CLOUD_COMPUTER, "🖥", "云电脑"),
-                        Triple(TelegramSubScreen.SETTINGS, "⚙️", "设置"),
-                    ).forEach { (dest, icon, label) ->
-                        val active = state.subScreen == dest
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
-                                .clickable { onNavigateSubScreen(dest) }
-                                .padding(horizontal = 10.dp, vertical = 4.dp),
-                        ) {
-                            Text(icon, fontSize = 18.sp)
+                    TelegramIcon(TelegramGlyph.SEARCH, tint = palette.secondaryText, size = 16.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        if (state.globalSearchQuery.isEmpty()) {
                             Text(
-                                text = label,
-                                color = if (active) palette.primaryAccent else palette.secondaryText,
-                                fontSize = 10.5.sp,
-                                fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                                text = strings.searchPlaceholder,
+                                color = palette.secondaryText,
+                                fontSize = 15.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
+                        }
+                        BasicTextField(
+                            value = state.globalSearchQuery,
+                            onValueChange = { q ->
+                                onGlobalSearchChange(q.isNotEmpty(), q, state.globalSearchFilter)
+                            },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = palette.primaryText,
+                                fontSize = 15.sp,
+                            ),
+                            cursorBrush = SolidColor(palette.searchCursorColor),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("telegram-global-search-input"),
+                        )
+                    }
+                    if (state.globalSearchQuery.isNotEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .size(22.dp)
+                                .clip(CircleShape)
+                                .background(palette.hintText.copy(alpha = 0.35f))
+                                .clickable { onGlobalSearchChange(false, "", GlobalSearchFilter.CHATS) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TelegramIcon(TelegramGlyph.CLOSE, tint = palette.primaryText, size = 12.dp)
+                        }
+                    }
+                }
+
+                // Folder Filter Pills (only when not searching and >1 tabs exist)
+                if (!state.globalSearchActive && state.folderTabs.size > 1) {
+                    Spacer(Modifier.height(10.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        itemsIndexed(state.folderTabs, key = { index, tab -> "folder_${index}_${tab.id}" }) { _, tab ->
+                            val selected = tab.id == state.selectedFolderId
+                            Surface(
+                                shape = RoundedCornerShape(16.dp),
+                                color = if (selected) palette.selectedPillBackground else palette.inputBg,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .clickable { onSelectFolder(tab.id) },
+                            ) {
+                                Text(
+                                    text = tab.title,
+                                    color = if (selected) palette.selectedPillContent else palette.primaryText,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Search Filter Pills when searching (fixed APPLE_DAY contrast!)
+                if (state.globalSearchActive) {
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(GlobalSearchFilter.entries) { filter ->
+                            val selected = filter == state.globalSearchFilter
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (selected) palette.selectedPillBackground else palette.inputBg,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .clickable { onGlobalSearchChange(true, state.globalSearchQuery, filter) },
+                            ) {
+                                Text(
+                                    text = filter.label,
+                                    color = if (selected) palette.selectedPillContent else palette.primaryText,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 11.dp, vertical = 5.dp),
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bulk Selection Action Bar (operates on ALL selectedChatIds; scrollable & compact for 360dp screens)
+            if (state.selectedChatIds.isNotEmpty()) {
+                val selectedChats = state.selectedChatIds.mapNotNull { id ->
+                    state.chats.firstOrNull { it.id == id }
+                }
+                val unreadSelectedIds = selectedChats
+                    .filter { it.unreadCount > 0 || it.markedUnread }
+                    .map { it.id }
+                val bulkReadLabel = if (unreadSelectedIds.isNotEmpty() || selectedChats.isEmpty()) {
+                    strings.markReadAction
+                } else {
+                    strings.markUnreadAction
+                }
+                val compactButtonPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                val compactButtonMod = Modifier.defaultMinSize(minWidth = 1.dp, minHeight = 36.dp)
+
+                Surface(
+                    color = palette.cardBg,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = if (strings.isEnglish) "${state.selectedChatIds.size} selected" else "已选 ${state.selectedChatIds.size} 项",
+                            color = palette.primaryText,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp, Alignment.End),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    state.selectedChatIds.toList().forEach(onTogglePinChat)
+                                    onClearSelection()
+                                    editMode = false
+                                },
+                                contentPadding = compactButtonPadding,
+                                modifier = compactButtonMod,
+                            ) { Text(strings.pinAction, color = palette.topBarActionColor, fontSize = 12.sp, maxLines = 1) }
+                            TextButton(
+                                onClick = {
+                                    state.selectedChatIds.toList().forEach(onToggleMuteChat)
+                                    onClearSelection()
+                                    editMode = false
+                                },
+                                contentPadding = compactButtonPadding,
+                                modifier = compactButtonMod,
+                            ) { Text(strings.muteAction, color = palette.topBarActionColor, fontSize = 12.sp, maxLines = 1) }
+                            TextButton(
+                                onClick = {
+                                    val targets = unreadSelectedIds.ifEmpty { state.selectedChatIds.toList() }
+                                    targets.forEach(onToggleUnreadChat)
+                                    onClearSelection()
+                                    editMode = false
+                                },
+                                contentPadding = compactButtonPadding,
+                                modifier = compactButtonMod,
+                            ) { Text(bulkReadLabel, color = palette.topBarActionColor, fontSize = 12.sp, maxLines = 1) }
+                            TextButton(
+                                onClick = {
+                                    state.selectedChatIds.toList().forEach(onToggleArchiveChat)
+                                    onClearSelection()
+                                    editMode = false
+                                },
+                                contentPadding = compactButtonPadding,
+                                modifier = compactButtonMod,
+                            ) { Text(strings.archiveAction, color = palette.topBarActionColor, fontSize = 12.sp, maxLines = 1) }
+                            TextButton(
+                                onClick = {
+                                    state.selectedChatIds.toList().forEach(onDeleteChat)
+                                    onClearSelection()
+                                    editMode = false
+                                },
+                                contentPadding = compactButtonPadding,
+                                modifier = compactButtonMod,
+                            ) { Text(strings.delete, color = palette.destructiveRed, fontSize = 12.sp, maxLines = 1) }
+                        }
+                    }
+                }
+            }
+
+            TelegramHairlineDivider()
+
+            // Main Content: Global Search Results OR Pinned Grid + Conversation List
+            if (state.globalSearchActive && searchQuery.isNotBlank()) {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 8.dp),
+                ) {
+                    if (matchedChats.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = if (strings.isEnglish) "Conversations" else "匹配的对话",
+                                color = palette.secondaryText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                            )
+                        }
+                        items(matchedChats, key = { "search-chat-${it.id}" }) { chat ->
+                            AppleChatListRow(
+                                chat = chat,
+                                isEditMode = false,
+                                isSelected = false,
+                                onClick = { onOpenChat(chat.id) },
+                                onLongClick = {},
+                            )
+                            TelegramHairlineDivider(Modifier.padding(start = 80.dp))
+                        }
+                    }
+
+                    if (matchedMessages.isNotEmpty()) {
+                        item {
+                            Text(
+                                text = if (strings.isEnglish) "Messages (${matchedMessages.size})" else "服务端与本地消息 (${matchedMessages.size})",
+                                color = palette.secondaryText,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
+                        items(matchedMessages, key = { "search-msg-${it.conversationId}-${it.id}" }) { msg ->
+                            val chatTitle = state.chats.firstOrNull { it.id == msg.conversationId }?.title ?: msg.senderName
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onOpenChat(msg.conversationId) }
+                                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                    ) {
+                                        Text(chatTitle, color = palette.primaryText, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(msg.time, color = palette.secondaryText, fontSize = 12.sp)
+                                    }
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(msg.text, color = palette.secondaryText, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            TelegramHairlineDivider(Modifier.padding(start = 16.dp))
+                        }
+                    }
+
+                    if (matchedChats.isEmpty() && matchedMessages.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier.fillMaxWidth().padding(40.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = if (strings.isEnglish) "No matching conversations or messages." else "未找到匹配的对话或消息",
+                                    color = palette.secondaryText,
+                                    fontSize = 14.sp,
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .testTag("telegram-chat-list"),
+                ) {
+                    // Authentic 3-Column Circular Pinned Chats Grid (`partitionPinnedChatsGrid`)
+                    if (pinnedLayout.rows.isNotEmpty()) {
+                        item(key = "apple-pinned-grid") {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                                    .testTag("apple-pinned-chats-grid"),
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
+                            ) {
+                                pinnedLayout.rows.forEach { rowChats ->
+                                    if (pinnedLayout.centeredSingleRow) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(24.dp, Alignment.CenterHorizontally),
+                                        ) {
+                                            rowChats.forEach { chat ->
+                                                PinnedAvatarCell(
+                                                    chat = chat,
+                                                    avatarSize = 82.dp,
+                                                    menuExpanded = pinnedContextChatId == chat.id,
+                                                    onDismissMenu = { pinnedContextChatId = null },
+                                                    onClick = {
+                                                        if (isSelecting) onToggleSelectChat(chat.id)
+                                                        else onOpenChat(chat.id)
+                                                    },
+                                                    onLongClick = { pinnedContextChatId = chat.id },
+                                                    onUnpin = {
+                                                        pinnedContextChatId = null
+                                                        onTogglePinChat(chat.id)
+                                                    },
+                                                    onMute = {
+                                                        pinnedContextChatId = null
+                                                        onToggleMuteChat(chat.id)
+                                                    },
+                                                    onArchive = {
+                                                        pinnedContextChatId = null
+                                                        onToggleArchiveChat(chat.id)
+                                                    },
+                                                    onDelete = {
+                                                        pinnedContextChatId = null
+                                                        onDeleteChat(chat.id)
+                                                    },
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                        ) {
+                                            rowChats.forEach { chat ->
+                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                                                    PinnedAvatarCell(
+                                                        chat = chat,
+                                                        avatarSize = 72.dp,
+                                                        menuExpanded = pinnedContextChatId == chat.id,
+                                                        onDismissMenu = { pinnedContextChatId = null },
+                                                        onClick = {
+                                                            if (isSelecting) onToggleSelectChat(chat.id)
+                                                            else onOpenChat(chat.id)
+                                                        },
+                                                        onLongClick = { pinnedContextChatId = chat.id },
+                                                        onUnpin = {
+                                                            pinnedContextChatId = null
+                                                            onTogglePinChat(chat.id)
+                                                        },
+                                                        onMute = {
+                                                            pinnedContextChatId = null
+                                                            onToggleMuteChat(chat.id)
+                                                        },
+                                                        onArchive = {
+                                                            pinnedContextChatId = null
+                                                            onToggleArchiveChat(chat.id)
+                                                        },
+                                                        onDelete = {
+                                                            pinnedContextChatId = null
+                                                            onDeleteChat(chat.id)
+                                                        },
+                                                    )
+                                                }
+                                            }
+                                            repeat(3 - rowChats.size) {
+                                                Spacer(Modifier.weight(1f))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            TelegramHairlineDivider()
+                        }
+                    }
+
+                    // Archived chats collapsible row
+                    if (archivedChats.isNotEmpty()) {
+                        item(key = "archived-header") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(onClick = onToggleArchiveExpanded)
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .clip(CircleShape)
+                                        .background(palette.inputBg),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    TelegramIcon(TelegramGlyph.ARCHIVE, tint = palette.secondaryText, size = 20.dp)
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    text = if (strings.isEnglish) "Archived (${archivedChats.size})" else "已归档对话 (${archivedChats.size})",
+                                    color = palette.primaryText,
+                                    fontWeight = FontWeight.Medium,
+                                    fontSize = 15.sp,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TelegramIcon(
+                                    glyph = if (state.archiveExpanded) TelegramGlyph.CHEVRON_DOWN else TelegramGlyph.CHEVRON_RIGHT,
+                                    tint = palette.hintText,
+                                    size = 15.dp,
+                                )
+                            }
+                            TelegramHairlineDivider(Modifier.padding(start = 72.dp))
+                        }
+                        if (state.archiveExpanded) {
+                            items(archivedChats, key = { "arch-${it.id}" }) { chat ->
+                                SwipeableAppleChatRow(
+                                    chat = chat,
+                                    densityPxThreshold = with(density) { 64.dp.toPx() },
+                                    isEditMode = isSelecting,
+                                    isSelected = chat.id in state.selectedChatIds,
+                                    onClick = {
+                                        if (isSelecting) onToggleSelectChat(chat.id) else onOpenChat(chat.id)
+                                    },
+                                    onLongClick = { onToggleSelectChat(chat.id) },
+                                    onPin = { onTogglePinChat(chat.id) },
+                                    onArchive = { onToggleArchiveChat(chat.id) },
+                                )
+                                TelegramHairlineDivider(Modifier.padding(start = 80.dp))
+                            }
+                        }
+                    }
+
+                    // Unpinned Conversations List
+                    if (nonArchivedChats.isEmpty() && archivedChats.isEmpty()) {
+                        item(key = "empty-chats") {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 32.dp, vertical = 64.dp)
+                                    .testTag("telegram-empty-chats-state"),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(64.dp)
+                                        .clip(CircleShape)
+                                        .background(palette.inputBg),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    TelegramIcon(TelegramGlyph.CHAT_BUBBLE, tint = palette.primaryAccent, size = 30.dp)
+                                }
+                                Text(
+                                    text = strings.noChatsTitle,
+                                    color = palette.primaryText,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    text = strings.noChatsSubtitle,
+                                    color = palette.secondaryText,
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center,
+                                )
+                                Button(
+                                    onClick = { showComposeSheet = true },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = palette.primaryAccent,
+                                        contentColor = Color.White,
+                                    ),
+                                    shape = RoundedCornerShape(12.dp),
+                                ) {
+                                    Text(strings.composeTitle)
+                                }
+                            }
+                        }
+                    } else {
+                        items(unpinnedChats, key = { it.id }) { chat ->
+                            SwipeableAppleChatRow(
+                                chat = chat,
+                                densityPxThreshold = with(density) { 64.dp.toPx() },
+                                isEditMode = isSelecting,
+                                isSelected = chat.id in state.selectedChatIds,
+                                onClick = {
+                                    if (isSelecting) onToggleSelectChat(chat.id) else onOpenChat(chat.id)
+                                },
+                                onLongClick = { onToggleSelectChat(chat.id) },
+                                onPin = { onTogglePinChat(chat.id) },
+                                onArchive = { onToggleArchiveChat(chat.id) },
+                            )
+                            TelegramHairlineDivider(Modifier.padding(start = 80.dp))
                         }
                     }
                 }
             }
         }
 
+        // Apple Compose Bottom Sheet (always accessible from top-right Compose button!)
+        TelegramBottomSheet(visible = showComposeSheet, onDismiss = { showComposeSheet = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(
+                    text = strings.composeTitle,
+                    color = palette.primaryText,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+                )
+                ComposeSheetRow(
+                    glyph = TelegramGlyph.CONTACTS,
+                    badgeColor = palette.primaryAccent,
+                    title = strings.addContactAction,
+                    onClick = {
+                        showComposeSheet = false
+                        showAddContactDialog = true
+                    },
+                )
+                ComposeSheetRow(
+                    glyph = TelegramGlyph.CHAT_BUBBLE,
+                    badgeColor = Color(0xFF34C759),
+                    title = strings.newGroupAction,
+                    onClick = {
+                        showComposeSheet = false
+                        onCreateDialogKind(ConversationKind.GROUP)
+                    },
+                )
+                ComposeSheetRow(
+                    glyph = TelegramGlyph.COMPOSE_SQUARE_PEN,
+                    badgeColor = Color(0xFFFF9500),
+                    title = strings.newChannelAction,
+                    onClick = {
+                        showComposeSheet = false
+                        onCreateDialogKind(ConversationKind.CHANNEL)
+                    },
+                )
+                ComposeSheetRow(
+                    glyph = TelegramGlyph.SECRET_SHIELD,
+                    badgeColor = Color(0xFF30B0C7),
+                    title = strings.newSecretChatAction,
+                    onClick = {
+                        showComposeSheet = false
+                        onCreateDialogKind(ConversationKind.SECRET)
+                    },
+                )
+                ComposeSheetRow(
+                    glyph = TelegramGlyph.BOT_ROBOT,
+                    badgeColor = Color(0xFFAF52DE),
+                    title = strings.newBotAction,
+                    onClick = {
+                        showComposeSheet = false
+                        onOpenBotFather()
+                    },
+                )
+            }
+        }
+
+        // Add Contact / Start Direct Chat Dialog
         if (showAddContactDialog) {
-            var handleDraft by remember { mutableStateOf("") }
-            var asBot by remember { mutableStateOf(false) }
             AlertDialog(
                 onDismissRequest = { showAddContactDialog = false },
-                title = { Text("添加联系人或机器人") },
+                containerColor = palette.modalBg,
+                titleContentColor = palette.primaryText,
+                textContentColor = palette.primaryText,
+                title = { Text(strings.addContactAction) },
                 text = {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = handleDraft,
-                            onValueChange = { handleDraft = it },
-                            label = { Text("用户名（如 alice 或 @fabushi_bot）") },
-                            singleLine = true,
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { asBot = false }) {
-                                Text("好友", color = if (!asBot) palette.primaryAccent else palette.secondaryText, fontWeight = if (!asBot) FontWeight.Bold else FontWeight.Normal)
-                            }
-                            TextButton(onClick = { asBot = true }) {
-                                Text("AI 机器人", color = if (asBot) palette.primaryAccent else palette.secondaryText, fontWeight = if (asBot) FontWeight.Bold else FontWeight.Normal)
-                            }
-                        }
-                    }
+                    OutlinedTextField(
+                        value = addContactInput,
+                        onValueChange = { addContactInput = it },
+                        label = { Text(if (strings.isEnglish) "@username or phone" else "对方 @用户名或手机号") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = palette.primaryText,
+                            unfocusedTextColor = palette.primaryText,
+                            cursorColor = palette.searchCursorColor,
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 },
                 confirmButton = {
                     Button(
+                        enabled = addContactInput.isNotBlank(),
                         onClick = {
-                            onAddContact(handleDraft.trim(), if (asBot) "bot" else "user")
+                            onAddContactByUsername(addContactInput.trim())
+                            addContactInput = ""
                             showAddContactDialog = false
                         },
-                        enabled = handleDraft.isNotBlank(),
-                    ) { Text("添加") }
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.primaryAccent, contentColor = Color.White),
+                    ) {
+                        Text(if (strings.isEnglish) "Add & Chat" else "添加并聊天")
+                    }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showAddContactDialog = false }) { Text("取消") }
+                    TextButton(onClick = { showAddContactDialog = false }) {
+                        Text(strings.cancel, color = palette.topBarActionColor)
+                    }
                 },
             )
         }
-
-        if (!state.globalSearchActive && state.selectedChatIds.isEmpty()) {
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .navigationBarsPadding()
-                    .padding(end = 16.dp, bottom = 18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                SmallFloatingActionButton(
-                    onClick = { showCreateStoryDialog = true },
-                    containerColor = palette.elevatedSurface,
-                    contentColor = palette.primaryText,
-                    shape = CircleShape,
-                ) {
-                    TelegramIcon(TelegramGlyph.CAMERA, tint = palette.primaryAccent, size = 20.dp)
-                }
-                FloatingActionButton(
-                    onClick = { showNewMessageSheet = true },
-                    containerColor = palette.primaryAccent,
-                    contentColor = Color.White,
-                    shape = CircleShape,
-                    modifier = Modifier.testTag("telegram-new-message-fab"),
-                ) {
-                    TelegramIcon(TelegramGlyph.PENCIL, tint = Color.White, size = 24.dp)
-                }
-            }
-        }
-
-        val activeStory = state.viewingStoryId?.let { id -> state.stories.firstOrNull { it.id == id } }
-        if (activeStory != null) {
-            TelegramStoryViewerOverlay(
-                stories = state.stories,
-                currentStory = activeStory,
-                onSelectStory = onOpenStory,
-                onClose = onCloseStory,
-            )
-        }
-
-        TelegramBottomSheet(visible = showNewMessageSheet, onDismiss = { showNewMessageSheet = false }) {
-            Text(
-                "发起新消息",
-                color = palette.primaryText,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            )
-            NewChatSheetAction(TelegramGlyph.CONTACTS, "新建群组 (支持多话题 Forum Topics)") {
-                showNewMessageSheet = false
-                onRequestCreateKind(ConversationKind.GROUP)
-            }
-            NewChatSheetAction(TelegramGlyph.LOCK_CLOSED, "新建端到端加密聊天 (X3DH + Double Ratchet)", palette.secretGreen) {
-                showNewMessageSheet = false
-                onRequestCreateKind(ConversationKind.SECRET)
-            }
-            NewChatSheetAction(TelegramGlyph.SEND_PLANE, "新建公开或私密广播频道") {
-                showNewMessageSheet = false
-                onRequestCreateKind(ConversationKind.CHANNEL)
-            }
-            NewChatSheetAction(TelegramGlyph.MIKA_PHONE, "向 @MikaPhoneBot 发送手机操控任务", Color(0xFF00BFA5)) {
-                showNewMessageSheet = false
-                onOpenChat("bot-mika-phone")
-            }
-        }
-    }
-
-    if (showCreateStoryDialog) {
-        CreateStoryDialog(
-            onDismiss = { showCreateStoryDialog = false },
-            onPublish = { headline, caption, grad ->
-                onCreateStory(headline, caption, grad)
-                showCreateStoryDialog = false
-            },
-        )
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SwipeableTelegramChatRow(
+private fun PinnedAvatarCell(
     chat: TelegramChatItem,
-    selected: Boolean,
-    selectionMode: Boolean,
+    avatarSize: androidx.compose.ui.unit.Dp,
+    menuExpanded: Boolean,
+    onDismissMenu: () -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
-    onSwipeArchive: () -> Unit,
-    onSwipePin: () -> Unit,
+    onUnpin: () -> Unit,
+    onMute: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
 ) {
     val palette = LocalTelegramPalette.current
-    val haptic = LocalHapticFeedback.current
-    var offsetX by remember(chat.id) { mutableFloatStateOf(0f) }
+    val strings = LocalAppleUiStrings.current
+    val liveBotStatus = formatBotActivitySubtitle(
+        chat.botExecutionState,
+        chat.botActivityDetail,
+        if (strings.isEnglish) "en-US" else "zh-CN",
+    )
 
-    Box(
+    Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .background(
-                when {
-                    offsetX < -24f -> palette.primaryAccent.copy(alpha = 0.85f)
-                    offsetX > 24f -> Color(0xFF4ECC5E).copy(alpha = 0.85f)
-                    else -> palette.surfaceColor
-                },
-            ),
+            .width(92.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        if (offsetX < -24f) {
-            Row(
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(if (chat.isArchived) "移出归档" else "归档", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.width(8.dp))
-                TelegramIcon(TelegramGlyph.ARCHIVE, tint = Color.White, size = 20.dp)
+        Box {
+            TelegramAvatar(
+                idSeed = chat.id,
+                title = chat.title,
+                size = avatarSize,
+                kind = chat.kind,
+                online = chat.online,
+                isSecret = chat.isSecretChat,
+                isCompanionGhost = chat.isCompanionGhost && !chat.isBot,
+                avatarShape = chat.avatarShape,
+                avatarColor = chat.avatarColor,
+                isBot = chat.isBot,
+                botActivityActive = liveBotStatus != null,
+            )
+            if (chat.unreadCount > 0 || chat.markedUnread) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .clip(CircleShape)
+                        .background(if (chat.isMuted) palette.unreadBadgeMuted else palette.unreadBadgeActive)
+                        .border(2.dp, palette.appBackground, CircleShape)
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = if (chat.unreadCount > 99) "99+" else if (chat.unreadCount > 0) "${chat.unreadCount}" else "",
+                        color = if (chat.isMuted) palette.unreadBadgeMutedContent else palette.unreadBadgeContent,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
-        } else if (offsetX > 24f) {
-            Row(
-                modifier = Modifier.align(Alignment.CenterStart).padding(start = 20.dp),
-                verticalAlignment = Alignment.CenterVertically,
+
+            DropdownMenu(
+                expanded = menuExpanded,
+                onDismissRequest = onDismissMenu,
             ) {
-                TelegramIcon(TelegramGlyph.PIN, tint = Color.White, size = 20.dp)
-                Spacer(Modifier.width(8.dp))
-                Text(if (chat.isPinned) "取消置顶" else "置顶", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                DropdownMenuItem(text = { Text(strings.unpinAction) }, onClick = onUnpin)
+                DropdownMenuItem(
+                    text = { Text(if (chat.isMuted) strings.unmuteAction else strings.muteAction) },
+                    onClick = onMute,
+                )
+                DropdownMenuItem(text = { Text(strings.archiveAction) }, onClick = onArchive)
+                DropdownMenuItem(
+                    text = { Text(strings.delete, color = palette.destructiveRed) },
+                    onClick = onDelete,
+                )
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = chat.title,
+            color = palette.primaryText,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
+
+@Composable
+private fun SwipeableAppleChatRow(
+    chat: TelegramChatItem,
+    densityPxThreshold: Float,
+    isEditMode: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onPin: () -> Unit,
+    onArchive: () -> Unit,
+) {
+    val palette = LocalTelegramPalette.current
+    val strings = LocalAppleUiStrings.current
+    var rawOffset by remember(chat.id) { mutableFloatStateOf(0f) }
+    val animatedOffset by animateFloatAsState(targetValue = rawOffset, label = "swipeRowOffset")
+    val clampMax = densityPxThreshold * 1.45f
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        if (animatedOffset > 4f) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(palette.primaryAccent)
+                    .padding(start = 20.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                Text(
+                    text = if (chat.isPinned) strings.unpinAction else strings.pinAction,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        } else if (animatedOffset < -4f) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(Color(0xFF8E8E93))
+                    .padding(end = 20.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Text(
+                    text = if (chat.isArchived) strings.unarchiveAction else strings.archiveAction,
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
 
-        Column(
+        Box(
             modifier = Modifier
-                .offset { IntOffset(offsetX.roundToInt(), 0) }
-                .fillMaxWidth()
-                .background(if (selected) palette.primaryAccent.copy(alpha = 0.12f) else palette.surfaceColor)
-                .pointerInput(chat.id, selectionMode) {
-                    if (selectionMode) return@pointerInput
+                .offset { IntOffset(animatedOffset.roundToInt(), 0) }
+                .background(if (isSelected) palette.hoverBg else palette.appBackground)
+                .pointerInput(chat.id, isEditMode) {
+                    if (isEditMode) return@pointerInput
                     detectHorizontalDragGestures(
                         onDragEnd = {
-                            when {
-                                offsetX <= -120f -> {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onSwipeArchive()
-                                }
-                                offsetX >= 120f -> {
-                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                    onSwipePin()
-                                }
-                            }
-                            offsetX = 0f
+                            if (rawOffset >= densityPxThreshold) onPin()
+                            else if (rawOffset <= -densityPxThreshold) onArchive()
+                            rawOffset = 0f
                         },
-                        onDragCancel = { offsetX = 0f },
+                        onDragCancel = { rawOffset = 0f },
                         onHorizontalDrag = { _, dragAmount ->
-                            offsetX = (offsetX + dragAmount).coerceIn(-180f, 180f)
+                            rawOffset = (rawOffset + dragAmount).coerceIn(-clampMax, clampMax)
                         },
                     )
-                }
-                .combinedClickable(
-                    onClick = onClick,
-                    onLongClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onLongClick()
-                    },
-                ),
+                },
         ) {
+            AppleChatListRow(
+                chat = chat,
+                isEditMode = isEditMode,
+                isSelected = isSelected,
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AppleChatListRow(
+    chat: TelegramChatItem,
+    isEditMode: Boolean,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val palette = LocalTelegramPalette.current
+    val strings = LocalAppleUiStrings.current
+    val liveBotStatus = formatBotActivitySubtitle(
+        chat.botExecutionState,
+        chat.botActivityDetail,
+        if (strings.isEnglish) "en-US" else "zh-CN",
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(68.dp)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (isEditMode) {
+            TelegramIcon(
+                glyph = if (isSelected) TelegramGlyph.CHECK_CIRCLE else TelegramGlyph.CIRCLE_OUTLINE,
+                tint = if (isSelected) palette.primaryAccent else palette.hintText,
+                size = 22.dp,
+            )
+            Spacer(Modifier.width(10.dp))
+        } else {
+            // Unread blue dot (iOS Messages signature indicator)
+            Box(modifier = Modifier.width(12.dp), contentAlignment = Alignment.CenterStart) {
+                if (chat.unreadCount > 0 || chat.markedUnread) {
+                    Box(
+                        modifier = Modifier
+                            .size(9.dp)
+                            .clip(CircleShape)
+                            .background(if (chat.isMuted) palette.unreadBadgeMuted else palette.unreadBadgeActive),
+                    )
+                }
+            }
+        }
+
+        TelegramAvatar(
+            idSeed = chat.id,
+            title = chat.title,
+            size = 50.dp,
+            kind = chat.kind,
+            online = chat.online,
+            isSecret = chat.isSecretChat,
+            isCompanionGhost = chat.isCompanionGhost && !chat.isBot,
+            avatarShape = chat.avatarShape,
+            avatarColor = chat.avatarColor,
+            isBot = chat.isBot,
+            botActivityActive = liveBotStatus != null,
+        )
+
+        Spacer(Modifier.width(12.dp))
+
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Box {
-                    TelegramAvatar(
-                        idSeed = chat.id,
-                        title = chat.title,
-                        size = 54.dp,
-                        kind = chat.kind,
-                        online = chat.online,
-                        isSecret = chat.isSecretChat,
-                        isCompanionGhost = chat.isCompanionGhost,
-                    )
-                    if (selected) {
-                        Box(
-                            modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .size(22.dp)
-                                .clip(CircleShape)
-                                .background(palette.primaryAccent)
-                                .border(2.dp, palette.surfaceColor, CircleShape),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            TelegramIcon(TelegramGlyph.CHECK_SINGLE, tint = Color.White, size = 13.dp)
-                        }
-                    }
+                Text(
+                    text = chat.title,
+                    color = palette.primaryText,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (chat.isMuted) {
+                    Spacer(Modifier.width(4.dp))
+                    TelegramIcon(TelegramGlyph.BELL_SLASH, tint = palette.hintText, size = 13.dp)
                 }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = chat.time,
+                    color = palette.secondaryText,
+                    fontSize = 13.sp,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.width(3.dp))
+                TelegramIcon(TelegramGlyph.CHEVRON_RIGHT, tint = palette.hintText, size = 12.dp)
+            }
 
-                Spacer(Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (chat.isSecretChat) {
-                            TelegramIcon(TelegramGlyph.LOCK_CLOSED, tint = palette.secretGreen, size = 15.dp)
-                            Spacer(Modifier.width(4.dp))
-                        }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                val previewText = when {
+                    !chat.typingLabel.isNullOrBlank() -> chat.typingLabel
+                    liveBotStatus != null -> liveBotStatus
+                    chat.draftText.isNotBlank() -> (if (strings.isEnglish) "Draft: " else "草稿：") + chat.draftText
+                    else -> chat.preview.ifBlank { strings.noMessagesYet }
+                }
+                val previewColor = when {
+                    !chat.typingLabel.isNullOrBlank() || liveBotStatus != null -> palette.primaryAccent
+                    chat.draftText.isNotBlank() -> palette.destructiveRed
+                    else -> palette.secondaryText
+                }
+                Text(
+                    text = previewText,
+                    color = previewColor,
+                    fontSize = 14.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    lineHeight = 18.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                if (chat.unreadCount > 0) {
+                    Spacer(Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (chat.isMuted) palette.unreadBadgeMuted else palette.unreadBadgeActive)
+                            .padding(horizontal = 6.dp, vertical = 2.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
                         Text(
-                            text = chat.title.removePrefix("🔒 "),
-                            color = if (chat.isSecretChat) palette.secretGreen else palette.primaryText,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false),
+                            text = if (chat.unreadCount > 99) "99+" else "${chat.unreadCount}",
+                            color = if (chat.isMuted) palette.unreadBadgeMutedContent else palette.unreadBadgeContent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
                         )
-                        if (chat.isVerified) {
-                            Spacer(Modifier.width(5.dp))
-                            TelegramIcon(TelegramGlyph.VERIFIED, tint = palette.primaryAccent, size = 15.dp)
-                        }
-                        if (chat.isMuted) {
-                            Spacer(Modifier.width(5.dp))
-                            TelegramIcon(TelegramGlyph.MUTE, tint = palette.hintText, size = 14.dp)
-                        }
-                        Spacer(Modifier.weight(1f))
-                        if (chat.lastMessageOutgoing) {
-                            TelegramIcon(
-                                glyph = if (chat.lastDeliveryState == "read") TelegramGlyph.CHECK_DOUBLE else TelegramGlyph.CHECK_SINGLE,
-                                tint = palette.checkMarkColor,
-                                size = 15.dp,
-                            )
-                            Spacer(Modifier.width(4.dp))
-                        }
-                        Text(chat.time, color = palette.hintText, fontSize = 12.sp)
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val previewAnnotated = buildAnnotatedString {
-                            when {
-                                chat.typingLabel != null -> {
-                                    withStyle(SpanStyle(color = palette.primaryAccent, fontWeight = FontWeight.Medium)) {
-                                        append(chat.typingLabel)
-                                    }
-                                }
-                                chat.draftText.isNotBlank() -> {
-                                    withStyle(SpanStyle(color = palette.destructiveRed, fontWeight = FontWeight.Medium)) {
-                                        append("草稿: ")
-                                    }
-                                    withStyle(SpanStyle(color = palette.secondaryText)) {
-                                        append(chat.draftText)
-                                    }
-                                }
-                                else -> {
-                                    if (chat.isForum) {
-                                        withStyle(SpanStyle(color = palette.primaryAccent, fontWeight = FontWeight.Medium)) {
-                                            append("#话题 · ")
-                                        }
-                                    }
-                                    withStyle(SpanStyle(color = palette.secondaryText)) {
-                                        append(chat.preview)
-                                    }
-                                }
-                            }
-                        }
-                        Text(
-                            text = previewAnnotated,
-                            fontSize = 14.sp,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-
-                        Spacer(Modifier.width(8.dp))
-
-                        if (chat.mentionCount > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .size(22.dp)
-                                    .clip(CircleShape)
-                                    .background(palette.unreadBadgeActive),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text("@", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(Modifier.width(4.dp))
-                        }
-
-                        if (chat.unreadCount > 0 || chat.markedUnread) {
-                            val label = if (chat.unreadCount > 0) chat.unreadCount.toString() else "•"
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (chat.isMuted) palette.unreadBadgeMuted else palette.unreadBadgeActive)
-                                    .padding(horizontal = 7.dp, vertical = 2.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(label, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        } else if (chat.isPinned) {
-                            TelegramIcon(TelegramGlyph.PIN, tint = palette.hintText, size = 16.dp)
-                        }
                     }
                 }
             }
-            TelegramHairlineDivider(Modifier.padding(start = 80.dp))
         }
     }
 }
 
 @Composable
-private fun NewChatSheetAction(
+private fun ComposeSheetRow(
     glyph: TelegramGlyph,
+    badgeColor: Color,
     title: String,
-    tint: Color? = null,
     onClick: () -> Unit,
 ) {
     val palette = LocalTelegramPalette.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+            .padding(horizontal = 10.dp, vertical = 11.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        TelegramIcon(glyph, tint = tint ?: palette.primaryAccent, size = 22.dp)
-        Spacer(Modifier.width(16.dp))
-        Text(title, color = palette.primaryText, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-    }
-}
-
-@Composable
-private fun IconButtonCircle(
-    glyph: TelegramGlyph,
-    tint: Color,
-    testTag: String? = null,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .size(40.dp)
-            .clip(CircleShape)
-            .let { if (testTag != null) it.testTag(testTag) else it }
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        TelegramIcon(glyph = glyph, tint = tint, size = 21.dp)
-    }
-}
-
-@Composable
-private fun TelegramStoryViewerOverlay(
-    stories: List<TelegramStoryItem>,
-    currentStory: TelegramStoryItem,
-    onSelectStory: (String) -> Unit,
-    onClose: () -> Unit,
-) {
-    BackHandler(onBack = onClose)
-    var progress by remember(currentStory.id) { mutableFloatStateOf(0f) }
-    val currentIndex = stories.indexOfFirst { it.id == currentStory.id }.coerceAtLeast(0)
-
-    LaunchedEffect(currentStory.id) {
-        progress = 0f
-        repeat(50) {
-            delay(100)
-            progress = ((it + 1) / 50f).coerceIn(0f, 1f)
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(badgeColor),
+            contentAlignment = Alignment.Center,
+        ) {
+            TelegramIcon(glyph = glyph, tint = Color.White, size = 17.dp)
         }
-        if (currentIndex + 1 < stories.size) {
-            onSelectStory(stories[currentIndex + 1].id)
-        } else {
-            onClose()
-        }
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = title,
+            color = palette.primaryText,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+        )
+        TelegramIcon(TelegramGlyph.CHEVRON_RIGHT, tint = palette.hintText, size = 14.dp)
     }
-
-    val bgStops = when (currentStory.gradientIndex % 4) {
-        0 -> listOf(Color(0xFF1A2980), Color(0xFF26D0CE))
-        1 -> listOf(Color(0xFF134E5E), Color(0xFF71B280))
-        2 -> listOf(Color(0xFF42275A), Color(0xFFD99B26))
-        else -> listOf(Color(0xFF0F2027), Color(0xFF2C5364))
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(bgStops))
-            .statusBarsPadding()
-            .navigationBarsPadding(),
-    ) {
-        Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                stories.forEachIndexed { idx, _ ->
-                    val segProgress = when {
-                        idx < currentIndex -> 1f
-                        idx == currentIndex -> progress
-                        else -> 0f
-                    }
-                    LinearProgressIndicator(
-                        progress = { segProgress },
-                        modifier = Modifier.weight(1f).height(3.dp).clip(RoundedCornerShape(2.dp)),
-                        color = Color.White,
-                        trackColor = Color.White.copy(alpha = 0.30f),
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TelegramAvatar(idSeed = currentStory.avatarSeed, title = currentStory.authorName, size = 38.dp)
-                Spacer(Modifier.width(10.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(currentStory.authorName, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                    Text("👁 ${currentStory.viewCount} 次浏览 · 24h 动态", color = Color.White.copy(alpha = 0.78f), fontSize = 12.sp)
-                }
-                IconButtonCircle(TelegramGlyph.CLOSE, Color.White, onClick = onClose)
-            }
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .clickable {
-                        if (currentIndex + 1 < stories.size) onSelectStory(stories[currentIndex + 1].id) else onClose()
-                    },
-                contentAlignment = Alignment.Center,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
-                    Text("✦", color = Color(0xFFFFD54F), fontSize = 42.sp)
-                    Spacer(Modifier.height(16.dp))
-                    Text(currentStory.headline, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold)
-                    Spacer(Modifier.height(14.dp))
-                    Text(currentStory.caption, color = Color.White.copy(alpha = 0.92f), fontSize = 16.sp)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CreateStoryDialog(
-    onDismiss: () -> Unit,
-    onPublish: (String, String, Int) -> Unit,
-) {
-    var headline by remember { mutableStateOf("") }
-    var caption by remember { mutableStateOf("") }
-    var gradIdx by remember { mutableIntStateOf(0) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("发布 24 小时快拍动态 (Story)") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = headline, onValueChange = { headline = it }, label = { Text("大标题") }, singleLine = true)
-                OutlinedTextField(value = caption, onValueChange = { caption = it }, label = { Text("动态正文说明") })
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("深海蓝", "翡翠绿", "琉璃金", "星空夜").forEachIndexed { idx, label ->
-                        TextButton(onClick = { gradIdx = idx }) {
-                            Text(if (gradIdx == idx) "● $label" else label)
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(onClick = { onPublish(headline, caption, gradIdx) }) { Text("立即发布") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消") }
-        },
-    )
 }

@@ -2,6 +2,8 @@ package com.ombhrum.fabushi
 
 import android.content.Context
 import com.ombhrum.fabushi.core.MahayanaHost
+import com.ombhrum.fabushi.telegram.optNonNullString
+import com.ombhrum.fabushi.telegram.optNullableString
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,9 +36,11 @@ internal class FabushiRemoteDeviceGateway(
     private val metadata: Map<String, String>,
     private val configuredDeviceName: String? = null,
     private val phoneBridge: com.ombhrum.fabushi.telegram.MikaBridgeCallbacks? = null,
+    private val gatewayUrl: String = OfficialGatewayUrl,
+    private val retryDelayMs: Long = 10_000L,
 ) : AutoCloseable {
     companion object {
-        private const val OfficialGatewayUrl = "wss://fabushi-mcp.ombhrum.com/agent"
+        internal const val OfficialGatewayUrl = "wss://fabushi-mcp.ombhrum.com/agent"
         private const val LeaseSeconds = 14_400
         private const val MaxMessageBytes = 32 * 1024 * 1024
 
@@ -64,41 +68,57 @@ internal class FabushiRemoteDeviceGateway(
         .build()
     private val stateLock = Any()
     private var desiredLoggedIn = false
+    private var closed = false
     private var monitorJob: Job? = null
     private var socket: WebSocket? = null
     private var activeSession: AgentSession? = null
     private var registered = false
 
+    internal fun isRegistered(): Boolean = synchronized(stateLock) { registered }
+    internal fun isClosed(): Boolean = synchronized(stateLock) { closed }
+
     fun setLoggedIn(loggedIn: Boolean) {
-        synchronized(stateLock) { desiredLoggedIn = loggedIn }
-        if (!loggedIn) {
-            monitorJob?.cancel()
-            monitorJob = null
-            stopConnection("logged-out")
-            return
-        }
-        if (monitorJob != null) return
-        monitorJob = scope.launch {
-            while (isActive) {
-                refreshConnection()
-                delay(10_000)
+        val jobToCancel: Job?
+        synchronized(stateLock) {
+            if (closed) return
+            desiredLoggedIn = loggedIn
+            if (!loggedIn) {
+                jobToCancel = monitorJob
+                monitorJob = null
+            } else {
+                if (monitorJob == null) {
+                    monitorJob = scope.launch {
+                        while (isActive) {
+                            refreshConnection()
+                            delay(retryDelayMs.coerceAtLeast(50L))
+                        }
+                    }
+                }
+                return
             }
         }
+        jobToCancel?.cancel()
+        stopConnection("logged-out")
     }
 
     private suspend fun refreshConnection() {
-        if (!synchronized(stateLock) { desiredLoggedIn }) return
+        if (!synchronized(stateLock) { !closed && desiredLoggedIn }) return
         runCatching {
             parseAgentSession(host.request("feature.auth.deviceAgentSession"))
         }.onSuccess { candidate ->
-            val current = synchronized(stateLock) { activeSession }
-            val stillUsable = synchronized(stateLock) {
-                current?.deviceId == candidate.deviceId &&
-                    current.sessionId == candidate.sessionId &&
-                    current.accessToken == candidate.accessToken &&
-                    registered && socket != null
+            val shouldConnect = synchronized(stateLock) {
+                if (closed || !desiredLoggedIn) {
+                    false
+                } else {
+                    val current = activeSession
+                    val stillUsable = current?.deviceId == candidate.deviceId &&
+                        current.sessionId == candidate.sessionId &&
+                        current.accessToken == candidate.accessToken &&
+                        registered && socket != null
+                    !stillUsable
+                }
             }
-            if (!stillUsable) connect(candidate)
+            if (shouldConnect) connect(candidate)
         }.onFailure { error ->
             appendTrace("connection-refresh-failed", mapOf("error" to safeErrorCode(error)))
             stopConnection("refresh-failed")
@@ -106,18 +126,22 @@ internal class FabushiRemoteDeviceGateway(
     }
 
     private fun connect(session: AgentSession) {
+        if (!synchronized(stateLock) { !closed && desiredLoggedIn }) return
         stopConnection("reconnect")
+        if (!synchronized(stateLock) { !closed && desiredLoggedIn }) return
         val request = Request.Builder()
-            .url(OfficialGatewayUrl)
+            .url(gatewayUrl)
             .header("Authorization", "Bearer ${session.accessToken}")
             .build()
-        synchronized(stateLock) {
-            activeSession = session
-            registered = false
-        }
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                synchronized(stateLock) { socket = webSocket }
+                val active = synchronized(stateLock) {
+                    !closed && desiredLoggedIn && socket === webSocket
+                }
+                if (!active) {
+                    webSocket.close(1000, "stale")
+                    return
+                }
                 val advertisedCapabilities = if (phoneBridge != null) {
                     FabushiAppAgentSurface.ToolNames + PhoneToolNames
                 } else {
@@ -146,12 +170,30 @@ internal class FabushiRemoteDeviceGateway(
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (text.toByteArray(Charsets.UTF_8).size > MaxMessageBytes) return
                 val message = runCatching { JSONObject(text) }.getOrNull() ?: return
-                when (message.optString("type")) {
+                when (message.optNonNullString("type")) {
                     "registered" -> {
-                        synchronized(stateLock) { registered = true }
-                        appendTrace("registered", mapOf("deviceId" to message.optString("deviceId").take(128)))
+                        val accepted = synchronized(stateLock) {
+                            if (closed || !desiredLoggedIn || socket !== webSocket) {
+                                false
+                            } else {
+                                registered = true
+                                true
+                            }
+                        }
+                        if (!accepted) {
+                            webSocket.close(1000, "stale")
+                            return
+                        }
+                        appendTrace("registered", mapOf("deviceId" to message.optNonNullString("deviceId").take(128)))
                     }
-                    "call" -> scope.launch { handleCall(webSocket, message) }
+                    "call" -> {
+                        val active = synchronized(stateLock) { !closed && desiredLoggedIn && socket === webSocket }
+                        if (!active) {
+                            webSocket.close(1000, "stale")
+                            return
+                        }
+                        scope.launch { handleCall(webSocket, message) }
+                    }
                 }
             }
 
@@ -175,12 +217,17 @@ internal class FabushiRemoteDeviceGateway(
                 appendTrace("receive-failed", mapOf("error" to safeErrorCode(error)))
             }
         }
-        synchronized(stateLock) { socket = client.newWebSocket(request, listener) }
+        synchronized(stateLock) {
+            if (closed || !desiredLoggedIn) return
+            activeSession = session
+            registered = false
+            socket = client.newWebSocket(request, listener)
+        }
     }
 
     private suspend fun handleCall(webSocket: WebSocket, message: JSONObject) {
-        val requestId = message.optString("requestId").take(128)
-        val toolName = message.optString("toolName").take(128)
+        val requestId = message.optNonNullString("requestId").take(128)
+        val toolName = message.optNonNullString("toolName").take(128)
         if (requestId.isBlank() || toolName.isBlank()) return
         val arguments = message.optJSONObject("arguments") ?: JSONObject()
         appendTrace("call-started", mapOf("requestId" to requestId, "toolName" to toolName))
@@ -247,9 +294,9 @@ internal class FabushiRemoteDeviceGateway(
                         .put("hasPendingConfirmation", snap.pendingConfirmationPrompt != null)
                 }
                 PhoneDispatchTool -> {
-                    val prompt = arguments.optString("prompt").trim()
+                    val prompt = arguments.optNonNullString("prompt").trim()
                     require(prompt.isNotEmpty() && prompt.length <= 2000) { "invalid_device_gateway_call" }
-                    val sourceChat = arguments.optString("conversationId").takeIf(String::isNotBlank)
+                    val sourceChat = arguments.optNullableString("conversationId")
                     checkNotNull(phoneBridge).submitPhoneTask(prompt, sourceChat)
                     JSONObject()
                         .put("accepted", true)
@@ -266,14 +313,14 @@ internal class FabushiRemoteDeviceGateway(
                 }
                 FabushiAppAgentSurface.FindTool -> {
                     val snapshot = surface.snapshot()
-                    val ref = arguments.optString("ref").takeIf(String::isNotBlank)
+                    val ref = arguments.optNullableString("ref")
                     val agentId = ref?.let { parseRef(it, snapshot.generation) }
-                        ?: arguments.optString("agentId").takeIf(String::isNotBlank)
-                    val name = arguments.optString("name").takeIf(String::isNotBlank)
-                        ?: arguments.optString("text").takeIf(String::isNotBlank)
+                        ?: arguments.optNullableString("agentId")
+                    val name = arguments.optNullableString("name")
+                        ?: arguments.optNullableString("text")
                     val matches = surface.find(
                         agentId = agentId,
-                        role = arguments.optString("role").takeIf(String::isNotBlank),
+                        role = arguments.optNullableString("role"),
                         name = name,
                         limit = arguments.optInt("limit", 25).coerceIn(1, 100),
                     )
@@ -289,43 +336,48 @@ internal class FabushiRemoteDeviceGateway(
                     require(arguments.has("generation")) { "invalid_app_surface_generation" }
                     val generation = arguments.optLong("generation", -1)
                     require(generation >= 0) { "invalid_app_surface_generation" }
-                    val agentId = arguments.optString("ref").takeIf(String::isNotBlank)
+                    val agentId = arguments.optNullableString("ref")
                         ?.let { parseRef(it, generation) }
-                        ?: arguments.optString("agentId").takeIf(String::isNotBlank)
+                        ?: arguments.optNullableString("agentId")
                         ?: error("app_surface_action_target_missing")
-                    val action = arguments.optString("action").takeIf(String::isNotBlank)
+                    val action = arguments.optNullableString("action")
                         ?: error("invalid_device_gateway_call")
+                    val actionValue = if (!arguments.has("value") || arguments.isNull("value")) {
+                        null
+                    } else {
+                        arguments.optNonNullString("value")
+                    }
                     snapshotJson(
                         surface.action(
                             expectedGeneration = generation,
                             agentId = agentId,
                             action = action,
-                            value = arguments.optString("value").takeIf { arguments.has("value") },
+                            value = actionValue,
                         ),
                         500,
                     )
                 }
                 FabushiAppAgentSurface.WaitTool -> assertionJson(
                     surface.waitFor(
-                        expectedScreen = arguments.optString("screen").takeIf(String::isNotBlank)
-                            ?: arguments.optString("route").takeIf(String::isNotBlank),
-                        agentId = arguments.optString("agentId").takeIf(String::isNotBlank),
-                        role = arguments.optString("role").takeIf(String::isNotBlank),
-                        name = arguments.optString("name").takeIf(String::isNotBlank)
-                            ?: arguments.optString("text").takeIf(String::isNotBlank),
-                        state = arguments.optString("state", "present"),
+                        expectedScreen = arguments.optNullableString("screen")
+                            ?: arguments.optNullableString("route"),
+                        agentId = arguments.optNullableString("agentId"),
+                        role = arguments.optNullableString("role"),
+                        name = arguments.optNullableString("name")
+                            ?: arguments.optNullableString("text"),
+                        state = arguments.optNonNullString("state", "present").ifBlank { "present" },
                         timeoutMilliseconds = arguments.optLong("timeoutMs", 10_000).coerceIn(100, 30_000),
                     ),
                 )
                 FabushiAppAgentSurface.AssertTool -> assertionJson(
                     surface.assertState(
-                        expectedScreen = arguments.optString("screen").takeIf(String::isNotBlank)
-                            ?: arguments.optString("route").takeIf(String::isNotBlank),
-                        agentId = arguments.optString("agentId").takeIf(String::isNotBlank),
-                        role = arguments.optString("role").takeIf(String::isNotBlank),
-                        name = arguments.optString("name").takeIf(String::isNotBlank)
-                            ?: arguments.optString("text").takeIf(String::isNotBlank),
-                        state = arguments.optString("state", "present"),
+                        expectedScreen = arguments.optNullableString("screen")
+                            ?: arguments.optNullableString("route"),
+                        agentId = arguments.optNullableString("agentId"),
+                        role = arguments.optNullableString("role"),
+                        name = arguments.optNullableString("name")
+                            ?: arguments.optNullableString("text"),
+                        state = arguments.optNonNullString("state", "present").ifBlank { "present" },
                     ),
                 )
                 else -> error("unknown_fabushi_app_tool")
@@ -347,8 +399,15 @@ internal class FabushiRemoteDeviceGateway(
     }
 
     override fun close() {
-        monitorJob?.cancel()
-        monitorJob = null
+        val jobToCancel: Job?
+        synchronized(stateLock) {
+            if (closed) return
+            closed = true
+            desiredLoggedIn = false
+            jobToCancel = monitorJob
+            monitorJob = null
+        }
+        jobToCancel?.cancel()
         stopConnection("stopped")
         scope.cancel()
         client.dispatcher.executorService.shutdown()
@@ -357,11 +416,11 @@ internal class FabushiRemoteDeviceGateway(
     }
 
     private fun parseAgentSession(value: JSONObject): AgentSession {
-        val accessToken = value.optString("accessToken").trim()
-        val deviceId = value.optString("deviceId").trim()
-        val sessionId = value.optString("sessionId").trim()
-        val username = value.optString("username").ifBlank {
-            value.optJSONObject("user")?.optString("username").orEmpty()
+        val accessToken = value.optNonNullString("accessToken").trim()
+        val deviceId = value.optNonNullString("deviceId").trim()
+        val sessionId = value.optNonNullString("sessionId").trim()
+        val username = value.optNonNullString("username").ifBlank {
+            value.optJSONObject("user")?.optNonNullString("username").orEmpty()
         }.take(200)
         val expiresAt = value.optLong("accessTokenExpiresAt", 0)
         require(accessToken.length in 24..(16 * 1024) && accessToken.none(Char::isWhitespace)) { "invalid_device_agent_session" }

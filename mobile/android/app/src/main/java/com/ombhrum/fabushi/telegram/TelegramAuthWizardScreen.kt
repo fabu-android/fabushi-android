@@ -1,6 +1,10 @@
 package com.ombhrum.fabushi.telegram
 
-import androidx.compose.animation.AnimatedVisibility
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,7 +22,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +31,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -42,16 +46,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * Desktop `bhrumom/gpui-telegram` AuthWizardView aligned onboarding & login screen (Apple Messages UI/UX).
- * Connects directly to real `gpui_telegram_server` `/api/v1/auth` endpoints with zero fake data.
+ * Apple iOS styled onboarding & login wizard connected to real `gpui_telegram_server` `/api/v1/auth`
+ * endpoints with clickable Alipay URL + scannable ISO-18004 QR code.
  */
 @Composable
 fun TelegramAuthWizardScreen(
@@ -71,6 +77,9 @@ fun TelegramAuthWizardScreen(
     onEnterOfflineLocalMode: () -> Unit,
 ) {
     val palette = LocalTelegramPalette.current
+    val strings = LocalAppleUiStrings.current
+    val context = LocalContext.current
+
     var selectedTab by remember { mutableIntStateOf(0) } // 0=Login, 1=Register, 2=Email, 3=Alipay
     var editingServer by remember { mutableStateOf(false) }
     var serverDraft by remember(serverEndpoint) { mutableStateOf(serverEndpoint) }
@@ -79,11 +88,24 @@ fun TelegramAuthWizardScreen(
     var firstName by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var emailCode by remember { mutableStateOf("") }
+    var copiedAlipayLink by remember { mutableStateOf(false) }
+
+    val inputColors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = palette.primaryText,
+        unfocusedTextColor = palette.primaryText,
+        cursorColor = palette.searchCursorColor,
+        focusedBorderColor = palette.primaryAccent,
+        unfocusedBorderColor = palette.borderColor,
+        focusedContainerColor = palette.inputBg,
+        unfocusedContainerColor = palette.inputBg,
+        focusedLabelColor = palette.primaryAccent,
+        unfocusedLabelColor = palette.secondaryText,
+    )
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(palette.appBackground)
+            .background(palette.groupedBackground)
             .statusBarsPadding()
             .navigationBarsPadding()
             .imePadding()
@@ -92,157 +114,197 @@ fun TelegramAuthWizardScreen(
     ) {
         Column(
             modifier = Modifier
-                .widthIn(max = 440.dp)
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 24.dp),
+                .padding(horizontal = 20.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             // Apple Messages style emblem
             Box(
                 modifier = Modifier
-                    .size(68.dp)
+                    .size(64.dp)
                     .clip(CircleShape)
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(palette.outgoingBubbleTop, palette.outgoingBubbleBottom),
+                            listOf(palette.outgoingBubbleTop, palette.outgoingBubbleBottom),
                         ),
                     ),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("✈", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                TelegramIcon(TelegramGlyph.CHAT_BUBBLE, tint = Color.White, size = 30.dp)
             }
-
             Spacer(Modifier.height(14.dp))
             Text(
-                text = "Fabushi 信息",
+                text = "Fabushi",
                 color = palette.primaryText,
-                fontSize = 24.sp,
+                fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "登录与桌面端同步的真实账号 · 零假数据",
+                text = strings.authSubtitle,
                 color = palette.secondaryText,
                 fontSize = 13.sp,
                 textAlign = TextAlign.Center,
             )
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // Editable server pill (matches desktop AuthWizardView server URL bar)
+            // Server Endpoint Pill
             Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = palette.elevatedSurface,
+                shape = RoundedCornerShape(12.dp),
+                color = palette.modalBg,
                 modifier = Modifier
-                    .border(0.75.dp, palette.dividerColor, RoundedCornerShape(999.dp))
+                    .fillMaxWidth()
+                    .border(0.5.dp, palette.borderColor, RoundedCornerShape(12.dp))
                     .clickable { editingServer = !editingServer },
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
                 ) {
                     Text(
-                        text = "服务器：$serverEndpoint",
+                        text = if (strings.isEnglish) "Server: $serverEndpoint" else "服务器：$serverEndpoint",
                         color = palette.secondaryText,
                         fontSize = 12.sp,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = if (editingServer) "收起" else "修改",
-                        color = palette.primaryAccent,
+                        text = if (editingServer) strings.done else if (strings.isEnglish) "Edit" else "修改",
+                        color = palette.topBarActionColor,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                     )
                 }
             }
 
-            AnimatedVisibility(visible = editingServer) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+            if (editingServer) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = palette.modalBg,
+                    modifier = Modifier.fillMaxWidth(),
                 ) {
-                    OutlinedTextField(
-                        value = serverDraft,
-                        onValueChange = { serverDraft = it },
-                        label = { Text("gpui_telegram_server URL") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f),
-                    )
-                    Button(
-                        onClick = {
-                            onUpdateServerEndpoint(serverDraft.trim())
-                            editingServer = false
-                        },
-                        shape = RoundedCornerShape(12.dp),
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        Text("保存")
+                        OutlinedTextField(
+                            value = serverDraft,
+                            onValueChange = { serverDraft = it },
+                            label = { Text(if (strings.isEnglish) "Server Endpoint URL" else "服务器地址") },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = inputColors,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    serverDraft = DEFAULT_DESKTOP_SERVER_URL
+                                    onUpdateServerEndpoint(DEFAULT_DESKTOP_SERVER_URL)
+                                    editingServer = false
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(strings.resetDefaultServer, color = palette.primaryAccent, fontSize = 13.sp)
+                            }
+                            Button(
+                                onClick = {
+                                    val clean = serverDraft.trim().ifBlank { DEFAULT_DESKTOP_SERVER_URL }
+                                    onUpdateServerEndpoint(clean)
+                                    editingServer = false
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = palette.primaryAccent,
+                                    contentColor = Color.White,
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(strings.save, fontSize = 13.sp)
+                            }
+                        }
                     }
                 }
             }
 
-            Spacer(Modifier.height(18.dp))
+            Spacer(Modifier.height(16.dp))
 
-            // Main frosted Apple card
+            // Main iOS Auth Card
             Surface(
-                shape = RoundedCornerShape(20.dp),
-                color = palette.surfaceColor,
+                shape = RoundedCornerShape(18.dp),
+                color = palette.modalBg,
+                shadowElevation = if (palette.isDark) 0.dp else 4.dp,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .border(0.75.dp, palette.dividerColor, RoundedCornerShape(20.dp)),
+                    .border(0.5.dp, palette.borderColor, RoundedCornerShape(18.dp)),
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
+                    modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    // Segmented pill tabs matching desktop AuthWizardTab
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(palette.elevatedSurface)
-                            .padding(3.dp),
-                        horizontalArrangement = Arrangement.spacedBy(3.dp),
+                    // iOS UISegmentedControl tabs
+                    val tabs = if (strings.isEnglish) {
+                        listOf("Sign In", "Sign Up", "Email", "Alipay")
+                    } else {
+                        listOf("密码登录", "注册", "邮箱", "支付宝")
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = palette.inputBg,
+                        modifier = Modifier.fillMaxWidth(),
                     ) {
-                        listOf("密码登录", "注册", "邮箱", "支付宝").forEachIndexed { idx, label ->
-                            val active = selectedTab == idx
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(9.dp))
-                                    .background(if (active) palette.surfaceColor else Color.Transparent)
-                                    .clickable { selectedTab = idx }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(
-                                    text = label,
-                                    color = if (active) palette.primaryText else palette.secondaryText,
-                                    fontSize = 12.5.sp,
-                                    fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                                )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(3.dp),
+                            horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        ) {
+                            tabs.forEachIndexed { idx, label ->
+                                val selected = selectedTab == idx
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (selected) palette.modalBg else Color.Transparent,
+                                    shadowElevation = if (selected && !palette.isDark) 1.dp else 0.dp,
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { selectedTab = idx },
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = if (selected) palette.primaryText else palette.secondaryText,
+                                        fontSize = 12.sp,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        modifier = Modifier.padding(vertical = 8.dp),
+                                    )
+                                }
                             }
                         }
                     }
 
                     if (!authError.isNullOrBlank()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(palette.destructiveRed.copy(alpha = 0.12f))
-                                .padding(horizontal = 12.dp, vertical = 9.dp),
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = palette.destructiveRed.copy(alpha = 0.12f),
+                            modifier = Modifier.fillMaxWidth(),
                         ) {
                             Text(
                                 text = authError,
                                 color = palette.destructiveRed,
-                                fontSize = 12.5.sp,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
                             )
                         }
                     }
@@ -252,8 +314,10 @@ fun TelegramAuthWizardScreen(
                             OutlinedTextField(
                                 value = username,
                                 onValueChange = { username = it },
-                                label = { Text("用户名 / @username") },
+                                label = { Text(if (strings.isEnglish) "Username" else "用户名") },
                                 singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = inputColors,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("auth-username-input"),
@@ -261,31 +325,36 @@ fun TelegramAuthWizardScreen(
                             OutlinedTextField(
                                 value = password,
                                 onValueChange = { password = it },
-                                label = { Text("密码") },
+                                label = { Text(if (strings.isEnglish) "Password" else "密码") },
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = inputColors,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("auth-password-input"),
                             )
                             Button(
-                                onClick = { onPasswordLogin(username.trim(), password) },
                                 enabled = !isAuthenticating && username.isNotBlank() && password.isNotBlank(),
-                                shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = palette.primaryAccent),
+                                onClick = { onPasswordLogin(username.trim(), password) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = palette.primaryAccent,
+                                    contentColor = Color.White,
+                                ),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(46.dp)
+                                    .height(48.dp)
                                     .testTag("auth-submit-login"),
                             ) {
                                 if (isAuthenticating) {
                                     CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
                                         color = Color.White,
                                         strokeWidth = 2.dp,
-                                        modifier = Modifier.size(18.dp),
                                     )
                                 } else {
-                                    Text("登录", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
+                                    Text(strings.signIn, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -294,139 +363,276 @@ fun TelegramAuthWizardScreen(
                             OutlinedTextField(
                                 value = firstName,
                                 onValueChange = { firstName = it },
-                                label = { Text("显示昵称") },
+                                label = { Text(if (strings.isEnglish) "Display Name" else "昵称") },
                                 singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = inputColors,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             OutlinedTextField(
                                 value = username,
                                 onValueChange = { username = it },
-                                label = { Text("用户名") },
+                                label = { Text(if (strings.isEnglish) "Username" else "用户名") },
                                 singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = inputColors,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             OutlinedTextField(
                                 value = password,
                                 onValueChange = { password = it },
-                                label = { Text("设置密码（至少 6 位）") },
+                                label = { Text(if (strings.isEnglish) "Password" else "密码") },
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = inputColors,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             Button(
-                                onClick = { onPasswordRegister(username.trim(), password, firstName.trim()) },
-                                enabled = !isAuthenticating && username.isNotBlank() && password.length >= 6,
-                                shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = palette.primaryAccent),
+                                enabled = !isAuthenticating && username.isNotBlank() && password.isNotBlank(),
+                                onClick = {
+                                    onPasswordRegister(
+                                        username.trim(),
+                                        password,
+                                        firstName.trim().ifBlank { username.trim() },
+                                    )
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = palette.primaryAccent,
+                                    contentColor = Color.White,
+                                ),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(46.dp),
+                                    .height(48.dp),
                             ) {
-                                Text(if (isAuthenticating) "注册中…" else "创建账号并登录", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    if (strings.isEnglish) "Create Account" else "注册并登录",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
                             }
                         }
 
                         2 -> {
+                            OutlinedTextField(
+                                value = email,
+                                onValueChange = { email = it },
+                                label = { Text(if (strings.isEnglish) "Email Address" else "电子邮箱") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = inputColors,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 OutlinedTextField(
-                                    value = email,
-                                    onValueChange = { email = it },
-                                    label = { Text("邮箱地址") },
+                                    value = emailCode,
+                                    onValueChange = { emailCode = it },
+                                    label = { Text(if (strings.isEnglish) "Code" else "验证码") },
                                     singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = inputColors,
                                     modifier = Modifier.weight(1f),
                                 )
                                 OutlinedButton(
+                                    enabled = !isAuthenticating && email.isNotBlank(),
                                     onClick = { onSendEmailCode(email.trim()) },
-                                    enabled = !isAuthenticating && email.contains("@"),
                                     shape = RoundedCornerShape(12.dp),
                                 ) {
-                                    Text("发验证码")
+                                    Text(
+                                        if (strings.isEnglish) "Send Code" else "发送验证码",
+                                        color = palette.primaryAccent,
+                                        fontSize = 13.sp,
+                                    )
                                 }
                             }
                             if (!emailCodeSentNotice.isNullOrBlank()) {
-                                Text(emailCodeSentNotice, color = palette.primaryAccent, fontSize = 12.sp)
+                                Text(emailCodeSentNotice, color = palette.statusGreenText, fontSize = 12.sp)
                             }
-                            OutlinedTextField(
-                                value = emailCode,
-                                onValueChange = { emailCode = it },
-                                label = { Text("邮箱验证码") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
                             OutlinedTextField(
                                 value = username,
                                 onValueChange = { username = it },
-                                label = { Text("用户名") },
+                                label = { Text(if (strings.isEnglish) "Username" else "用户名") },
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            OutlinedTextField(
-                                value = firstName,
-                                onValueChange = { firstName = it },
-                                label = { Text("显示昵称") },
-                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = inputColors,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             OutlinedTextField(
                                 value = password,
                                 onValueChange = { password = it },
-                                label = { Text("密码") },
+                                label = { Text(if (strings.isEnglish) "Password" else "设置密码") },
                                 singleLine = true,
                                 visualTransformation = PasswordVisualTransformation(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = inputColors,
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             Button(
+                                enabled = !isAuthenticating && email.isNotBlank() && emailCode.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
                                 onClick = {
-                                    onEmailRegister(email.trim(), emailCode.trim(), username.trim(), password, firstName.trim())
+                                    onEmailRegister(
+                                        email.trim(),
+                                        emailCode.trim(),
+                                        username.trim(),
+                                        password,
+                                        firstName.trim().ifBlank { username.trim() },
+                                    )
                                 },
-                                enabled = !isAuthenticating && email.contains("@") && emailCode.isNotBlank() && username.isNotBlank() && password.length >= 6,
-                                shape = RoundedCornerShape(14.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = palette.primaryAccent),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = palette.primaryAccent,
+                                    contentColor = Color.White,
+                                ),
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(46.dp),
+                                    .height(48.dp),
                             ) {
-                                Text("验证邮箱并注册", color = Color.White, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    if (strings.isEnglish) "Verify & Sign In" else "验证邮箱并登录",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
                             }
                         }
 
-                        3 -> {
-                            Text(
-                                text = alipayStatusText?.ifBlank { null } ?: "通过服务器发起支付宝 OAuth 授权登录",
-                                color = palette.secondaryText,
-                                fontSize = 13.sp,
-                            )
-                            if (!alipayLoginUrl.isNullOrBlank()) {
-                                Text(
-                                    text = alipayLoginUrl,
-                                    color = palette.primaryAccent,
-                                    fontSize = 11.5.sp,
-                                    maxLines = 2,
-                                )
-                            }
-                            Row(
+                        else -> {
+                            Column(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
                             ) {
-                                Button(
-                                    onClick = onStartAlipayLogin,
-                                    enabled = !isAuthenticating,
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1677FF)),
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text("发起支付宝登录", color = Color.White)
+                                Text(
+                                    text = if (strings.isEnglish) {
+                                        "Authorize with Alipay OAuth on this device or scan the QR code below."
+                                    } else {
+                                        "点击下方链接跳转支付宝授权登录，或使用另一台设备扫码完成验证。"
+                                    },
+                                    color = palette.secondaryText,
+                                    fontSize = 13.sp,
+                                    textAlign = TextAlign.Center,
+                                )
+
+                                if (!alipayLoginUrl.isNullOrBlank()) {
+                                    // Real scannable ISO/IEC 18004 QR code
+                                    QrCodeCanvas(
+                                        payload = alipayLoginUrl,
+                                        size = 184.dp,
+                                        modifier = Modifier.testTag("auth-alipay-qr"),
+                                    )
+
+                                    // Clickable URL card + Copy action
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = palette.inputBg,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .clickable { openAlipayUrl(context, alipayLoginUrl) }
+                                            .testTag("auth-alipay-url-card"),
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(12.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                                        ) {
+                                            Text(
+                                                text = strings.openInAlipay,
+                                                color = palette.primaryAccent,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                            )
+                                            Text(
+                                                text = alipayLoginUrl,
+                                                color = palette.secondaryText,
+                                                fontSize = 11.sp,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        }
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    ) {
+                                        Button(
+                                            onClick = { openAlipayUrl(context, alipayLoginUrl) },
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = palette.primaryAccent,
+                                                contentColor = Color.White,
+                                            ),
+                                            shape = RoundedCornerShape(10.dp),
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Text(strings.openInAlipay, fontSize = 13.sp, maxLines = 1)
+                                        }
+                                        OutlinedButton(
+                                            onClick = {
+                                                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                cm?.setPrimaryClip(ClipData.newPlainText("alipay_login", alipayLoginUrl))
+                                                copiedAlipayLink = true
+                                            },
+                                            shape = RoundedCornerShape(10.dp),
+                                        ) {
+                                            Text(
+                                                if (copiedAlipayLink) strings.copied else strings.copy,
+                                                color = palette.primaryAccent,
+                                                fontSize = 13.sp,
+                                            )
+                                        }
+                                    }
                                 }
-                                OutlinedButton(
-                                    onClick = onPollAlipayLogin,
-                                    enabled = !isAuthenticating && !alipayLoginUrl.isNullOrBlank(),
-                                    shape = RoundedCornerShape(14.dp),
+
+                                if (!alipayStatusText.isNullOrBlank()) {
+                                    Text(
+                                        text = alipayStatusText,
+                                        color = palette.secondaryText,
+                                        fontSize = 12.sp,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    Text("检查状态")
+                                    Button(
+                                        enabled = !isAuthenticating,
+                                        onClick = onStartAlipayLogin,
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = palette.primaryAccent,
+                                            contentColor = Color.White,
+                                        ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Text(
+                                            if (alipayLoginUrl.isNullOrBlank()) {
+                                                if (strings.isEnglish) "Start Alipay" else "发起支付宝登录"
+                                            } else {
+                                                if (strings.isEnglish) "Refresh QR" else "刷新二维码"
+                                            },
+                                            fontSize = 13.sp,
+                                        )
+                                    }
+                                    if (!alipayLoginUrl.isNullOrBlank()) {
+                                        OutlinedButton(
+                                            enabled = !isAuthenticating,
+                                            onClick = onPollAlipayLogin,
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Text(
+                                                if (strings.isEnglish) "Check Status" else "检查授权状态",
+                                                color = palette.primaryAccent,
+                                                fontSize = 13.sp,
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -435,16 +641,26 @@ fun TelegramAuthWizardScreen(
             }
 
             Spacer(Modifier.height(14.dp))
+
             TextButton(
                 onClick = onEnterOfflineLocalMode,
                 modifier = Modifier.testTag("auth-enter-offline-mode"),
             ) {
                 Text(
-                    text = "暂不登录 · 仅使用本机离线工作台（Mika / 工具 / 本地会话）",
+                    text = if (strings.isEnglish) "Continue in Offline Local Mode" else "进入离线本地模式",
                     color = palette.secondaryText,
-                    fontSize = 12.5.sp,
+                    fontSize = 13.sp,
                 )
             }
         }
+    }
+}
+
+private fun openAlipayUrl(context: Context, url: String) {
+    runCatching {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
     }
 }

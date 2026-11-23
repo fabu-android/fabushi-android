@@ -2,8 +2,10 @@ package com.ombhrum.fabushi
 
 import android.content.Context
 import android.util.Log
+import com.ombhrum.fabushi.mika.TelegramMikaChannel
 import com.ombhrum.fabushi.mika.TelegramMikaChannelBridge
 import com.wangzan101.mika.MikaApp
+import com.wangzan101.mika.core.run.Channel
 
 /**
  * Unified Application container for Fabushi Telegram + Mika Phone Control Agent (`com.ombhrum.fabushi`).
@@ -18,6 +20,9 @@ class FabushiApplication : MikaApp() {
     val telegramMikaBridge: TelegramMikaChannelBridge by lazy {
         TelegramMikaChannelBridge(this)
     }
+
+    override fun resolveChannel(channelId: String): Channel? =
+        if (channelId == TelegramMikaChannel.ID) telegramMikaBridge.channel else super.resolveChannel(channelId)
 
     override fun onCreate() {
         super.onCreate()

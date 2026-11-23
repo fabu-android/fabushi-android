@@ -17,6 +17,7 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.sqrt
+import kotlinx.coroutines.flow.SharedFlow
 
 // ============================================================================
 // 1. UTF-16 Message Entities & Rich Formatting Engine
@@ -553,12 +554,23 @@ data class SecretChatFingerprint(
 // 4. Multi-Account Generation Fence & Folder Filtering
 // ============================================================================
 
+internal fun org.json.JSONObject.optNonNullString(key: String, fallback: String = ""): String =
+    if (isNull(key)) fallback else optString(key, fallback)
+
+internal fun org.json.JSONObject.optNullableString(key: String): String? =
+    if (isNull(key)) null else optString(key, "").ifBlank { null }
+
+internal fun org.json.JSONArray.optNonNullString(index: Int, fallback: String = ""): String =
+    if (isNull(index)) fallback else optString(index, fallback)
+
 class GenerationFence(initial: Long = 1L) {
     private val counter = AtomicLong(initial)
 
     val currentGeneration: Long get() = counter.get()
 
     fun advance(): Long = counter.incrementAndGet()
+
+    fun compareAndAdvance(expected: Long): Boolean = counter.compareAndSet(expected, expected + 1L)
 
     fun isCurrent(capturedGeneration: Long): Boolean = counter.get() == capturedGeneration
 }
@@ -573,8 +585,8 @@ data class TelegramAccount(
     val avatarSeed: String = id,
     val unreadCount: Int = 0,
     val isActive: Boolean = false,
-    val isPremium: Boolean = true,
-    val statusText: String = "在线",
+    val isPremium: Boolean = false,
+    val statusText: String = "",
 )
 
 data class TelegramFolderTab(
@@ -655,8 +667,8 @@ data class TelegramStoryItem(
     val expiresAtMs: Long = System.currentTimeMillis() + 86_400_000L,
     val viewed: Boolean = false,
     val isMine: Boolean = false,
-    val viewCount: Int = 18,
-    val reactionsCount: Int = 5,
+    val viewCount: Int = 0,
+    val reactionsCount: Int = 0,
 )
 
 data class TelegramForumTopic(
@@ -753,7 +765,19 @@ data class TelegramChatItem(
     val subscriberCount: Int = 0,
     val ttlSeconds: Int = 0,
     val lastMessageOutgoing: Boolean = false,
-    val lastDeliveryState: String = "read",
+    val lastDeliveryState: String = "",
+    val lastMessageAtMs: Long = 0L,
+    val pts: Long = 0L,
+    val readInboxMaxId: Long = 0L,
+    val readOutboxMaxId: Long = 0L,
+    val muteUntilMs: Long? = null,
+    val botExecutionState: String = "",
+    val botActivityDetail: String? = null,
+    val avatarShape: String? = null,
+    val avatarColor: String? = null,
+    val peerUserId: Long? = null,
+    val peerBio: String? = null,
+    val hasMoreHistory: Boolean = true,
     val draftText: String = "",
     val typingLabel: String? = null,
     val pinnedMessageIds: List<String> = emptyList(),
@@ -793,7 +817,7 @@ data class TelegramMessageItem(
     val outgoing: Boolean,
     val time: String,
     val timestampMs: Long = System.currentTimeMillis(),
-    val deliveryState: String = "read", // sending | sent | delivered | read
+    val deliveryState: String = "sending", // sending | sent | delivered | read | failed
     val edited: Boolean = false,
     val pinned: Boolean = false,
     val silent: Boolean = false,
@@ -805,12 +829,14 @@ data class TelegramMessageItem(
     val reactions: List<ChatReaction> = emptyList(),
     val inlineKeyboard: List<InlineKeyboardRow> = emptyList(),
     val poll: TelegramPollModel? = null,
+    val pollId: String? = null,
     val waveformBars: List<Int> = emptyList(),
     val durationSeconds: Int = 0,
     val mediaFileName: String? = null,
     val mediaBlobId: String? = null,
     val mediaMimeType: String? = null,
     val mediaSizeBytes: Int = 0,
+    val mediaThumbnailDataUrl: String? = null,
     val stickerEmoji: String? = null,
     val stickerPackTitle: String? = null,
     val contactName: String? = null,
@@ -821,9 +847,12 @@ data class TelegramMessageItem(
     val viewsCount: Int? = null,
     val commentsCount: Int? = null,
     val translatedText: String? = null,
+    val clientNonce: String? = null,
     val mikaTaskId: String? = null,
     val mikaTaskStatus: String? = null,
     val mikaStepLogs: List<String> = emptyList(),
+    val mikaAskId: String? = null,
+    val mikaRequiresConfirmation: Boolean = false,
 ) {
     fun toLegacyChatMessage(): ChatMessage = ChatMessage(
         id = id,
@@ -960,10 +989,10 @@ enum class TalkVadPhase(val label: String) {
 data class TalkModeOrbState(
     val visible: Boolean = false,
     val phase: TalkVadPhase = TalkVadPhase.LISTENING,
-    val vadLatencyMs: Int = 38,
-    val rmsLevel: Float = 0.18f,
+    val vadLatencyMs: Int = 0,
+    val rmsLevel: Float = 0f,
     val userTranscript: String = "",
-    val assistantReply: String = "您好！已开启全双工 <60ms VAD 实时语音对话模式，随时开口即可无感打断。",
+    val assistantReply: String = "",
 )
 
 // ============================================================================
@@ -1067,7 +1096,7 @@ data class DharmaAchievement(
 )
 
 data class GlobalDharmaUiState(
-    val countries: List<CountryOfferingNode> = GlobalDharmaCatalog.build240Countries(),
+    val countries: List<CountryOfferingNode> = emptyList(),
     val selectedCountryCode: String = "CN",
     val activeArcs: List<OfferingArc> = emptyList(),
     val totalGlobalOfferings: Long = 0L,
@@ -1204,24 +1233,6 @@ object GlobalDharmaCatalog {
                 lampLitByMe = false,
             )
         }
-        val needed = 242 - list.size
-        val goldenAngle = PI * (3.0 - sqrt(5.0))
-        for (k in 0 until needed) {
-            val y = 1.0 - (k.toDouble() / needed.coerceAtLeast(1)) * 1.75 - 0.1
-            val lat = kotlin.math.asin(y.coerceIn(-0.92, 0.92)) * (180.0 / PI)
-            val lon = (((k * goldenAngle * 180.0 / PI) + 360.0) % 360.0) - 180.0
-            val code = "R%02d".format(k + 1)
-            list += CountryOfferingNode(
-                code = code,
-                nameZh = "十方洲岛 #${k + 1}",
-                nameEn = "Territory #${k + 1}",
-                region = "环海诸岛",
-                latitude = lat,
-                longitude = lon,
-                offeringsCount = 0L,
-                lampLitByMe = false,
-            )
-        }
         return list
     }
 
@@ -1284,7 +1295,7 @@ data class HermesSessionItem(
     val provider: String,
     val model: String,
     val parentBranchId: String? = null,
-    val turnCount: Int = 2,
+    val turnCount: Int = 0,
     val lastOutput: String = "",
 )
 
@@ -1302,7 +1313,7 @@ data class HermesCronItem(
     val scheduleExpr: String,
     val prompt: String,
     val enabled: Boolean = true,
-    val lastRunStatus: String = "成功 · 08:00",
+    val lastRunStatus: String = "",
 )
 
 enum class KanbanColumn(val label: String) {
@@ -1330,18 +1341,11 @@ data class HermesApprovalRequest(
 data class HermesStudioUiState(
     val activeTab: HermesStudioTab = HermesStudioTab.SESSIONS_PROVIDERS,
     val sessions: List<HermesSessionItem> = emptyList(),
-    val activeSessionId: String = "hermes-main",
-    val soulMarkdown: String = "# SOUL.md — Hermes Sovereign Agent\n- 慈悲、精准、实事求是，执行不可逆外部动作前必须请求确认。\n- 支持 `/moa` 混合多模型协同辩论与综合推理。",
-    val memoryBlocks: List<Pair<String, String>> = listOf(
-        "user_preferences" to "偏好中文技术架构回复，使用 Telegram 原生深浅色主题与 Mika 本机自动化。",
-        "active_projects" to "fabu-android/fabushi-android v2.0.0 — GPUI-Telegram + Mika Phone Control Fusion。",
-    ),
+    val activeSessionId: String = "",
+    val soulMarkdown: String = "",
+    val memoryBlocks: List<Pair<String, String>> = emptyList(),
     val skills: List<HermesSkillItem> = emptyList(),
-    val terminalLines: List<String> = listOf(
-        "$ hermes status --all",
-        "✓ Hermes Sovereign Engine v1.2 · 61 slash commands loaded",
-        "✓ Toolsets: [mcp-core, telegram-bot, mika-phone-bridge, ton-wallet, sandbox-exec]",
-    ),
+    val terminalLines: List<String> = emptyList(),
     val cronJobs: List<HermesCronItem> = emptyList(),
     val kanbanCards: List<HermesKanbanCard> = emptyList(),
     val approvals: List<HermesApprovalRequest> = emptyList(),
@@ -1365,17 +1369,17 @@ data class MagpieProviderPreset(
     val flagshipModel: String,
     val inputUsdPer1M: Double,
     val configured: Boolean = false,
-    val healthy: Boolean = true,
+    val healthy: Boolean = false,
 )
 
 object MagpiePresetCatalog {
     val PRESETS_48: List<MagpieProviderPreset> = listOf(
-        MagpieProviderPreset("openai", "OpenAI Official", "Global", "Responses", "https://api.openai.com/v1", "gpt-5.4", 2.50, configured = true),
-        MagpieProviderPreset("anthropic", "Anthropic Claude", "Global", "Anthropic", "https://api.anthropic.com/v1", "claude-4.6-sonnet", 3.00, configured = true),
-        MagpieProviderPreset("gemini", "Google Gemini", "Global", "Gemini", "https://generativelanguage.googleapis.com/v1beta", "gemini-3.1-pro", 1.25, configured = true),
-        MagpieProviderPreset("xai", "xAI Grok", "Global", "OpenAI", "https://api.x.ai/v1", "grok-4", 2.00, configured = true),
-        MagpieProviderPreset("deepseek", "DeepSeek 深度求索", "CN", "OpenAI", "https://api.deepseek.com/v1", "deepseek-v3.2", 0.27, configured = true),
-        MagpieProviderPreset("qwen", "Alibaba Qwen 通义千问", "CN", "OpenAI", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max", 0.40, configured = true),
+        MagpieProviderPreset("openai", "OpenAI Official", "Global", "Responses", "https://api.openai.com/v1", "gpt-5.4", 2.50),
+        MagpieProviderPreset("anthropic", "Anthropic Claude", "Global", "Anthropic", "https://api.anthropic.com/v1", "claude-4.6-sonnet", 3.00),
+        MagpieProviderPreset("gemini", "Google Gemini", "Global", "Gemini", "https://generativelanguage.googleapis.com/v1beta", "gemini-3.1-pro", 1.25),
+        MagpieProviderPreset("xai", "xAI Grok", "Global", "OpenAI", "https://api.x.ai/v1", "grok-4", 2.00),
+        MagpieProviderPreset("deepseek", "DeepSeek 深度求索", "CN", "OpenAI", "https://api.deepseek.com/v1", "deepseek-v3.2", 0.27),
+        MagpieProviderPreset("qwen", "Alibaba Qwen 通义千问", "CN", "OpenAI", "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3-max", 0.40),
         MagpieProviderPreset("kimi", "Moonshot Kimi 月之暗面", "CN", "OpenAI", "https://api.moonshot.cn/v1", "kimi-k2.5", 0.60),
         MagpieProviderPreset("zhipu", "Zhipu GLM 智谱清言", "CN", "OpenAI", "https://open.bigmodel.cn/api/paas/v4", "glm-5", 0.50),
         MagpieProviderPreset("minimax", "MiniMax 海螺", "CN", "OpenAI", "https://api.minimax.chat/v1", "MiniMax-M2", 0.45),
@@ -1387,7 +1391,7 @@ object MagpiePresetCatalog {
         MagpieProviderPreset("hunyuan", "Tencent 腾讯混元", "CN", "OpenAI", "https://api.hunyuan.cloud.tencent.com/v1", "hunyuan-turboS", 0.35),
         MagpieProviderPreset("ernie", "Baidu 百度文心千帆", "CN", "OpenAI", "https://qianfan.baidubce.com/v2", "ernie-4.5-8k", 0.40),
         MagpieProviderPreset("spark", "iFlytek 讯飞星火", "CN", "OpenAI", "https://spark-api-open.xf-yun.com/v1", "4.0Ultra", 0.42),
-        MagpieProviderPreset("openrouter", "OpenRouter Unified", "Global", "OpenAI", "https://openrouter.ai/api/v1", "openrouter/auto", 1.00, configured = true),
+        MagpieProviderPreset("openrouter", "OpenRouter Unified", "Global", "OpenAI", "https://openrouter.ai/api/v1", "openrouter/auto", 1.00),
         MagpieProviderPreset("groq", "Groq LPU", "Global", "OpenAI", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile", 0.59),
         MagpieProviderPreset("cerebras", "Cerebras Wafer-Scale", "Global", "OpenAI", "https://api.cerebras.ai/v1", "llama-4-scout-17b", 0.20),
         MagpieProviderPreset("sambanova", "SambaNova Cloud", "Global", "OpenAI", "https://api.sambanova.ai/v1", "DeepSeek-R1", 0.50),
@@ -1435,6 +1439,7 @@ object MagpiePresetCatalog {
 
 data class MagpieGatewayUiState(
     val strategy: MagpieRoutingStrategy = MagpieRoutingStrategy.CHEAPEST,
+    val liveReady: Boolean = false,
     val presets: List<MagpieProviderPreset> = MagpiePresetCatalog.PRESETS_48,
     val totalRequests: Long = 0L,
     val totalPromptTokens: Long = 0L,
@@ -1549,11 +1554,82 @@ data class ComputerNodeItem(
     val name: String,
     val kind: ComputerNodeKind,
     val osInfo: String,
-    val online: Boolean = true,
-    val cpuLoadPercent: Int = 18,
-    val memorySummary: String = "6.2 / 12.0 GB",
+    val online: Boolean = false,
+    val cpuLoadPercent: Int = 0,
+    val memorySummary: String = "",
     val leaseOwner: String? = null,
     val humanTakeoverActive: Boolean = false,
+    val leaseGeneration: Long = 0L,
+    val host: String? = null,
+    val sshPort: Int? = null,
+    val sshUsername: String? = null,
+    val authMethod: String? = null,
+    val hasSavedCredential: Boolean = false,
+    val resolution: String = "",
+    val runPolicy: String = "ask_every_time",
+    val isCurrentDevice: Boolean = false,
+    val deviceId: String? = null,
+    val tierBadge: String = "",
+    val boundBotIds: List<Long> = emptyList(),
+    val latestFrameDataUrl: String? = null,
+)
+
+data class RemoteSessionItem(
+    val sessionId: String,
+    val targetNodeId: String,
+    val controllerKind: String = "",
+    val controllerName: String = "",
+    val relayMode: String = "",
+    val rttMs: Int? = null,
+    val fps: Int? = null,
+    val activeTool: String? = null,
+)
+
+data class FabushiBotItem(
+    val botUserId: Long,
+    val agentId: String = "",
+    val username: String,
+    val displayName: String,
+    val description: String = "",
+    val title: String = "",
+    val executionState: String = "",
+    val avatarShape: String = "circle",
+    val avatarColor: String = "#007AFF",
+    val preferredModel: String = "",
+    val thinkingLevel: String = "",
+    val approvalMode: String = "ask",
+    val toolsetPreset: String = "",
+    val companionChatId: Long? = null,
+    val boundNodeId: String? = null,
+    val memoryEntriesCount: Int = 0,
+    val skillsCount: Int = 0,
+    val isFabushiBot: Boolean = true,
+    val codingAgent: CodingAgentBotItem? = null,
+)
+
+data class CodingAgentProbeItem(
+    val providerKind: CodingProviderKindUi,
+    val installed: Boolean = false,
+    val version: String? = null,
+    val executablePath: String? = null,
+)
+
+data class ServerSessionItem(
+    val sessionId: String,
+    val deviceName: String,
+    val platform: String = "",
+    val ipAddress: String = "",
+    val isCurrent: Boolean = false,
+    val lastActiveMs: Long = 0L,
+)
+
+data class ServerContactItem(
+    val userId: Long,
+    val username: String,
+    val displayName: String,
+    val phone: String = "",
+    val bio: String = "",
+    val chatId: Long? = null,
 )
 
 enum class ActionRiskTier(val code: String, val label: String, val requiresApproval: Boolean) {
@@ -1593,14 +1669,16 @@ data class GlobalTaskItem(
 
 data class CloudComputerUiState(
     val nodes: List<ComputerNodeItem> = emptyList(),
-    val selectedNodeId: String = "node-local-android",
+    val selectedNodeId: String = "",
     val actionBusTools: List<ActionBusSchemaItem> = emptyList(),
     val globalTasks: List<GlobalTaskItem> = emptyList(),
-    val lastOpOutput: String = "就绪 · 选择节点并获取 CUA 租约即可安全操控本机或云端计算节点。",
+    val lastOpOutput: String = "",
     val assistConfig: RemoteAssistConfigUi = RemoteAssistConfigUi(),
     val streamSettings: RemoteStreamSettingsUi = RemoteStreamSettingsUi(),
     val mcpGrants: List<RemoteMcpGrantItem> = emptyList(),
-    val actionBusCategoryCount: Int = 19,
+    val actionBusCategoryCount: Int = 0,
+    val remoteSessions: List<RemoteSessionItem> = emptyList(),
+    val mcpAuditEntries: List<String> = emptyList(),
 )
 
 // ============================================================================
@@ -1616,17 +1694,26 @@ data class MikaTaskSummaryItem(
 )
 
 data class MikaBridgeUiSnapshot(
-    val available: Boolean = true,
+    val available: Boolean = false,
     val accessibilityEnabled: Boolean = false,
     val wirelessAdbPaired: Boolean = false,
     val helperBinderAlive: Boolean = false,
     val virtualDisplayActive: Boolean = false,
     val capsuleVisible: Boolean = false,
-    val sandboxReady: Boolean = true,
-    val activeSpeedProfile: String = "标准 (Balanced)",
+    val sandboxReady: Boolean = false,
+    val activeSpeedProfile: String = "",
     val activeTask: MikaTaskSummaryItem? = null,
     val pendingConfirmationPrompt: String? = null,
     val recentTasks: List<MikaTaskSummaryItem> = emptyList(),
+    val mcpLanEnabled: Boolean = false,
+    val mcpLanPort: Int = 0,
+    val mcpUsbEnabled: Boolean = false,
+    val mcpRelayEnabled: Boolean = false,
+    val mcpRelayState: String = "",
+    val mcpServerState: String = "",
+    val pendingAskId: String? = null,
+    val pendingAskThreadId: String? = null,
+    val pendingInputPrompt: String? = null,
 )
 
 interface MikaBridgeCallbacks {
@@ -1634,6 +1721,21 @@ interface MikaBridgeCallbacks {
     fun submitPhoneTask(prompt: String, sourceConversationId: String? = null, onStepUpdate: (String) -> Unit = {}) {}
     fun stopActiveTask() {}
     fun resolveConfirmation(approved: Boolean) {}
+    fun resolveConfirmation(approved: Boolean, threadId: String?, askId: String?) {
+        resolveConfirmation(approved)
+    }
+    fun answerAsk(text: String, threadId: String? = null, askId: String? = null): Boolean = false
+    fun channelEvents(): SharedFlow<com.ombhrum.fabushi.mika.MikaChannelCardEvent>? = null
+    suspend fun executeLocalSandboxCommand(command: String, timeoutMs: Long = 15_000L): Result<String> =
+        Result.failure(IllegalStateException("LOCAL_SANDBOX_NOT_READY: Mika bridge not attached"))
+    fun syncMagpieProviderKey(
+        presetId: String,
+        displayName: String,
+        protocol: String,
+        baseUrl: String,
+        defaultModel: String,
+        apiKey: String,
+    ) {}
     fun toggleFloatingCapsule(enabled: Boolean) {}
     fun openAccessibilitySettings() {}
     fun openWirelessAdbPairing() {}

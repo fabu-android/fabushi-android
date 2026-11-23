@@ -146,11 +146,14 @@ class TelegramModelsAndEntitiesTest {
         assertEquals(8, row.boundedButtons.size)
 
         val countries = GlobalDharmaCatalog.build240Countries()
-        assertTrue(countries.size >= 240)
+        assertTrue(countries.isNotEmpty())
+        assertTrue(countries.none { it.nameZh.startsWith("十方洲岛") || it.code.matches(Regex("R\\d+")) })
+        assertTrue(GlobalDharmaUiState().countries.isEmpty())
         assertTrue(countries.any { it.code == "CN" })
         assertTrue(countries.any { it.code == "NP" })
 
         assertTrue(MagpiePresetCatalog.PRESETS_48.size >= 47)
+        assertTrue(MagpiePresetCatalog.PRESETS_48.all { !it.configured && !it.healthy })
         val (masked, redactedCount) = MagpiePresetCatalog.maskSecretsAndPii(
             "Key sk-abc1234567890XYZ mail ops@ombhrum.com tel 13800138000",
         )

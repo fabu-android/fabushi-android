@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256, Sha512};
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 pub const BIP39_WORD_COUNT: usize = 2048;
 pub const TON_MNEMONIC_WORDS: usize = 24;
@@ -599,8 +600,8 @@ pub fn parse_ton_address(addr: &str) -> Result<(i8, [u8; 32]), String> {
     let trimmed = addr.trim();
     if let Some((wc_str, hex_part)) = trimmed.split_once(':') {
         let wc: i8 = wc_str.parse().map_err(|_| "Invalid TON workchain".to_string())?;
-        if hex_part.len() != 64 {
-            return Err("Raw TON address hash must be 64 hex chars".into());
+        if !hex_part.is_ascii() || hex_part.len() != 64 {
+            return Err("Invalid raw TON address hash: expected 64 ASCII hex chars".to_string());
         }
         let mut hash = [0u8; 32];
         for i in 0..32 {
@@ -866,48 +867,6 @@ fn fetch_live_ton_usd_quote(quote_endpoint: &str) -> Result<f64, String> {
     Ok(price)
 }
 
-fn seed_default_collectibles(conn: &Connection, account_id: &str) -> Result<(), String> {
-    let items = [
-        (
-            "nft_lotus_108",
-            "gift",
-            "Dharma Lotus #108 (莲花法施纪念)",
-            "Global Dharma Collectibles",
-            "Legendary",
-            1080i64,
-            json!({"backdrop": "Saffron Gold", "symbol": "🪷", "transferable": true}),
-        ),
-        (
-            "nft_prayer_wheel_01",
-            "nft",
-            "Merit Prayer Wheel v4r2",
-            "Mahayana Artifacts",
-            "Epic",
-            500i64,
-            json!({"rotations": 10800, "symbol": "☸️", "standard": "TEP-62"}),
-        ),
-        (
-            "gift_star_crown_07",
-            "gift",
-            "Telegram Star Crown #07",
-            "Telegram Gifts",
-            "Rare",
-            250i64,
-            json!({"symbol": "👑", "upgradedNft": true}),
-        ),
-    ];
-    for (id, kind, title, coll, rarity, val, meta) in items {
-        conn.execute(
-            "INSERT OR IGNORE INTO wallet_collectibles
-            (item_id, account_id, kind, title, collection_name, rarity, stars_value, metadata_json)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![id, account_id, kind, title, coll, rarity, val, meta.to_string()],
-        )
-        .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 fn persist_wallet_from_words(
     conn: &Connection,
     words: &[String],
@@ -942,8 +901,6 @@ fn persist_wallet_from_words(
     )
     .map_err(|e| e.to_string())?;
 
-    seed_default_collectibles(conn, &account_id)?;
-
     Ok(json!({
         "accountId": account_id,
         "label": label,
@@ -970,6 +927,9 @@ fn build_signed_transfer_boc(
     amount_nanos: u64,
     comment: &str,
 ) -> Result<(String, String), String> {
+    if !signing_secret_hex.is_ascii() || signing_secret_hex.len() != 64 {
+        return Err("Corrupt signing secret".to_string());
+    }
     let mut sk_bytes = [0u8; 32];
     for i in 0..32 {
         sk_bytes[i] = u8::from_str_radix(&signing_secret_hex[i * 2..i * 2 + 2], 16)
@@ -1016,7 +976,319 @@ fn build_signed_transfer_boc(
     ))
 }
 
-pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
+pub fn handle_rpc(db: &Mutex<Connection>, submethod: &str, params: &Value) -> Result<Value, String> {
+    match submethod {
+        "refreshQuote" => handle_refresh_quote(db, params),
+        "syncChain" => handle_sync_chain(db),
+        "sendTon" => handle_send_ton(db, params),
+        "tonConnectApprove" => Err(
+            "TONCONNECT_UNAVAILABLE: TonConnect 2.0 remote dApp bridge signing is not configured"
+                .to_string(),
+        ),
+        _ => crate::with_db(db, |conn| handle_rpc_local(conn, submethod, params)),
+    }
+}
+
+fn handle_refresh_quote(db: &Mutex<Connection>, params: &Value) -> Result<Value, String> {
+    let quote_url = crate::with_db(db, |conn| {
+        init_schema(conn)?;
+        let (_, _, cfg_quote, _) = load_chain_config(conn)?;
+        Ok(params
+            .get("quoteEndpoint")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&cfg_quote)
+            .to_string())
+    })?;
+    let price = fetch_live_ton_usd_quote(&quote_url)?;
+    let now = chrono::Utc::now().timestamp_millis();
+    crate::with_db(db, |conn| {
+        conn.execute(
+            "INSERT OR REPLACE INTO wallet_price_cache (asset, usd_price, source, updated_at_ms)
+             VALUES ('TON', ?1, ?2, ?3)",
+            params![price, quote_url, now],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    })?;
+    Ok(json!({
+        "asset": "TON",
+        "tonUsdPrice": price,
+        "updatedAtMs": now,
+        "source": quote_url,
+    }))
+}
+
+fn handle_sync_chain(db: &Mutex<Connection>) -> Result<Value, String> {
+    let (account_id, addr_bounceable, rpc_endpoint, api_key) = crate::with_db(db, |conn| {
+        init_schema(conn)?;
+        let (account_id, addr_bounceable): (String, String) = conn
+            .query_row(
+                "SELECT account_id, address_bounceable FROM wallet_accounts WHERE is_active = 1 LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| "No active TON wallet found".to_string())?;
+        let (rpc_endpoint, api_key, _, _) = load_chain_config(conn)?;
+        Ok((account_id, addr_bounceable, rpc_endpoint, api_key))
+    })?;
+
+    // Phase 2: blocking JSON-RPC calls with DB lock released
+    let info = call_ton_json_rpc(
+        &rpc_endpoint,
+        api_key.as_deref(),
+        "getAddressInformation",
+        json!({ "address": addr_bounceable }),
+    )?;
+    let balance_nanos: i64 = info
+        .get("balance")
+        .and_then(|v| {
+            v.as_i64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
+        })
+        .unwrap_or(0);
+    let state = info
+        .get("state")
+        .and_then(Value::as_str)
+        .unwrap_or("uninitialized")
+        .to_string();
+
+    let mut synced_seqno: Option<i64> = None;
+    if state == "active" {
+        if let Ok(winfo) = call_ton_json_rpc(
+            &rpc_endpoint,
+            api_key.as_deref(),
+            "getWalletInformation",
+            json!({ "address": addr_bounceable }),
+        ) {
+            synced_seqno = winfo.get("seqno").and_then(Value::as_i64);
+        }
+    }
+
+    let txs_res = call_ton_json_rpc(
+        &rpc_endpoint,
+        api_key.as_deref(),
+        "getTransactions",
+        json!({ "address": addr_bounceable, "limit": 20 }),
+    )
+    .ok();
+
+    // Phase 3: write-through update under brief lock
+    let synced_tx_count = crate::with_db(db, |conn| {
+        if let Some(sq) = synced_seqno {
+            conn.execute(
+                "UPDATE wallet_accounts SET balance_nanotons = ?1, seqno = ?2 WHERE account_id = ?3",
+                params![balance_nanos, sq, account_id],
+            )
+            .map_err(|e| e.to_string())?;
+        } else {
+            conn.execute(
+                "UPDATE wallet_accounts SET balance_nanotons = ?1 WHERE account_id = ?2",
+                params![balance_nanos, account_id],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        let mut synced_tx_count = 0usize;
+        if let Some(arr) = txs_res.as_ref().and_then(Value::as_array) {
+            for tx in arr {
+                let hash = tx
+                    .pointer("/transaction_id/hash")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if hash.is_empty() {
+                    continue;
+                }
+                let utime = tx
+                    .get("utime")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0)
+                    .saturating_mul(1000);
+                let fee = tx
+                    .get("fee")
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                    .unwrap_or(0);
+                let in_val = tx
+                    .pointer("/in_msg/value")
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                    .unwrap_or(0);
+                let src = tx
+                    .pointer("/in_msg/source")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                conn.execute(
+                    "INSERT OR IGNORE INTO wallet_transactions
+                    (tx_id, account_id, asset, direction, counterparty, amount, fee_nanotons, comment, boc_hash_hex, created_at_ms)
+                    VALUES (?1, ?2, 'TON', ?3, ?4, ?5, ?6, '', ?7, ?8)",
+                    params![
+                        format!("chain_{hash}"),
+                        account_id,
+                        if in_val > 0 { "in" } else { "out" },
+                        src,
+                        in_val,
+                        fee,
+                        hash,
+                        if utime > 0 { utime } else { chrono::Utc::now().timestamp_millis() },
+                    ],
+                )
+                .map_err(|e| e.to_string())?;
+                synced_tx_count += 1;
+            }
+        }
+        Ok(synced_tx_count)
+    })?;
+
+    Ok(json!({
+        "accountId": account_id,
+        "addressBounceable": addr_bounceable,
+        "state": state,
+        "balanceNanotons": balance_nanos,
+        "seqno": synced_seqno,
+        "syncedTransactions": synced_tx_count,
+    }))
+}
+
+fn handle_send_ton(db: &Mutex<Connection>, params: &Value) -> Result<Value, String> {
+    let recipient = params
+        .get("recipient")
+        .or_else(|| params.get("to"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "sendTon requires 'recipient'".to_string())?;
+    let amount_nanos = params
+        .get("amountNanotons")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "sendTon requires 'amountNanotons'".to_string())?;
+    if amount_nanos == 0 {
+        return Err("sendTon 'amountNanotons' must be greater than 0".into());
+    }
+    let total_debit_u64 = amount_nanos
+        .checked_add(DEFAULT_FEE_NANOTONS)
+        .ok_or_else(|| "sendTon 'amountNanotons' overflow".to_string())?;
+    let total_debit = i64::try_from(total_debit_u64)
+        .map_err(|_| "sendTon 'amountNanotons' exceeds supported range".to_string())?;
+    let amount_nanos_i64 = i64::try_from(amount_nanos)
+        .map_err(|_| "sendTon 'amountNanotons' exceeds supported range".to_string())?;
+    let _ = parse_ton_address(recipient)?;
+    let comment = params
+        .get("comment")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let broadcast = params
+        .get("broadcast")
+        .or_else(|| params.get("liveNetwork"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let (account_id, cur_bal, seqno, boc_b64, boc_hash, rpc_cfg) =
+        crate::with_db(db, |conn| {
+            init_schema(conn)?;
+            let (account_id, sk_hex, cur_bal, seqno): (String, String, i64, u32) = conn
+                .query_row(
+                    "SELECT account_id, signing_secret_hex, balance_nanotons, seqno FROM wallet_accounts WHERE is_active = 1 LIMIT 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? as u32)),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| "No active TON wallet found".to_string())?;
+
+            if cur_bal < 0 || cur_bal < total_debit {
+                return Err(format!(
+                    "Insufficient TON balance: have {} nanotons, need {} nanotons (amount {} + fee {})",
+                    cur_bal, total_debit, amount_nanos, DEFAULT_FEE_NANOTONS
+                ));
+            }
+            let (boc_b64, boc_hash) =
+                build_signed_transfer_boc(&sk_hex, seqno, recipient, amount_nanos, comment)?;
+            let rpc_cfg = if broadcast {
+                let (ep, key, _, _) = load_chain_config(conn)?;
+                Some((ep, key))
+            } else {
+                None
+            };
+            Ok((account_id, cur_bal, seqno, boc_b64, boc_hash, rpc_cfg))
+        })?;
+
+    // Phase 2: broadcast unlocked
+    let mut chain_hash: Option<String> = None;
+    if let Some((rpc_endpoint, api_key)) = rpc_cfg {
+        let rpc_res = call_ton_json_rpc(
+            &rpc_endpoint,
+            api_key.as_deref(),
+            "sendBocReturnHash",
+            json!({ "boc": boc_b64 }),
+        )
+        .map_err(|e| format!("BROADCAST_FAILED: {e}"))?;
+        chain_hash = rpc_res
+            .get("hash")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+    }
+
+    // Phase 3: persist updated balance/seqno & transaction using relative SQL debit
+    let _ = cur_bal
+        .checked_sub(total_debit)
+        .ok_or_else(|| "Insufficient TON balance".to_string())?;
+    let tx_id = chain_hash
+        .as_deref()
+        .map(|h| format!("ton_tx_{h}"))
+        .unwrap_or_else(|| format!("ton_tx_{}", &boc_hash[..24]));
+    let now = chrono::Utc::now().timestamp_millis();
+
+    let new_bal: i64 = crate::with_db(db, |conn| {
+        conn.execute(
+            "UPDATE wallet_accounts
+             SET balance_nanotons = MAX(0, balance_nanotons - ?1), seqno = seqno + 1
+             WHERE account_id = ?2",
+            params![total_debit, account_id],
+        )
+        .map_err(|e| e.to_string())?;
+
+        let updated_bal: i64 = conn
+            .query_row(
+                "SELECT balance_nanotons FROM wallet_accounts WHERE account_id = ?1",
+                params![account_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        conn.execute(
+            "INSERT INTO wallet_transactions
+            (tx_id, account_id, asset, direction, counterparty, amount, fee_nanotons, comment, boc_hash_hex, created_at_ms)
+            VALUES (?1, ?2, 'TON', 'out', ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                tx_id,
+                account_id,
+                recipient,
+                amount_nanos_i64,
+                DEFAULT_FEE_NANOTONS as i64,
+                comment,
+                chain_hash.as_deref().unwrap_or(&boc_hash),
+                now,
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(updated_bal)
+    })?;
+
+    Ok(json!({
+        "txId": tx_id,
+        "bocBase64": boc_b64,
+        "bocHashHex": boc_hash,
+        "chainHash": chain_hash,
+        "broadcasted": broadcast,
+        "amountNanotons": amount_nanos,
+        "feeNanotons": DEFAULT_FEE_NANOTONS,
+        "newBalanceNanotons": new_bal,
+        "seqno": seqno + 1,
+    }))
+}
+
+fn handle_rpc_local(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
     init_schema(conn)?;
     match submethod {
         "status" | "balance" => {
@@ -1119,145 +1391,7 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
             }))
         }
 
-        "refreshQuote" => {
-            let (_, _, cfg_quote, _) = load_chain_config(conn)?;
-            let quote_url = params
-                .get("quoteEndpoint")
-                .and_then(Value::as_str)
-                .filter(|s| !s.trim().is_empty())
-                .unwrap_or(&cfg_quote);
-            let price = fetch_live_ton_usd_quote(quote_url)?;
-            let now = chrono::Utc::now().timestamp_millis();
-            conn.execute(
-                "INSERT OR REPLACE INTO wallet_price_cache (asset, usd_price, source, updated_at_ms)
-                 VALUES ('TON', ?1, ?2, ?3)",
-                params![price, quote_url, now],
-            )
-            .map_err(|e| e.to_string())?;
-            Ok(json!({
-                "asset": "TON",
-                "tonUsdPrice": price,
-                "updatedAtMs": now,
-                "source": quote_url,
-            }))
-        }
 
-        "syncChain" => {
-            let (account_id, addr_bounceable): (String, String) = conn
-                .query_row(
-                    "SELECT account_id, address_bounceable FROM wallet_accounts WHERE is_active = 1 LIMIT 1",
-                    [],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| "No active TON wallet found".to_string())?;
-            let (rpc_endpoint, api_key, _, _) = load_chain_config(conn)?;
-
-            let info = call_ton_json_rpc(
-                &rpc_endpoint,
-                api_key.as_deref(),
-                "getAddressInformation",
-                json!({ "address": addr_bounceable }),
-            )?;
-            let balance_nanos: i64 = info
-                .get("balance")
-                .and_then(|v| {
-                    v.as_i64()
-                        .or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok()))
-                })
-                .unwrap_or(0);
-            let state = info
-                .get("state")
-                .and_then(Value::as_str)
-                .unwrap_or("uninitialized")
-                .to_string();
-
-            let mut synced_seqno: Option<i64> = None;
-            if state == "active" {
-                if let Ok(winfo) = call_ton_json_rpc(
-                    &rpc_endpoint,
-                    api_key.as_deref(),
-                    "getWalletInformation",
-                    json!({ "address": addr_bounceable }),
-                ) {
-                    synced_seqno = winfo.get("seqno").and_then(Value::as_i64);
-                }
-            }
-
-            if let Some(sq) = synced_seqno {
-                conn.execute(
-                    "UPDATE wallet_accounts SET balance_nanotons = ?1, seqno = ?2 WHERE account_id = ?3",
-                    params![balance_nanos, sq, account_id],
-                )
-                .map_err(|e| e.to_string())?;
-            } else {
-                conn.execute(
-                    "UPDATE wallet_accounts SET balance_nanotons = ?1 WHERE account_id = ?2",
-                    params![balance_nanos, account_id],
-                )
-                .map_err(|e| e.to_string())?;
-            }
-
-            let mut synced_tx_count = 0usize;
-            if let Ok(txs_res) = call_ton_json_rpc(
-                &rpc_endpoint,
-                api_key.as_deref(),
-                "getTransactions",
-                json!({ "address": addr_bounceable, "limit": 20 }),
-            ) {
-                if let Some(arr) = txs_res.as_array() {
-                    for tx in arr {
-                        let hash = tx
-                            .pointer("/transaction_id/hash")
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        if hash.is_empty() {
-                            continue;
-                        }
-                        let utime = tx.get("utime").and_then(Value::as_i64).unwrap_or(0) * 1000;
-                        let fee = tx
-                            .get("fee")
-                            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
-                            .unwrap_or(0);
-                        let in_val = tx
-                            .pointer("/in_msg/value")
-                            .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
-                            .unwrap_or(0);
-                        let src = tx
-                            .pointer("/in_msg/source")
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        conn.execute(
-                            "INSERT OR IGNORE INTO wallet_transactions
-                            (tx_id, account_id, asset, direction, counterparty, amount, fee_nanotons, comment, boc_hash_hex, created_at_ms)
-                            VALUES (?1, ?2, 'TON', ?3, ?4, ?5, ?6, '', ?7, ?8)",
-                            params![
-                                format!("chain_{hash}"),
-                                account_id,
-                                if in_val > 0 { "in" } else { "out" },
-                                src,
-                                in_val,
-                                fee,
-                                hash,
-                                if utime > 0 { utime } else { chrono::Utc::now().timestamp_millis() },
-                            ],
-                        )
-                        .map_err(|e| e.to_string())?;
-                        synced_tx_count += 1;
-                    }
-                }
-            }
-
-            Ok(json!({
-                "accountId": account_id,
-                "addressBounceable": addr_bounceable,
-                "state": state,
-                "balanceNanotons": balance_nanos,
-                "seqno": synced_seqno,
-                "syncedTransactions": synced_tx_count,
-            }))
-        }
 
         "createWallet" => {
             let label = params
@@ -1344,104 +1478,7 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
             }
         }
 
-        "sendTon" => {
-            let recipient = params
-                .get("recipient")
-                .or_else(|| params.get("to"))
-                .and_then(Value::as_str)
-                .ok_or_else(|| "sendTon requires 'recipient'".to_string())?;
-            let amount_nanos = params
-                .get("amountNanotons")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| "sendTon requires 'amountNanotons'".to_string())?;
-            let comment = params
-                .get("comment")
-                .and_then(Value::as_str)
-                .unwrap_or("");
 
-            let (account_id, sk_hex, cur_bal, seqno): (String, String, i64, u32) = conn
-                .query_row(
-                    "SELECT account_id, signing_secret_hex, balance_nanotons, seqno FROM wallet_accounts WHERE is_active = 1 LIMIT 1",
-                    [],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? as u32)),
-                )
-                .optional()
-                .map_err(|e| e.to_string())?
-                .ok_or_else(|| "No active TON wallet found".to_string())?;
-
-            let total_debit = amount_nanos.saturating_add(DEFAULT_FEE_NANOTONS) as i64;
-            if cur_bal < total_debit {
-                return Err(format!(
-                    "Insufficient TON balance: required {total_debit} nanotons, available {cur_bal}"
-                ));
-            }
-
-            let (boc_b64, boc_hash) =
-                build_signed_transfer_boc(&sk_hex, seqno, recipient, amount_nanos, comment)?;
-
-            let broadcast = params
-                .get("broadcast")
-                .or_else(|| params.get("liveNetwork"))
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            let mut chain_hash: Option<String> = None;
-            if broadcast {
-                let (rpc_endpoint, api_key, _, _) = load_chain_config(conn)?;
-                let rpc_res = call_ton_json_rpc(
-                    &rpc_endpoint,
-                    api_key.as_deref(),
-                    "sendBocReturnHash",
-                    json!({ "boc": boc_b64 }),
-                )
-                .map_err(|e| format!("BROADCAST_FAILED: {e}"))?;
-                chain_hash = rpc_res
-                    .get("hash")
-                    .and_then(Value::as_str)
-                    .map(ToString::to_string);
-            }
-
-            let new_bal = cur_bal - total_debit;
-            let tx_id = chain_hash
-                .as_deref()
-                .map(|h| format!("ton_tx_{h}"))
-                .unwrap_or_else(|| format!("ton_tx_{}", &boc_hash[..24]));
-            let now = chrono::Utc::now().timestamp_millis();
-
-            conn.execute(
-                "UPDATE wallet_accounts SET balance_nanotons = ?1, seqno = seqno + 1 WHERE account_id = ?2",
-                params![new_bal, account_id],
-            )
-            .map_err(|e| e.to_string())?;
-
-            conn.execute(
-                "INSERT INTO wallet_transactions
-                (tx_id, account_id, asset, direction, counterparty, amount, fee_nanotons, comment, boc_hash_hex, created_at_ms)
-                VALUES (?1, ?2, 'TON', 'out', ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    tx_id,
-                    account_id,
-                    recipient,
-                    amount_nanos as i64,
-                    DEFAULT_FEE_NANOTONS as i64,
-                    comment,
-                    chain_hash.as_deref().unwrap_or(&boc_hash),
-                    now,
-                ],
-            )
-            .map_err(|e| e.to_string())?;
-
-            Ok(json!({
-                "txId": tx_id,
-                "bocBase64": boc_b64,
-                "bocHashHex": boc_hash,
-                "chainHash": chain_hash,
-                "broadcasted": broadcast,
-                "amountNanotons": amount_nanos,
-                "feeNanotons": DEFAULT_FEE_NANOTONS,
-                "newBalanceNanotons": new_bal,
-                "seqno": seqno + 1,
-            }))
-        }
 
         "sendStars" => {
             let recipient = params
@@ -1472,13 +1509,15 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .map_err(|e| e.to_string())?
                 .ok_or_else(|| "No active wallet found".to_string())?;
 
-            if cur_stars < stars {
+            if cur_stars < 0 || cur_stars < stars {
                 return Err(format!(
                     "Insufficient Telegram Stars: required {stars}, available {cur_stars}"
                 ));
             }
 
-            let new_stars = cur_stars - stars;
+            let new_stars = cur_stars
+                .checked_sub(stars)
+                .ok_or_else(|| "Insufficient Telegram Stars".to_string())?;
             let now = chrono::Utc::now().timestamp_millis();
             let receipt_hash = hex_encode(&Sha256::digest(
                 format!("{account_id}:{recipient}:{stars}:{now}").as_bytes(),
@@ -1582,6 +1621,9 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .unwrap_or("UQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAJKZ");
             let addr_valid = parse_ton_address(recipient).is_ok();
             let estimated_fee = DEFAULT_FEE_NANOTONS;
+            let total_debit = amount_nanos
+                .checked_add(estimated_fee)
+                .ok_or_else(|| "tonConnectEmulate 'amountNanotons' overflow".to_string())?;
             let cur_bal: i64 = conn
                 .query_row(
                     "SELECT balance_nanotons FROM wallet_accounts WHERE is_active = 1 LIMIT 1",
@@ -1591,7 +1633,7 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .optional()
                 .map_err(|e| e.to_string())?
                 .unwrap_or(0);
-            let sufficient = cur_bal >= (amount_nanos + estimated_fee) as i64;
+            let sufficient = cur_bal >= 0 && (cur_bal as u64) >= total_debit;
             let risk = if amount_nanos >= 100_000_000_000 {
                 "high"
             } else if !addr_valid {
@@ -1604,22 +1646,9 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 "recipientChecksumValid": addr_valid,
                 "amountNanotons": amount_nanos,
                 "estimatedFeeNanotons": estimated_fee,
-                "totalDebitNanotons": amount_nanos + estimated_fee,
+                "totalDebitNanotons": total_debit,
                 "sufficientBalance": sufficient,
                 "riskLevel": risk,
-            }))
-        }
-
-        "tonConnectApprove" => {
-            let send_params = json!({
-                "recipient": params.get("recipient").and_then(Value::as_str).unwrap_or("0:0000000000000000000000000000000000000000000000000000000000000001"),
-                "amountNanotons": params.get("amountNanotons").and_then(Value::as_u64).unwrap_or(10_000_000),
-                "comment": params.get("dappName").and_then(Value::as_str).map(|d| format!("TonConnect: {d}")).unwrap_or_else(|| "TonConnect Approved".into()),
-            });
-            let tx = handle_rpc(conn, "sendTon", &send_params)?;
-            Ok(json!({
-                "approved": true,
-                "transaction": tx,
             }))
         }
 

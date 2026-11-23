@@ -1,9 +1,11 @@
 # GPUI-Telegram Android Production Parity, 1:1 Telegram Android UX & Full Mika Fusion — Specification
 
-Status: active
+Status: superseded
 Owner: fabu-android
-Last updated: 2026-11-18
-Related issue/task/PR: Production parity overhaul superseding `docs/specs/gpui-telegram-android-mika-fusion.md` (`v2.0.0` -> `v2.1.0`, `bhrum/gpui-telegram@889246e4621e3e8e58022895a887c63ea3130bdd` + `wangzan101/Mika@b899c5bb01acd80cc29f0cc25cad189a8cc20b46`)
+Last updated: 2026-11-23
+Related issue/task/PR: Production parity overhaul superseding `docs/specs/gpui-telegram-android-mika-fusion.md` (`v2.0.0` -> `v2.1.0`, `bhrum/gpui-telegram@889246e4621e3e8e58022895a887c63ea3130bdd` + `wangzan101/Mika@b899c5bb01acd80cc29f0cc25cad189a8cc20b46`); superseded on 2026-11-23 by `docs/specs/desktop-v1-6-6-apple-ios-refactor-and-real-backend.md` (`v2.3.0`, `bhrumom/gpui-telegram@6ca754cbadaad2018dfab3109a8d4a874f0c958d`).
+
+> **Supersession & Audit Notice (2026-11-23)**: This Spec targeted legacy `v2.1.0` / `bhrum/gpui-telegram@889246e` (`v1.3.0-pre`) and Material 3 Telegram Android UX; its Section 17 compliance matrix closed only `R1`, `R2`, `AC-1`, and `AC-2` while leaving `R3–R15` and `AC-3–AC-15` permanently `blocked`. The latest explicit user mandate (`2026-11-23`) redirects Fabushi Android to a unified **Apple iOS Messages UI/UX** aligned with canonical desktop **`bhrumom/gpui-telegram@6ca754cbadaad2018dfab3109a8d4a874f0c958d` (`v1.6.6`)** while keeping Android's lean `ureq` + `rusqlite` JNI host architecture. All still-unresolved keystone requirements (`TelegramMikaChannel` implementing `Channel` via `MikaApp.registerHostChannel` + inline `ConfirmationGate` Approve/Decline controls, zero fake seed data, real server sync, Rust Argon2id passcode security, and real remote control) are carried forward into **`docs/specs/desktop-v1-6-6-apple-ios-refactor-and-real-backend.md`**.
 
 ## 1. Context / problem
 

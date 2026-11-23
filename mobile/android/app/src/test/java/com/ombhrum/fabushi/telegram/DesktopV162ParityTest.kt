@@ -88,7 +88,7 @@ class DesktopV162ParityTest {
         assertTrue(CodingProviderKindUi.CURSOR_CLI.supportsAcp)
         assertTrue(CodingProviderKindUi.ACP_CUSTOM.supportsAcp)
         assertEquals(3, CodingPermissionModeUi.entries.size)
-        assertEquals(19, CloudComputerUiState().actionBusCategoryCount)
+        assertEquals(0, CloudComputerUiState().actionBusCategoryCount)
     }
 
     @Test
@@ -120,9 +120,21 @@ class DesktopV162ParityTest {
         assertTrue(dharma.countries.all { it.offeringsCount == 0L && !it.lampLitByMe })
 
         val magpie = MagpieGatewayUiState()
+        assertFalse(magpie.liveReady)
+        assertTrue(magpie.presets.all { !it.configured && !it.healthy })
         assertEquals(0L, magpie.totalRequests)
         assertEquals(0.0, magpie.totalCostUsd, 0.0)
         assertEquals(0, magpie.piiRedactedCount)
+
+        val hermes = HermesStudioUiState()
+        assertEquals("", hermes.activeSessionId)
+        assertEquals("", hermes.soulMarkdown)
+        assertTrue(hermes.memoryBlocks.isEmpty())
+        assertTrue(hermes.terminalLines.isEmpty())
+
+        val mika = MikaBridgeUiSnapshot()
+        assertFalse(mika.available)
+        assertFalse(mika.sandboxReady)
 
         val assist = RemoteAssistConfigUi()
         assertEquals("", assist.assistId)
@@ -134,10 +146,10 @@ class DesktopV162ParityTest {
         val (context, dir) = createTempContext("jni_v165")
         try {
             MahayanaHost(context, featureHostTest = true).use { host ->
-                // 1. feature.info reports desktop v1.6.5 parity
+                // 1. feature.info reports desktop v1.6.6 parity
                 val info = host.request("feature.info")
-                assertEquals("1.6.5", info.getString("desktopParityVersion"))
-                assertEquals("db06f9c", info.getString("desktopParityCommit"))
+                assertEquals("1.6.6", info.getString("desktopParityVersion"))
+                assertEquals("6ca754c", info.getString("desktopParityCommit"))
 
                 // 2. Zero-Knowledge Split-Key V2 + X25519 Device Trust Ring atomic wipe
                 val env = host.request(
@@ -191,16 +203,17 @@ class DesktopV162ParityTest {
                 )
                 assertEquals("codex_dev_bot", bot.getString("username"))
 
-                // 4. UU-Remote Assist, Stream Settings & OAuth 2.1 Remote MCP Grants
-                val assist = host.request("remote.getAssistConfig")
-                assertEquals(9, assist.getString("assist_id").length)
+                // 4. UU-Remote Assist, Stream Settings & OAuth 2.1 Remote MCP Grants fail closed offline
+                val assistResult = host.requestResult("remote.getAssistConfig")
+                assertTrue(assistResult.isFailure)
                 val cats = host.request("remote.actionBusCategories")
                 assertEquals(19, cats.getInt("total"))
-                val grant = host.request(
+                val grantResult = host.requestResult(
                     "remote.issueMcpGrant",
                     JSONObject().put("clientName", "Antigravity MCP"),
                 )
-                assertNotEquals("", grant.getString("family_id"))
+                assertTrue(grantResult.isFailure)
+                assertTrue(grantResult.exceptionOrNull()?.message.orEmpty().contains("OAUTH_FLOW_REQUIRED"))
 
                 // 5. Magpie Vertex schema sanitization & Gemini parallel merge
                 val san = host.request(

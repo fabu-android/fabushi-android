@@ -436,6 +436,15 @@ fn test_05_chat_send_streaming_event_sequence() {
 #[test]
 fn test_06_bot_list_and_bot_create() {
     let (host, dir) = new_test_host("t06_bots");
+    // Fresh host MUST have zero hardcoded surface bots (R-F10)
+    host.dispatch(
+        "feature.execute",
+        &json!({ "command": { "type": "bot.list", "requestId": "list-0" } }),
+    )
+    .unwrap();
+    let initial = pump_until_type(&host, "bot.listed");
+    assert!(initial["bots"].as_array().unwrap().is_empty());
+
     host.dispatch(
         "feature.execute",
         &json!({
@@ -457,6 +466,7 @@ fn test_06_bot_list_and_bot_create() {
     .unwrap();
     let listed = pump_until_type(&host, "bot.listed");
     let bots = listed["bots"].as_array().unwrap();
+    assert_eq!(bots.len(), 1);
     assert!(bots.iter().any(|b| b["name"] == "Sutra Translator Bot"));
     assert!(bots.iter().all(|b| b["id"] != "mahayana-assistant"));
 
@@ -726,24 +736,17 @@ fn test_10_messaging_production_starter_dialogs_and_folders() {
     let actor_id = access["actorId"].as_str().unwrap();
     assert!(!actor_id.is_empty());
 
+    // Zero-fake-data (R-F1): fresh production SQLite DB starts completely empty
     let events = msg_exec(
         &prod_host,
         actor_id,
         json!({ "type": "sync", "cursor": null, "limit": 1000 }),
     );
     assert_eq!(events[0]["type"], "syncBatch");
-    let convs = events[0]["conversations"].as_array().unwrap();
-    assert!(convs.len() >= 5);
-    assert!(convs.iter().any(|c| c["id"] == "conv_saved_messages"));
-    assert!(convs.iter().any(|c| c["id"] == "conv_botfather"));
-    assert!(convs.iter().any(|c| c["id"] == "conv_mika_bot"));
-    assert!(convs.iter().any(|c| c["id"] == "conv_hermes_ai"));
-    assert!(convs
-        .iter()
-        .any(|c| c["id"] == "conv_global_dharma_channel"));
-
-    let folders = events[0]["folders"].as_array().unwrap();
-    assert_eq!(folders.len(), 4);
+    assert!(events[0]["conversations"].as_array().unwrap().is_empty());
+    assert!(events[0]["actors"].as_array().unwrap().is_empty());
+    assert!(events[0]["messages"].as_array().unwrap().is_empty());
+    assert!(events[0]["folders"].as_array().unwrap().is_empty());
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1100,31 +1103,46 @@ fn test_15_messaging_botfather_newbot_and_mika_hermes_autoreplies() {
     let (host, dir) = new_prod_host("t15_botfather");
     let actor_id = "human:account:fabushi-user";
 
-    let bf_events = msg_exec(
+    // Create real local conversation; sending /newbot MUST NOT fabricate local BotFather tokens or fake Mika replies
+    let created = msg_exec(
+        &host,
+        actor_id,
+        json!({
+            "type": "createConversation",
+            "conversation": {
+                "id": "conv_direct_notes",
+                "kind": "direct",
+                "title": "Direct Notes",
+                "participants": [{ "actorId": actor_id, "role": "owner", "joinedAtMs": 1000 }]
+            }
+        }),
+    );
+    let conv_id = created[0]["conversation"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let send_events = msg_exec(
         &host,
         actor_id,
         json!({
             "type": "sendMessage",
-            "conversationId": "conv_botfather",
+            "conversationId": conv_id,
             "content": { "type": "text", "data": { "text": { "text": "/newbot LotusHelper", "entities": [] } } }
         }),
     );
-    assert!(bf_events.iter().any(|e| {
-        e["type"] == "conversationChanged" && e["conversation"]["id"] == "conv_bot_lotushelper_bot"
-    }));
-
-    let mika_events = msg_exec(
-        &host,
-        actor_id,
-        json!({
-            "type": "sendMessage",
-            "conversationId": "conv_mika_bot",
-            "content": { "type": "text", "data": { "text": { "text": "打开系统设置检查 Wi-Fi", "entities": [] } } }
-        }),
-    );
-    assert!(mika_events
+    assert!(send_events
+        .iter()
+        .any(|e| e["type"] == "messageAdded" && e["message"]["senderId"] == actor_id));
+    assert!(!send_events
+        .iter()
+        .any(|e| e["type"] == "messageAdded" && e["message"]["senderId"] == "bot:botfather"));
+    assert!(!send_events
         .iter()
         .any(|e| e["type"] == "messageAdded" && e["message"]["senderId"] == "bot:mika"));
+    assert!(!send_events
+        .iter()
+        .any(|e| e["conversation"]["id"] == "conv_bot_lotushelper_bot"));
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1132,6 +1150,36 @@ fn test_15_messaging_botfather_newbot_and_mika_hermes_autoreplies() {
 #[test]
 fn test_16_messaging_fts5_and_cjk_search_plus_json_html_export() {
     let (host, dir) = new_prod_host("t16_search");
+    let actor_id = "human:account:fabushi-user";
+
+    let created = msg_exec(
+        &host,
+        actor_id,
+        json!({
+            "type": "createConversation",
+            "conversation": {
+                "id": "conv_dharma_sutra_study",
+                "kind": "channel",
+                "title": "Dharma Sutra Study",
+                "participants": [{ "actorId": actor_id, "role": "owner", "joinedAtMs": 1000 }]
+            }
+        }),
+    );
+    let conv_id = created[0]["conversation"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    msg_exec(
+        &host,
+        actor_id,
+        json!({
+            "type": "sendMessage",
+            "conversationId": conv_id,
+            "content": { "type": "text", "data": { "text": { "text": "今日共修：《般若波罗蜜多心经》", "entities": [] } } }
+        }),
+    );
+
     let search_cjk = host
         .dispatch(
             "telegram.messaging.searchMessages",
@@ -1143,7 +1191,7 @@ fn test_16_messaging_fts5_and_cjk_search_plus_json_html_export() {
     let exp_json = host
         .dispatch(
             "telegram.messaging.exportChat",
-            &json!({ "conversationId": "conv_global_dharma_channel", "format": "json" }),
+            &json!({ "conversationId": conv_id, "format": "json" }),
         )
         .unwrap();
     assert_eq!(exp_json["format"], "json");
@@ -1152,7 +1200,7 @@ fn test_16_messaging_fts5_and_cjk_search_plus_json_html_export() {
     let exp_html = host
         .dispatch(
             "telegram.messaging.exportChat",
-            &json!({ "conversationId": "conv_global_dharma_channel", "format": "html" }),
+            &json!({ "conversationId": conv_id, "format": "html" }),
         )
         .unwrap();
     assert!(exp_html["document"]
@@ -1451,8 +1499,25 @@ fn test_22_wallet_ton_stars_transfers_collectibles_and_tonconnect() {
         .unwrap();
     assert_eq!(spent["newStarsBalance"], 900);
 
+    // Zero-fake-data (R-F7): fresh wallet starts with zero fabricated collectibles
     let nfts = host.dispatch("wallet.collectibles", &json!({})).unwrap();
-    assert!(!nfts["collectibles"].as_array().unwrap().is_empty());
+    assert!(nfts["collectibles"].as_array().unwrap().is_empty());
+
+    // TonConnect approve MUST fail closed (Spec §8.6 #7) without debiting balance
+    let bal_before = host.dispatch("wallet.status", &json!({})).unwrap()["balanceNanotons"]
+        .as_i64()
+        .unwrap();
+    let tc_approve_err = host
+        .dispatch(
+            "wallet.tonConnectApprove",
+            &json!({ "recipient": dest, "amountNanotons": 10_000_000u64 }),
+        )
+        .unwrap_err();
+    assert!(tc_approve_err.contains("TONCONNECT_UNAVAILABLE"));
+    let bal_after = host.dispatch("wallet.status", &json!({})).unwrap()["balanceNanotons"]
+        .as_i64()
+        .unwrap();
+    assert_eq!(bal_before, bal_after);
 
     let tc = host
         .dispatch(
@@ -1521,13 +1586,40 @@ fn test_23_fabushi_miniapp_sutras_countries_offer_wheel_practice_achievements() 
         .unwrap();
     assert!(!board["leaderboard"].as_array().unwrap().is_empty());
 
+    // Zero canned fallback (R-F11): unconfigured aiDharmaChat MUST fail closed
+    let uncfg_err = host
+        .dispatch(
+            "fabushiMiniapp.aiDharmaChat",
+            &json!({ "prompt": "如何观照五蕴皆空？" }),
+        )
+        .unwrap_err();
+    assert!(uncfg_err.contains("PROVIDER_NOT_CONFIGURED"));
+
+    // Configure a real loopback SSE provider and verify live magpie_live response succeeds
+    let (sse_url, sse_join) = spawn_loopback_openai_sse_server(vec![vec![
+        "照见五蕴皆空，".into(),
+        "度一切苦厄。".into(),
+    ]]);
+    host.dispatch(
+        "magpie.upsertProvider",
+        &json!({
+            "id": "dharma_live",
+            "presetId": "openai",
+            "baseUrl": sse_url,
+            "apiKey": "sk-dharma-live",
+            "priority": 1
+        }),
+    )
+    .unwrap();
     let counsel = host
         .dispatch(
             "fabushiMiniapp.aiDharmaChat",
             &json!({ "prompt": "如何观照五蕴皆空？" }),
         )
         .unwrap();
-    assert!(!counsel["reply"].as_str().unwrap().is_empty());
+    assert_eq!(counsel["source"], "magpie_live");
+    assert_eq!(counsel["reply"], "照见五蕴皆空，度一切苦厄。");
+    sse_join.join().expect("join Dharma SSE server");
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1626,6 +1718,20 @@ fn test_25_hermes_cron_5field_parser_kanban_and_approval_gates() {
     let (host, dir) = new_test_host("t25_cron");
     let now = chrono::Utc::now().timestamp_millis();
 
+    // Zero-fake-data (R-F6): Kanban, approvals, and skills start completely empty
+    assert!(host.dispatch("hermes.kanbanBoard", &json!({})).unwrap()["cards"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(host.dispatch("hermes.approvalsList", &json!({})).unwrap()["approvals"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(host.dispatch("hermes.skillsList", &json!({})).unwrap()["skills"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
     let cron = host
         .dispatch(
             "hermes.cronUpsert",
@@ -1653,13 +1759,13 @@ fn test_25_hermes_cron_5field_parser_kanban_and_approval_gates() {
     assert_eq!(moved["columnId"], "done");
     assert_eq!(moved["moved"], true);
 
-    let resolved = host
+    // Non-existent approval ID MUST fail closed
+    assert!(host
         .dispatch(
             "hermes.approvalsDecide",
-            &json!({ "approvalId": "apr_term_01", "decision": "approved" }),
+            &json!({ "approvalId": "apr_term_01", "decision": "approved" })
         )
-        .unwrap();
-    assert_eq!(resolved["status"], "approved");
+        .is_err());
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -1783,7 +1889,11 @@ fn test_27_magpie_rosetta_translation_pii_masking_and_import() {
 fn test_28_computer_nodes_generation_fenced_cua_lease_and_stale_rejection() {
     let (host, dir) = new_test_host("t28_cua");
     let nodes = host.dispatch("computer.nodes", &json!({})).unwrap();
-    assert!(nodes["nodes"].as_array().unwrap().len() >= 3);
+    let arr = nodes["nodes"].as_array().unwrap();
+    // Zero-fake-data (R-F2): only genuine local-android-mika exists on cold init (standby)
+    assert_eq!(arr.len(), 1);
+    assert_eq!(arr[0]["nodeId"], "local-android-mika");
+    assert_eq!(arr[0]["status"], "standby");
 
     let lease1 = host
         .dispatch(
@@ -1793,7 +1903,8 @@ fn test_28_computer_nodes_generation_fenced_cua_lease_and_stale_rejection() {
         .unwrap();
     let gen1 = lease1["generation"].as_i64().unwrap();
 
-    let op_ok = host
+    // Local executeOp MUST fail closed (R-F3) rather than returning fake executed=true
+    let op_err = host
         .dispatch(
             "computer.executeOp",
             &json!({
@@ -1802,10 +1913,10 @@ fn test_28_computer_nodes_generation_fenced_cua_lease_and_stale_rejection() {
                 "op": "screenshot"
             }),
         )
-        .unwrap();
-    assert_eq!(op_ok["executed"], true);
+        .unwrap_err();
+    assert!(op_err.contains("LOCAL_EXECUTOR_REQUIRED"));
 
-    // Takeover bumps generation -> old gen1 MUST be rejected!
+    // Takeover bumps generation -> old gen1 MUST be rejected with stale-generation error!
     let lease2 = host
         .dispatch(
             "computer.leaseTakeover",
@@ -1815,16 +1926,17 @@ fn test_28_computer_nodes_generation_fenced_cua_lease_and_stale_rejection() {
     let gen2 = lease2["generation"].as_i64().unwrap();
     assert!(gen2 > gen1);
 
-    assert!(host
+    let stale_err = host
         .dispatch(
             "computer.executeOp",
             &json!({
                 "nodeId": "local-android-mika",
                 "generation": gen1,
                 "op": "tap"
-            })
+            }),
         )
-        .is_err());
+        .unwrap_err();
+    assert!(stale_err.contains("Stale CUA lease generation rejected"));
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -2005,10 +2117,20 @@ fn test_31_telegram_ext_multi_account_fence_argon2id_passcode_2fa_and_passkeys()
 fn test_32_telegram_ext_topics_stories_stickers_voip_calls_and_server_outbox() {
     let (host, dir) = new_test_host("t32_tgext");
 
+    // Zero-fake-data (R-F8): stories and accounts start empty
+    assert!(host.dispatch("telegram.messaging.listStories", &json!({})).unwrap()["stories"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(host.dispatch("telegram.auth.accountsList", &json!({})).unwrap()["accounts"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
     let topic = host
         .dispatch(
             "telegram.messaging.createTopic",
-            &json!({ "conversationId": "conv_global_dharma_channel", "title": "Daily Sutra Q&A", "iconEmoji": "🪷" }),
+            &json!({ "conversationId": "conv_topic_test", "title": "Daily Sutra Q&A", "iconEmoji": "🪷" }),
         )
         .unwrap();
     assert_eq!(topic["iconEmoji"], "🪷");
@@ -2032,27 +2154,22 @@ fn test_32_telegram_ext_topics_stories_stickers_voip_calls_and_server_outbox() {
         .unwrap();
     assert!(!stickers["stickerSets"].as_array().unwrap().is_empty());
 
-    // VoIP Call lifecycle with 333-emoji 4-glyph E2EE verification
-    let call = host
+    // Unbacked VoIP calls MUST fail closed with CALL_TRANSPORT_UNAVAILABLE (R-F9)
+    let call_err = host
         .dispatch(
             "telegram.calls.startCall",
-            &json!({ "conversationId": "conv_mika_bot", "peerId": "bot:mika", "video": false }),
+            &json!({ "conversationId": "conv_1", "peerId": "peer_1", "video": false }),
         )
-        .unwrap();
-    let call_id = call["callId"].as_str().unwrap();
-    assert_eq!(call["state"], "active");
-    assert_eq!(
-        call["emojiFingerprint"]["emoji_chars"]
-            .as_array()
-            .unwrap()
-            .len(),
-        4
-    );
-
-    let ended = host
-        .dispatch("telegram.calls.endCall", &json!({ "callId": call_id }))
-        .unwrap();
-    assert_eq!(ended["state"], "ended");
+        .unwrap_err();
+    assert!(call_err.contains("CALL_TRANSPORT_UNAVAILABLE"));
+    let end_err = host
+        .dispatch("telegram.calls.endCall", &json!({ "callId": "call_none" }))
+        .unwrap_err();
+    assert!(end_err.contains("CALL_TRANSPORT_UNAVAILABLE"));
+    assert!(host.dispatch("telegram.calls.history", &json!({})).unwrap()["calls"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 
     // Server sync outbox
     host.dispatch(
@@ -2064,6 +2181,7 @@ fn test_32_telegram_ext_topics_stories_stickers_voip_calls_and_server_outbox() {
         .dispatch("telegram.server.status", &json!({}))
         .unwrap();
     assert_eq!(status["pendingOutboxCount"], 1);
+    assert_eq!(status["endpoint"], "http://34.46.77.133:8080");
 
     let _ = std::fs::remove_dir_all(dir);
 }
@@ -2498,6 +2616,10 @@ fn test_37_hermes_multi_turn_agentic_tool_loop_and_approval_gate_resume() {
         .unwrap();
     assert_eq!(resumed["status"], "approved");
     assert_eq!(resumed["resumed"], true);
+    assert!(resumed["toolResult"]["error"]
+        .as_str()
+        .unwrap_or("")
+        .contains("LOCAL_EXECUTOR_REQUIRED"));
     assert_eq!(
         resumed["turn"]["reply"],
         "Approved screenshot captured on Mika node."
@@ -2668,27 +2790,48 @@ fn test_40_telegram_server_live_auth_outbox_flush_and_sync_difference_fts5() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let srv = thread::spawn(move || {
-        // 1: POST /v1/auth/phone/send_code
-        // 2: POST /v1/auth/phone/verify
-        // 3: POST /v1/messages/send (flushOutbox)
-        // 4: GET  /v1/updates/getDifference
+        // 1: POST /api/v1/auth/phone/send-code
+        // 2: POST /api/v1/auth/phone/verify
+        // 3: POST /api/v1/messages/send (flushOutbox)
+        // 4: POST /api/v1/sync/difference
         for step in 0..4 {
             let (mut s, _) = listener.accept().unwrap();
             let raw = read_full_http_request(&mut s);
+            let first_line = raw.lines().next().unwrap_or("");
             let resp_val = match step {
-                0 => json!({ "phoneCodeHash": "pch_server_live_01", "codeLength": 5 }),
-                1 => json!({ "token": "tg_sess_live_token_abc123" }),
+                0 => {
+                    assert!(
+                        first_line.starts_with("POST /api/v1/auth/phone/send-code"),
+                        "unexpected path: {first_line}"
+                    );
+                    json!({ "phoneCodeHash": "pch_server_live_01", "codeLength": 5 })
+                }
+                1 => {
+                    assert!(
+                        first_line.starts_with("POST /api/v1/auth/phone/verify"),
+                        "unexpected path: {first_line}"
+                    );
+                    json!({ "token": "tg_sess_live_token_abc123" })
+                }
                 2 => {
+                    assert!(
+                        first_line.starts_with("POST /api/v1/messages/send"),
+                        "flushOutbox must hit /api/v1/messages/send, got: {first_line}"
+                    );
                     assert!(raw.contains("Bearer tg_sess_live_token_abc123"));
-                    json!({ "messageId": "remote_msg_777" })
+                    json!({ "message_id": 777, "id": 777 })
                 }
                 _ => {
+                    assert!(
+                        first_line.starts_with("POST /api/v1/sync/difference"),
+                        "syncDifference must hit /api/v1/sync/difference, got: {first_line}"
+                    );
                     assert!(raw.contains("Bearer tg_sess_live_token_abc123"));
                     json!({
                         "newPts": 42,
                         "updates": [{
                             "type": "messageAdded",
-                            "conversationId": "conv_global_dharma_channel",
+                            "conversationId": "conv_synced_dharma",
                             "id": "srv_msg_lotus_42",
                             "senderId": "remote:master",
                             "text": "妙法莲华经观世音菩萨普门品同步验证",

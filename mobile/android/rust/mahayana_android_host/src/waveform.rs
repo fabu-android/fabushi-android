@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub const WAVEFORM_BAR_COUNT: usize = 100;
+pub const MAX_WAVEFORM_BARS: usize = 4096;
 pub const WAVEFORM_BITS_PER_BAR: usize = 5;
 pub const WAVEFORM_MAX_BAR_VALUE: u8 = 31;
 pub const WAVEFORM_ENCODED_LEN: usize = 63; // (100 * 5 + 7) / 8 = 63 bytes
@@ -40,6 +41,7 @@ pub fn encode_waveform_5bit_raw(bars: &[u8]) -> Vec<u8> {
 
 /// Unpacks `bar_count` 5-bit values (0..=31) from a Telegram packed bitstream.
 pub fn decode_waveform_5bit(encoded: &[u8], bar_count: usize) -> Vec<u8> {
+    let bar_count = bar_count.min(MAX_WAVEFORM_BARS);
     let mut bars = Vec::with_capacity(bar_count);
     for i in 0..bar_count {
         let bit_pos = i * WAVEFORM_BITS_PER_BAR;
@@ -59,6 +61,7 @@ pub fn decode_waveform_5bit(encoded: &[u8], bar_count: usize) -> Vec<u8> {
 
 /// Resamples an arbitrary bar array into `target_count` 5-bit bars (0..=31).
 pub fn resample_bars_to_count(bars: &[u8], target_count: usize) -> Vec<u8> {
+    let target_count = target_count.min(MAX_WAVEFORM_BARS);
     if target_count == 0 {
         return Vec::new();
     }
@@ -69,9 +72,13 @@ pub fn resample_bars_to_count(bars: &[u8], target_count: usize) -> Vec<u8> {
         return bars.iter().map(|&b| b.min(WAVEFORM_MAX_BAR_VALUE)).collect();
     }
     let mut out = Vec::with_capacity(target_count);
+    let bars_len_u128 = bars.len() as u128;
+    let target_u128 = target_count as u128;
     for i in 0..target_count {
-        let start = i * bars.len() / target_count;
-        let end = ((i + 1) * bars.len() / target_count).max(start + 1).min(bars.len());
+        let start = ((i as u128) * bars_len_u128 / target_u128) as usize;
+        let end = (((i as u128 + 1) * bars_len_u128 / target_u128) as usize)
+            .max(start + 1)
+            .min(bars.len());
         let peak = bars[start..end].iter().copied().max().unwrap_or(0);
         out.push(peak.min(WAVEFORM_MAX_BAR_VALUE));
     }
@@ -80,6 +87,7 @@ pub fn resample_bars_to_count(bars: &[u8], target_count: usize) -> Vec<u8> {
 
 /// Extracts `bar_count` peak-normalized 5-bit bars (0..=31) from mono 16-bit PCM samples.
 pub fn extract_bars_from_pcm_i16(samples: &[i16], bar_count: usize) -> Vec<u8> {
+    let bar_count = bar_count.min(MAX_WAVEFORM_BARS);
     if bar_count == 0 {
         return Vec::new();
     }
@@ -89,10 +97,12 @@ pub fn extract_bars_from_pcm_i16(samples: &[i16], bar_count: usize) -> Vec<u8> {
 
     let mut rms_buckets = Vec::with_capacity(bar_count);
     let mut global_peak = 0.0_f64;
+    let samples_len_u128 = samples.len() as u128;
+    let count_u128 = bar_count as u128;
 
     for i in 0..bar_count {
-        let start = i * samples.len() / bar_count;
-        let end = ((i + 1) * samples.len() / bar_count)
+        let start = ((i as u128) * samples_len_u128 / count_u128) as usize;
+        let end = (((i as u128 + 1) * samples_len_u128 / count_u128) as usize)
             .max(start + 1)
             .min(samples.len());
         let slice = &samples[start..end];
@@ -191,8 +201,9 @@ impl VadBargeInDetector {
                 barge_in_triggered: false,
                 tts_interrupted: false,
                 consecutive_speech_frames: self.consecutive_speech_frames,
-                detection_latency_ms: (self.consecutive_speech_frames as u32)
-                    * self.frame_duration_ms,
+                detection_latency_ms: u32::try_from(self.consecutive_speech_frames)
+                    .unwrap_or(u32::MAX)
+                    .saturating_mul(self.frame_duration_ms),
                 peak_rms: 0.0,
             };
         }
@@ -250,7 +261,9 @@ impl VadBargeInDetector {
             } else {
                 0
             });
-        let detection_latency_ms = (latency_frames as u32) * self.frame_duration_ms;
+        let detection_latency_ms = u32::try_from(latency_frames)
+            .unwrap_or(u32::MAX)
+            .saturating_mul(self.frame_duration_ms);
 
         VadFeedReport {
             frames_evaluated,
@@ -303,7 +316,8 @@ pub fn rpc_decode_waveform(params: &Value) -> Result<Value, String> {
     let bar_count = params
         .get("barCount")
         .and_then(Value::as_u64)
-        .unwrap_or(WAVEFORM_BAR_COUNT as u64) as usize;
+        .unwrap_or(WAVEFORM_BAR_COUNT as u64)
+        .min(MAX_WAVEFORM_BARS as u64) as usize;
 
     let bytes = if let Some(b64) = params.get("encodedBase64").and_then(Value::as_str) {
         base64::engine::general_purpose::STANDARD

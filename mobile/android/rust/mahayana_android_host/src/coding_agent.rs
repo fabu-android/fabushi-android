@@ -420,7 +420,16 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .ok_or_else(|| format!("Coding bot '{bot_id}' not found"))?
                 + 1;
             let checkpoint_id = format!("cp_{}", uuid::Uuid::new_v4().simple());
-            let commit_hash = format!("{:07x}", (now as u64 ^ (next_turn as u64 * 2654435761)) & 0x0fff_ffff);
+            let commit_hash = params
+                .get("commitHash")
+                .or_else(|| params.get("commit_hash"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("")
+                .to_string();
+            let diff_stat_json = serde_json::to_string(&diff_stat).map_err(|e| e.to_string())?;
+            let usage_json = serde_json::to_string(&usage).map_err(|e| e.to_string())?;
 
             conn.execute(
                 "INSERT INTO coding_agent_checkpoints
@@ -432,8 +441,8 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                     next_turn,
                     commit_hash,
                     summary,
-                    serde_json::to_string(&diff_stat).unwrap(),
-                    serde_json::to_string(&usage).unwrap(),
+                    diff_stat_json,
+                    usage_json,
                     now,
                 ],
             )
@@ -444,11 +453,17 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
             )
             .map_err(|e| e.to_string())?;
 
+            let commit_hash_val = if commit_hash.is_empty() {
+                Value::Null
+            } else {
+                Value::String(commit_hash)
+            };
+
             Ok(json!({
                 "checkpointId": checkpoint_id,
                 "botId": bot_id,
                 "turnIdx": next_turn,
-                "commitHash": commit_hash,
+                "commitHash": commit_hash_val,
                 "diffStat": diff_stat,
                 "usage": usage,
             }))
@@ -469,10 +484,16 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .query_map(params![bot_id], |r| {
                     let diff_raw: String = r.get(4)?;
                     let usage_raw: String = r.get(5)?;
+                    let commit_raw: String = r.get(2)?;
+                    let commit_val = if commit_raw.trim().is_empty() {
+                        Value::Null
+                    } else {
+                        Value::String(commit_raw)
+                    };
                     Ok(json!({
                         "checkpointId": r.get::<_, String>(0)?,
                         "turnIdx": r.get::<_, i64>(1)?,
-                        "commitHash": r.get::<_, String>(2)?,
+                        "commitHash": commit_val,
                         "summary": r.get::<_, String>(3)?,
                         "diffStat": serde_json::from_str::<CodingDiffStat>(&diff_raw).unwrap_or_default(),
                         "usage": serde_json::from_str::<CodingTokenUsage>(&usage_raw).unwrap_or_default(),

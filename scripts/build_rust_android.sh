@@ -227,7 +227,7 @@ echo "==> [1/3] Building release cdylib for aarch64-linux-android (arm64-v8a, 16
   --manifest-path "${CRATE_DIR}/Cargo.toml" \
   --release \
   --target aarch64-linux-android
-cp -f "${CRATE_DIR}/target/aarch64-linux-android/release/libmahayana_app_host.so" \
+cp -f "${CARGO_TARGET_DIR}/aarch64-linux-android/release/libmahayana_app_host.so" \
   "${JNILIBS_DIR}/arm64-v8a/libmahayana_app_host.so"
 
 echo "==> [2/3] Building release cdylib for x86_64-linux-android (x86_64, 16KB page-aligned)..."
@@ -235,7 +235,7 @@ echo "==> [2/3] Building release cdylib for x86_64-linux-android (x86_64, 16KB p
   --manifest-path "${CRATE_DIR}/Cargo.toml" \
   --release \
   --target x86_64-linux-android
-cp -f "${CRATE_DIR}/target/x86_64-linux-android/release/libmahayana_app_host.so" \
+cp -f "${CARGO_TARGET_DIR}/x86_64-linux-android/release/libmahayana_app_host.so" \
   "${JNILIBS_DIR}/x86_64/libmahayana_app_host.so"
 
 echo "==> Verifying 16KB ELF PT_LOAD alignment (p_align >= 0x4000) on Android native libraries..."
@@ -248,24 +248,24 @@ echo "==> [3/3] Building release cdylib for host JVM (x86_64-unknown-linux-gnu).
   --manifest-path "${CRATE_DIR}/Cargo.toml" \
   --release \
   --target x86_64-unknown-linux-gnu
-cp -f "${CRATE_DIR}/target/x86_64-unknown-linux-gnu/release/libmahayana_app_host.so" \
+cp -f "${CARGO_TARGET_DIR}/x86_64-unknown-linux-gnu/release/libmahayana_app_host.so" \
   "${HOST_LIB_DIR}/libmahayana_app_host.so"
 
 echo "==> Cleaning intermediate Cargo build/deps/incremental artifacts to keep target/ compact..."
 rm -rf \
-  "${CRATE_DIR}/target/debug" \
-  "${CRATE_DIR}/target/release/deps" \
-  "${CRATE_DIR}/target/release/build" \
-  "${CRATE_DIR}/target/release/incremental" \
-  "${CRATE_DIR}/target/aarch64-linux-android/release/deps" \
-  "${CRATE_DIR}/target/aarch64-linux-android/release/build" \
-  "${CRATE_DIR}/target/aarch64-linux-android/release/incremental" \
-  "${CRATE_DIR}/target/x86_64-linux-android/release/deps" \
-  "${CRATE_DIR}/target/x86_64-linux-android/release/build" \
-  "${CRATE_DIR}/target/x86_64-linux-android/release/incremental" \
-  "${CRATE_DIR}/target/x86_64-unknown-linux-gnu/release/deps" \
-  "${CRATE_DIR}/target/x86_64-unknown-linux-gnu/release/build" \
-  "${CRATE_DIR}/target/x86_64-unknown-linux-gnu/release/incremental" \
+  "${CARGO_TARGET_DIR}/debug" \
+  "${CARGO_TARGET_DIR}/release/deps" \
+  "${CARGO_TARGET_DIR}/release/build" \
+  "${CARGO_TARGET_DIR}/release/incremental" \
+  "${CARGO_TARGET_DIR}/aarch64-linux-android/release/deps" \
+  "${CARGO_TARGET_DIR}/aarch64-linux-android/release/build" \
+  "${CARGO_TARGET_DIR}/aarch64-linux-android/release/incremental" \
+  "${CARGO_TARGET_DIR}/x86_64-linux-android/release/deps" \
+  "${CARGO_TARGET_DIR}/x86_64-linux-android/release/build" \
+  "${CARGO_TARGET_DIR}/x86_64-linux-android/release/incremental" \
+  "${CARGO_TARGET_DIR}/x86_64-unknown-linux-gnu/release/deps" \
+  "${CARGO_TARGET_DIR}/x86_64-unknown-linux-gnu/release/build" \
+  "${CARGO_TARGET_DIR}/x86_64-unknown-linux-gnu/release/incremental" \
   "${REPO_ROOT}/mobile/android/rust/target"
 
 echo "==> Built native libraries:"

@@ -5,17 +5,11 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
-import android.net.Uri
-import android.os.Build
-import android.os.CancellationSignal
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +19,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -40,10 +36,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,6 +49,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,23 +61,26 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 
-private val QuickEmojiPalette = listOf(
-    "😀", "😂", "🥹", "😍", "🤩", "😎", "🥳", "🤔", "🙏", "🪷", "☸️", "🪔",
-    "👍", "❤️", "🔥", "🎉", "⚡", "✨", "💎", "🤖", "🦀", "🚀", "🌍", "🕊️",
-    "🙌", "👏", "💯", "✅", "📌", "🔒", "📱", "🧠", "🎯", "🏆", "🌈", "☀️",
-)
-
-@OptIn(ExperimentalFoundationApi::class)
+/**
+ * Floating Apple iOS Messages Capsule Composer (`F14`, Master Spec §8.8):
+ * - `min 46dp` height, `23dp` full pill radius
+ * - Left `30dp` `+` button toggles HOISTED root-level attachment sheet (ZERO `TelegramBottomSheet` inside composer!)
+ * - Embedded `30dp` circular `#007AFF` `↑` send button driven by `canSubmitComposer(text, attachmentCount)`
+ * - Hold-to-record `28dp` mic button (`testTag("telegram-record-button")`) strictly gated by `RECORD_AUDIO` permission
+ * - Honest GIF empty state, proper `.imePadding()` + `.navigationBarsPadding()`
+ */
 @Composable
 fun TelegramComposer(
-    conversationId: String,
+    chat: TelegramChatItem,
     draftText: String,
     replyTarget: TelegramMessageItem?,
     editTarget: TelegramMessageItem?,
@@ -89,199 +90,170 @@ fun TelegramComposer(
     gifCatalog: List<GifItemModel>,
     onDraftChange: (String) -> Unit,
     onClearReplyOrEdit: () -> Unit,
-    onSendMessage: (text: String, silent: Boolean, scheduledAtMs: Long?, ttlSeconds: Int?) -> Unit,
-    onToggleRecordMode: () -> Unit,
+    onSendMessage: (text: String, silent: Boolean, scheduledAtMs: Long?, overrideTtl: Int?) -> Unit,
+    onSendSticker: (emoji: String, packTitle: String) -> Unit,
+    onSendGif: (GifItemModel) -> Unit,
+    onOpenAttachmentSheet: () -> Unit,
+    onToggleRecordMode: () -> Unit = {},
     onStartRecording: () -> Unit,
+    onPermissionDenied: (String) -> Unit,
     onDragRecording: (Float, Float) -> Unit,
     onCancelRecording: () -> Unit,
     onFinishRecording: () -> Unit,
-    onSendSticker: (emoji: String, packTitle: String) -> Unit,
-    onSendGif: (GifItemModel) -> Unit,
-    onSendPollOrQuiz: (question: String, options: List<String>, anonymous: Boolean, multi: Boolean, quiz: Boolean, correctIdx: Int, explanation: String?) -> Unit,
-    onSendLocation: (Double, Double, String) -> Unit,
-    onSendContact: (String, String) -> Unit,
-    onSendMediaAttachment: (fileName: String, mimeType: String, bytes: ByteArray) -> Unit,
-    onOpenGlobalDharmaMiniApp: () -> Unit,
-    onPromptMikaTask: () -> Unit,
 ) {
     val palette = LocalTelegramPalette.current
+    val strings = LocalAppleUiStrings.current
     val context = LocalContext.current
+    val latestRecordingState by rememberUpdatedState(recordingState)
 
-    var tfv by remember(conversationId) {
-        mutableStateOf(TextFieldValue(text = draftText, selection = TextRange(draftText.length)))
-    }
+    var tfv by remember(chat.id) { mutableStateOf(TextFieldValue(draftText, TextRange(draftText.length))) }
     LaunchedEffect(draftText) {
         if (draftText != tfv.text) {
-            tfv = TextFieldValue(text = draftText, selection = TextRange(draftText.length))
+            tfv = TextFieldValue(draftText, TextRange(draftText.length))
         }
     }
 
-    var showFormatBar by remember { mutableStateOf(false) }
-    var showLinkDialog by remember { mutableStateOf(false) }
-    var showEmojiStickerPanel by remember { mutableStateOf(false) }
-    var emojiPanelTab by remember { mutableIntStateOf(0) } // 0=Emoji, 1=Stickers, 2=GIFs
-    var showAttachmentSheet by remember { mutableStateOf(false) }
-    var showPollCreatorDialog by remember { mutableStateOf(false) }
-    var showContactDialog by remember { mutableStateOf(false) }
-    var showSendOptionsMenu by remember { mutableStateOf(false) }
+    var showEmojiPanel by remember { mutableStateOf(false) }
+    var emojiPanelTab by remember { mutableIntStateOf(0) } // 0=Emoji, 1=Stickers, 2=GIF
 
-    val mediaPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) {
-            runCatching {
-                val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: ByteArray(0)
-                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "attachment"
-                if (bytes.isNotEmpty()) onSendMediaAttachment(name, mime, bytes)
-            }
+    val audioPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            onStartRecording()
+        } else {
+            onPermissionDenied(
+                if (strings.isEnglish) "Microphone permission is required to record voice messages."
+                else "未授予麦克风权限，无法录制语音消息",
+            )
         }
     }
 
-    val audioPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { _ ->
-        onStartRecording()
+    fun requestOrStartRecording() {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            onStartRecording()
+        } else {
+            audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
     }
 
-    val locPermLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { _ ->
-        fetchCurrentOrDefaultLocation(context) { lat, lon, label -> onSendLocation(lat, lon, label) }
+    val matchingCommands = remember(tfv.text, slashCommands) {
+        if (tfv.text.startsWith("/") && !tfv.text.contains(" ")) {
+            slashCommands.filter { it.command.startsWith(tfv.text, ignoreCase = true) }
+        } else {
+            emptyList()
+        }
     }
 
-    val hasSelection = tfv.selection.max > tfv.selection.min
-    val activeSlashSuggestions = remember(tfv.text, slashCommands) {
-        val trimmed = tfv.text.trim()
-        if (trimmed.startsWith("/") && !trimmed.contains(' ')) {
-            slashCommands.filter { it.command.startsWith(trimmed, ignoreCase = true) }
-        } else emptyList()
-    }
+    val canSend = canSubmitComposer(tfv.text, attachmentCount = 0)
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(palette.surfaceColor)
+            .background(palette.appBackground)
+            .imePadding()
             .navigationBarsPadding(),
     ) {
         TelegramHairlineDivider()
 
-        // 1. Slash Command Autocomplete Popup
-        AnimatedVisibility(visible = activeSlashSuggestions.isNotEmpty()) {
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height((activeSlashSuggestions.size.coerceAtMost(4) * 46).dp)
-                    .background(palette.elevatedSurface),
+        // Slash Command Autocomplete Popup
+        if (matchingCommands.isNotEmpty()) {
+            Surface(
+                color = palette.modalBg,
+                shadowElevation = 4.dp,
+                modifier = Modifier.fillMaxWidth().heightIn(max = 176.dp),
             ) {
-                items(activeSlashSuggestions, key = { it.command }) { cmd ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val next = "${cmd.command} "
-                                tfv = TextFieldValue(next, TextRange(next.length))
-                                onDraftChange(next)
-                            }
-                            .padding(horizontal = 16.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(cmd.command, color = palette.primaryAccent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                        Spacer(Modifier.width(12.dp))
-                        Text(cmd.description, color = palette.secondaryText, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    }
-                    TelegramHairlineDivider()
-                }
-            }
-        }
-
-        // 2. Reply / Edit Preview Header
-        AnimatedVisibility(visible = replyTarget != null || editTarget != null) {
-            val target = editTarget ?: replyTarget
-            if (target != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(palette.elevatedSurface)
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TelegramIcon(
-                        glyph = if (editTarget != null) TelegramGlyph.PENCIL else TelegramGlyph.REPLY_ARROW,
-                        tint = palette.primaryAccent,
-                        size = 19.dp,
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Box(
-                        modifier = Modifier
-                            .width(2.5.dp)
-                            .height(30.dp)
-                            .background(palette.primaryAccent),
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = if (editTarget != null) "编辑消息" else "回复 ${target.senderName}",
-                            color = palette.primaryAccent,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                        )
-                        Text(
-                            text = target.text,
-                            color = palette.secondaryText,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Box(
-                        modifier = Modifier.size(32.dp).clip(CircleShape).clickable(onClick = onClearReplyOrEdit),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        TelegramIcon(TelegramGlyph.CLOSE, tint = palette.hintText, size = 18.dp)
+                LazyColumn {
+                    items(matchingCommands, key = { it.command }) { suggestion ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val inserted = "${suggestion.command} "
+                                    tfv = TextFieldValue(inserted, TextRange(inserted.length))
+                                    onDraftChange(inserted)
+                                }
+                                .padding(horizontal = 16.dp, vertical = 9.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = suggestion.command,
+                                color = palette.primaryAccent,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 13.sp,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = suggestion.description,
+                                color = palette.secondaryText,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TelegramHairlineDivider(Modifier.padding(start = 16.dp))
                     }
                 }
             }
         }
 
-        // 3. UTF-16 Selection Formatting Bar (B / I / U / S / Spoiler / Code / Pre / Link)
-        AnimatedVisibility(visible = hasSelection || showFormatBar) {
-            LazyRow(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(palette.elevatedSurface)
-                    .padding(vertical = 5.dp),
-                contentPadding = PaddingValues(horizontal = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                val formats = listOf(
-                    "B 粗体" to MessageEntityType.BOLD,
-                    "I 斜体" to MessageEntityType.ITALIC,
-                    "U 下划线" to MessageEntityType.UNDERLINE,
-                    "S 删除线" to MessageEntityType.STRIKETHROUGH,
-                    "||剧透||" to MessageEntityType.SPOILER,
-                    "`代码`" to MessageEntityType.CODE,
-                    "```块```" to MessageEntityType.PRE,
-                )
-                items(formats, key = { it.first }) { (label, entityType) ->
-                    FormatChip(label) {
-                        val next = TelegramEntitiesEngine.wrapDraftSelectionWithMarkdown(
-                            draft = tfv.text,
-                            selectionStart = tfv.selection.min,
-                            selectionEnd = tfv.selection.max,
-                            type = entityType,
-                        )
-                        tfv = TextFieldValue(next, TextRange(next.length))
-                        onDraftChange(next)
-                    }
-                }
-                item(key = "fmt-link") {
-                    FormatChip("🔗 链接") { showLinkDialog = true }
-                }
-            }
-        }
-
-        // 4. Active Voice / Round Video Recording Bar OR Standard Composer Row
-        if (recordingState.isRecording) {
+        // Reply / Edit Banner
+        if (replyTarget != null || editTarget != null) {
+            val isEdit = editTarget != null
+            val target = editTarget ?: replyTarget!!
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                    .background(palette.cardBg)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(3.dp)
+                        .height(30.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(palette.primaryAccent),
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = if (isEdit) {
+                            if (strings.isEnglish) "Editing Message" else "正在编辑消息"
+                        } else {
+                            (if (strings.isEnglish) "Reply to " else "回复 ") + target.senderName
+                        },
+                        color = palette.primaryAccent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        text = target.text.ifBlank { target.mediaFileName ?: "[媒体消息]" },
+                        color = palette.secondaryText,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onClearReplyOrEdit),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TelegramIcon(TelegramGlyph.CLOSE, tint = palette.secondaryText, size = 14.dp)
+                }
+            }
+        }
+
+        // Hands-Free Locked Voice Recording Strip (finger already lifted)
+        if (recordingState.isRecording && recordingState.lockedHandsFree) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(palette.cardBg)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Box(
@@ -291,465 +263,410 @@ fun TelegramComposer(
                         .background(palette.destructiveRed),
                 )
                 Spacer(Modifier.width(8.dp))
-                val sec = (recordingState.elapsedMs / 1000L).toInt()
+                val elapsedSec = (recordingState.elapsedMs / 1000L).toInt()
                 Text(
-                    text = "%02d:%02d".format(sec / 60, sec % 60),
+                    text = "%02d:%02d".format(elapsedSec / 60, elapsedSec % 60),
                     color = palette.primaryText,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
                 )
-                Spacer(Modifier.width(10.dp))
-                // Mini live 5-bit waveform preview
-                Row(
-                    modifier = Modifier.weight(1f).height(24.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    recordingState.liveBars.takeLast(28).forEach { bar ->
-                        val hFrac = (bar.coerceIn(2, 31) / 31f).coerceIn(0.12f, 1f)
-                        Box(
-                            modifier = Modifier
-                                .width(3.dp)
-                                .height((22f * hFrac).dp)
-                                .clip(RoundedCornerShape(1.5.dp))
-                                .background(palette.primaryAccent),
-                        )
-                    }
-                }
+                Spacer(Modifier.width(12.dp))
+                Text(
+                    text = if (strings.isEnglish) "Recording locked" else "已锁定录音",
+                    color = palette.secondaryText,
+                    fontSize = 12.sp,
+                    modifier = Modifier.weight(1f),
+                )
                 TextButton(onClick = onCancelRecording) {
-                    Text("取消", color = palette.destructiveRed, fontWeight = FontWeight.SemiBold)
+                    Text(strings.cancel, color = palette.destructiveRed, fontSize = 13.sp)
                 }
-                Button(onClick = onFinishRecording) {
-                    Text(if (recordingState.mode == ComposerRecordMode.ROUND_VIDEO_NOTE) "发送圆视频" else "发送语音")
+                Button(
+                    onClick = onFinishRecording,
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.primaryAccent, contentColor = Color.White),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                ) {
+                    Text(if (strings.isEnglish) "Send" else "发送", fontSize = 12.sp)
                 }
             }
-        } else if (palette.isAppleStyle) {
-            // Desktop v1.6.0 Apple Messages composer strip (composer_ui.rs parity)
+        } else {
+            // Persistent Apple iOS Messages Composer Row:
+            // Child 0 (weight 1f) swaps between normal input capsule and live recording status pill;
+            // Child 1 (mic gesture host) stays continuously mounted across isRecording false -> true!
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .padding(horizontal = 10.dp, vertical = 7.dp)
                     .testTag("apple-messages-composer-row"),
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                // Circular '+' attachment button
-                Box(
-                    modifier = Modifier
-                        .size(34.dp)
-                        .clip(CircleShape)
-                        .background(palette.elevatedSurface)
-                        .clickable { showAttachmentSheet = true }
-                        .testTag("telegram-attach-button"),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text("+", color = palette.secondaryText, fontSize = 21.sp, fontWeight = FontWeight.Normal)
-                }
-
-                // Full-pill text input container with inline Aa, Emoji, and embedded Send Up-Arrow / Mic
                 Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(20.dp))
-                        .background(if (palette.isDark) palette.elevatedSurface else palette.surfaceColor)
-                        .border(0.75.dp, palette.dividerColor, RoundedCornerShape(20.dp))
-                        .padding(start = 14.dp, end = 5.dp, top = 5.dp, bottom = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Box(modifier = Modifier.weight(1f)) {
-                        BasicTextField(
-                            value = tfv,
-                            onValueChange = { next ->
-                                tfv = next
-                                onDraftChange(next.text)
-                            },
-                            maxLines = 6,
-                            textStyle = TextStyle(color = palette.primaryText, fontSize = palette.settings.boundedFontSp),
-                            cursorBrush = SolidColor(palette.primaryAccent),
+                    if (recordingState.isRecording) {
+                        // Active hold-to-record status pill (mic Box at Child 1 stays mounted!)
+                        Row(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("telegram-composer-input"),
-                            decorationBox = { inner ->
-                                if (tfv.text.isEmpty()) {
-                                    Text("信息", color = palette.hintText, fontSize = 15.sp)
+                                .weight(1f)
+                                .heightIn(min = 46.dp)
+                                .clip(RoundedCornerShape(23.dp))
+                                .background(palette.cardBg)
+                                .border(0.5.dp, palette.destructiveRed.copy(alpha = 0.45f), RoundedCornerShape(23.dp))
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(palette.destructiveRed),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            val elapsedSec = (recordingState.elapsedMs / 1000L).toInt()
+                            Text(
+                                text = "%02d:%02d".format(elapsedSec / 60, elapsedSec % 60),
+                                color = palette.primaryText,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 14.sp,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = if (strings.isEnglish) "Release to send · Slide left to cancel" else "松开发送 · 左滑取消",
+                                color = palette.secondaryText,
+                                fontSize = 12.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clip(CircleShape)
+                                    .clickable(onClick = onCancelRecording),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                TelegramIcon(TelegramGlyph.CLOSE, tint = palette.destructiveRed, size = 14.dp)
+                            }
+                        }
+                    } else {
+                        // Left 30dp circular '+' button -> triggers HOISTED root attachment sheet
+                        Box(
+                            modifier = Modifier
+                                .padding(bottom = 8.dp)
+                                .size(30.dp)
+                                .clip(CircleShape)
+                                .background(palette.inputBg)
+                                .clickable {
+                                    showEmojiPanel = false
+                                    onOpenAttachmentSheet()
                                 }
-                                inner()
-                            },
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .clickable { showFormatBar = !showFormatBar }
-                            .padding(horizontal = 5.dp, vertical = 3.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            "Aa",
-                            color = if (showFormatBar) palette.primaryAccent else palette.secondaryText,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .clip(CircleShape)
-                            .clickable { showEmojiStickerPanel = !showEmojiStickerPanel },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        TelegramIcon(
-                            TelegramGlyph.EMOJI_SMILE,
-                            tint = if (showEmojiStickerPanel) palette.primaryAccent else palette.secondaryText,
-                            size = 18.dp,
-                        )
-                    }
-                    if (tfv.text.isNotBlank()) {
-                        Box {
+                                .testTag("telegram-attach-button"),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            TelegramIcon(TelegramGlyph.PLUS, tint = palette.secondaryText, size = 16.dp)
+                        }
+
+                        // Floating 23dp Full Pill Capsule Container
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 46.dp)
+                                .clip(RoundedCornerShape(23.dp))
+                                .background(palette.inputBg)
+                                .border(0.5.dp, palette.borderColor, RoundedCornerShape(23.dp))
+                                .padding(start = 14.dp, end = 8.dp, top = 7.dp, bottom = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(vertical = 4.dp),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                if (tfv.text.isEmpty()) {
+                                    Text(
+                                        text = strings.composerPlaceholder,
+                                        color = palette.hintText,
+                                        fontSize = 16.sp,
+                                    )
+                                }
+                                BasicTextField(
+                                    value = tfv,
+                                    onValueChange = { next ->
+                                        tfv = next
+                                        onDraftChange(next.text)
+                                    },
+                                    maxLines = 5,
+                                    textStyle = TextStyle(
+                                        color = palette.primaryText,
+                                        fontSize = 16.sp,
+                                        lineHeight = 21.sp,
+                                    ),
+                                    cursorBrush = SolidColor(palette.searchCursorColor),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("telegram-composer-input"),
+                                )
+                            }
+
+                            Spacer(Modifier.width(4.dp))
+
+                            // Emoji / Sticker picker toggle
                             Box(
                                 modifier = Modifier
                                     .size(28.dp)
                                     .clip(CircleShape)
-                                    .background(palette.primaryAccent)
-                                    .combinedClickable(
-                                        onClick = {
-                                            val sending = tfv.text
-                                            tfv = TextFieldValue("")
-                                            onSendMessage(sending, false, null, null)
-                                        },
-                                        onLongClick = { showSendOptionsMenu = true },
+                                    .clickable { showEmojiPanel = !showEmojiPanel },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                TelegramIcon(
+                                    glyph = TelegramGlyph.EMOJI_SMILE,
+                                    tint = if (showEmojiPanel) palette.primaryAccent else palette.secondaryText,
+                                    size = 19.dp,
+                                )
+                            }
+
+                            Spacer(Modifier.width(4.dp))
+
+                            // Embedded 30dp circular `#007AFF` `↑` Send Button (driven by canSubmitComposer)
+                            Box(
+                                modifier = Modifier
+                                    .size(30.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (canSend) palette.primaryAccent else palette.primaryAccent.copy(alpha = 0.28f),
                                     )
+                                    .clickable(enabled = canSend) {
+                                        val textToSend = tfv.text.trim()
+                                        if (canSubmitComposer(textToSend)) {
+                                            onSendMessage(textToSend, false, null, null)
+                                            tfv = TextFieldValue("")
+                                        }
+                                    }
                                     .testTag("telegram-send-button"),
                                 contentAlignment = Alignment.Center,
                             ) {
-                                Text("↑", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                            }
-                            DropdownMenu(
-                                expanded = showSendOptionsMenu,
-                                onDismissRequest = { showSendOptionsMenu = false },
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("🔕 静音发送") },
-                                    onClick = {
-                                        showSendOptionsMenu = false
-                                        val sending = tfv.text
-                                        tfv = TextFieldValue("")
-                                        onSendMessage(sending, true, null, null)
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text("🕒 1 分钟后定时发送") },
-                                    onClick = {
-                                        showSendOptionsMenu = false
-                                        val sending = tfv.text
-                                        tfv = TextFieldValue("")
-                                        onSendMessage(sending, false, System.currentTimeMillis() + 60_000L, null)
-                                    },
+                                TelegramIcon(
+                                    glyph = TelegramGlyph.ARROW_UP,
+                                    tint = Color.White,
+                                    size = 16.dp,
                                 )
                             }
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(CircleShape)
-                                .clickable {
-                                    val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                    if (granted) onStartRecording() else audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            TelegramIcon(TelegramGlyph.MIC, tint = palette.secondaryText, size = 18.dp)
                         }
                     }
                 }
-            }
-        } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.Bottom,
-            ) {
-                // Emoji / Sticker / GIF Toggle
-                Box(
-                    modifier = Modifier
-                        .size(42.dp)
-                        .clip(CircleShape)
-                        .clickable { showEmojiStickerPanel = !showEmojiStickerPanel },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    TelegramIcon(TelegramGlyph.EMOJI_SMILE, tint = if (showEmojiStickerPanel) palette.primaryAccent else palette.hintText, size = 23.dp)
-                }
 
-                // Classic Input Field
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(vertical = 8.dp, horizontal = 4.dp),
-                ) {
-                    BasicTextField(
-                        value = tfv,
-                        onValueChange = { next ->
-                            tfv = next
-                            onDraftChange(next.text)
-                        },
-                        maxLines = 6,
-                        textStyle = TextStyle(color = palette.primaryText, fontSize = palette.settings.boundedFontSp),
-                        cursorBrush = SolidColor(palette.primaryAccent),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("telegram-composer-input"),
-                        decorationBox = { inner ->
-                            if (tfv.text.isEmpty()) {
-                                Text("消息（支持 **粗体** ||剧透|| /mika）", color = palette.hintText, fontSize = 15.sp)
-                            }
-                            inner()
-                        },
-                    )
-                }
-
-                // Format toggle button 'Aa'
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .clickable { showFormatBar = !showFormatBar },
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        "Aa",
-                        color = if (showFormatBar) palette.primaryAccent else palette.hintText,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                    )
-                }
-
-                // Attachment Paperclip
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .clickable { showAttachmentSheet = true }
-                        .testTag("telegram-attach-button"),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    TelegramIcon(TelegramGlyph.PAPERCLIP, tint = palette.hintText, size = 22.dp)
-                }
-
-                // Right-side Send Plane OR Voice Mic / Round Video Camera
-                if (tfv.text.isNotBlank()) {
-                    Box {
-                        Box(
-                            modifier = Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .background(palette.primaryAccent)
-                                .combinedClickable(
-                                    onClick = {
-                                        val sending = tfv.text
-                                        tfv = TextFieldValue("")
-                                        onSendMessage(sending, false, null, null)
-                                    },
-                                    onLongClick = { showSendOptionsMenu = true },
-                                )
-                                .testTag("telegram-send-button"),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            TelegramIcon(TelegramGlyph.SEND_PLANE, tint = Color.White, size = 21.dp)
-                        }
-                        DropdownMenu(
-                            expanded = showSendOptionsMenu,
-                            onDismissRequest = { showSendOptionsMenu = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("🔕 静音无声发送 (Send Without Sound)") },
-                                onClick = {
-                                    showSendOptionsMenu = false
-                                    val sending = tfv.text
-                                    tfv = TextFieldValue("")
-                                    onSendMessage(sending, true, null, null)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("🕒 10 分钟后定时发送") },
-                                onClick = {
-                                    showSendOptionsMenu = false
-                                    val sending = tfv.text
-                                    tfv = TextFieldValue("")
-                                    onSendMessage(sending, false, System.currentTimeMillis() + 600_000L, null)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("🕒 明早 09:00 定时发送") },
-                                onClick = {
-                                    showSendOptionsMenu = false
-                                    val sending = tfv.text
-                                    tfv = TextFieldValue("")
-                                    onSendMessage(sending, false, System.currentTimeMillis() + 43_200_000L, null)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("🔥 阅后即焚 (60秒自毁)") },
-                                onClick = {
-                                    showSendOptionsMenu = false
-                                    val sending = tfv.text
-                                    tfv = TextFieldValue("")
-                                    onSendMessage(sending, false, null, 60)
-                                },
-                            )
-                        }
-                    }
-                } else {
+                // Continuously mounted Hold-to-Record Mic Gesture Host (never disposes on isRecording flip!)
+                if (!canSend || recordingState.isRecording) {
                     Box(
                         modifier = Modifier
-                            .size(44.dp)
+                            .padding(bottom = 5.dp)
+                            .size(36.dp)
                             .clip(CircleShape)
-                            .background(palette.primaryAccent.copy(alpha = 0.14f))
-                            .pointerInput(recordingState.mode) {
+                            .background(if (recordingState.isRecording) palette.destructiveRed else palette.inputBg)
+                            .border(
+                                width = if (recordingState.isRecording) 0.dp else 0.5.dp,
+                                color = if (recordingState.isRecording) Color.Transparent else palette.borderColor,
+                                shape = CircleShape,
+                            )
+                            .pointerInput(chat.id) {
+                                var totalDragX = 0f
+                                var totalDragY = 0f
                                 detectDragGesturesAfterLongPress(
                                     onDragStart = {
-                                        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                            onStartRecording()
-                                        } else {
-                                            audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                        }
-                                    },
-                                    onDrag = { change, dragAmount ->
-                                        change.consume()
-                                        onDragRecording(dragAmount.x, dragAmount.y)
+                                        totalDragX = 0f
+                                        totalDragY = 0f
+                                        requestOrStartRecording()
                                     },
                                     onDragEnd = {
-                                        if (!recordingState.lockedHandsFree) onFinishRecording()
+                                        if (latestRecordingState.isRecording && !latestRecordingState.lockedHandsFree) {
+                                            onFinishRecording()
+                                        }
+                                    },
+                                    onDragCancel = {
+                                        if (latestRecordingState.isRecording && !latestRecordingState.lockedHandsFree) {
+                                            onCancelRecording()
+                                        }
+                                    },
+                                    onDrag = { _, dragAmount ->
+                                        totalDragX += dragAmount.x
+                                        totalDragY += dragAmount.y
+                                        onDragRecording(totalDragX, totalDragY)
                                     },
                                 )
                             }
-                            .combinedClickable(
-                                onClick = onToggleRecordMode,
-                                onLongClick = {
-                                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                        onStartRecording()
-                                    } else {
-                                        audioPermLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                    }
-                                },
-                            )
+                            .clickable {
+                                if (latestRecordingState.isRecording) {
+                                    onFinishRecording()
+                                } else {
+                                    requestOrStartRecording()
+                                }
+                            }
                             .testTag("telegram-record-button"),
                         contentAlignment = Alignment.Center,
                     ) {
                         TelegramIcon(
-                            glyph = if (recordingState.mode == ComposerRecordMode.VOICE_MIC) TelegramGlyph.MIC else TelegramGlyph.VIDEO_ROUND,
-                            tint = palette.primaryAccent,
-                            size = 22.dp,
+                            glyph = if (recordingState.mode == ComposerRecordMode.ROUND_VIDEO_NOTE) TelegramGlyph.VIDEO_ROUND else TelegramGlyph.MIC,
+                            tint = if (recordingState.isRecording) Color.White else palette.secondaryText,
+                            size = 18.dp,
                         )
                     }
                 }
             }
         }
 
-        // 5. Emoji / Sticker Packs / GIF Picker Panel
-        AnimatedVisibility(visible = showEmojiStickerPanel) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(250.dp)
-                    .background(palette.elevatedSurface),
+        // Inline Emoji / Sticker / Honest GIF Panel
+        if (showEmojiPanel) {
+            Surface(
+                color = palette.cardBg,
+                modifier = Modifier.fillMaxWidth().height(230.dp),
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    listOf("😀 Emoji", "🎨 贴纸包", "🎬 GIF 动图").forEachIndexed { idx, tabLabel ->
-                        Box(
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        listOf("表情", "贴纸", "GIF").forEachIndexed { idx, label ->
+                            val sel = emojiPanelTab == idx
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (sel) palette.selectedPillBackground else palette.inputBg,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { emojiPanelTab = idx },
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (sel) palette.selectedPillContent else palette.primaryText,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp),
+                                )
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = palette.inputBg,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (emojiPanelTab == idx) palette.primaryAccent.copy(alpha = 0.18f) else Color.Transparent)
-                                .clickable { emojiPanelTab = idx }
-                                .padding(horizontal = 12.dp, vertical = 5.dp),
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable(onClick = onToggleRecordMode),
                         ) {
                             Text(
-                                tabLabel,
-                                color = if (emojiPanelTab == idx) palette.primaryAccent else palette.secondaryText,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                text = if (recordingState.mode == ComposerRecordMode.ROUND_VIDEO_NOTE) {
+                                    if (strings.isEnglish) "Video Note" else "视频消息"
+                                } else {
+                                    if (strings.isEnglish) "Voice Mode" else "语音模式"
+                                },
+                                color = palette.primaryAccent,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
                             )
                         }
                     }
-                }
-                TelegramHairlineDivider()
-                when (emojiPanelTab) {
-                    0 -> {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(8),
-                            contentPadding = PaddingValues(8.dp),
-                        ) {
-                            items(QuickEmojiPalette) { emoji ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(40.dp)
-                                        .clip(CircleShape)
-                                        .clickable {
-                                            val next = tfv.text + emoji
-                                            tfv = TextFieldValue(next, TextRange(next.length))
-                                            onDraftChange(next)
-                                        },
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Text(emoji, fontSize = 22.sp)
+                    when (emojiPanelTab) {
+                        0 -> {
+                            val emojis = listOf(
+                                "😀", "😄", "😊", "🙏", "❤️", "👍", "👏", "🎉",
+                                "🔥", "✨", "🤔", "😢", "😂", "🥳", "🚀", "💡",
+                                "👌", "🤝", "🌿", "☀️", "🌙", "⭐", "📌", "🔔",
+                            )
+                            LazyVerticalGrid(
+                                columns = GridCells.Fixed(8),
+                                contentPadding = PaddingValues(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                            ) {
+                                items(emojis) { emoji ->
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable {
+                                                val next = tfv.text + emoji
+                                                tfv = TextFieldValue(next, TextRange(next.length))
+                                                onDraftChange(next)
+                                            }
+                                            .padding(6.dp),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Text(emoji, fontSize = 22.sp)
+                                    }
                                 }
                             }
                         }
-                    }
-                    1 -> {
-                        LazyColumn(contentPadding = PaddingValues(10.dp)) {
-                            items(stickerPacks, key = { it.id }) { pack ->
-                                Text(pack.title, color = palette.secondaryText, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(vertical = 4.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    items(pack.stickers) { stk ->
+
+                        1 -> {
+                            if (stickerPacks.isEmpty()) {
+                                Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                                    Text("暂无已安装的贴纸包", color = palette.secondaryText, fontSize = 13.sp)
+                                }
+                            } else {
+                                val pack = stickerPacks.first()
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(5),
+                                    contentPadding = PaddingValues(10.dp),
+                                ) {
+                                    items(pack.stickers) { sticker ->
                                         Box(
                                             modifier = Modifier
-                                                .size(56.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(palette.surfaceColor)
+                                                .clip(RoundedCornerShape(10.dp))
                                                 .clickable {
-                                                    onSendSticker(stk, pack.title)
-                                                    showEmojiStickerPanel = false
-                                                },
+                                                    onSendSticker(sticker, pack.title)
+                                                    showEmojiPanel = false
+                                                }
+                                                .padding(8.dp),
                                             contentAlignment = Alignment.Center,
                                         ) {
-                                            Text(stk, fontSize = 30.sp)
+                                            Text(sticker, fontSize = 30.sp)
                                         }
                                     }
                                 }
-                                Spacer(Modifier.height(8.dp))
                             }
                         }
-                    }
-                    else -> {
-                        LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
-                            contentPadding = PaddingValues(10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            items(gifCatalog, key = { it.id }) { gif ->
+
+                        else -> {
+                            if (gifCatalog.isEmpty()) {
                                 Box(
-                                    modifier = Modifier
-                                        .height(78.dp)
-                                        .clip(RoundedCornerShape(14.dp))
-                                        .background(Color(gif.accentHex.toInt()).copy(alpha = 0.20f))
-                                        .border(1.dp, Color(gif.accentHex.toInt()).copy(alpha = 0.45f), RoundedCornerShape(14.dp))
-                                        .clickable {
-                                            onSendGif(gif)
-                                            showEmojiStickerPanel = false
-                                        }
-                                        .padding(10.dp),
+                                    modifier = Modifier.fillMaxWidth().weight(1f).padding(20.dp),
+                                    contentAlignment = Alignment.Center,
                                 ) {
-                                    Column {
-                                        Text(gif.previewGlyph, fontSize = 24.sp)
-                                        Spacer(Modifier.height(4.dp))
-                                        Text(gif.title, color = palette.primaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    Text(
+                                        text = if (strings.isEnglish) "No GIF provider configured." else "暂未配置 GIF 动图库",
+                                        color = palette.secondaryText,
+                                        fontSize = 13.sp,
+                                    )
+                                }
+                            } else {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(3),
+                                    contentPadding = PaddingValues(10.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    items(gifCatalog, key = { it.id }) { gif ->
+                                        Surface(
+                                            shape = RoundedCornerShape(10.dp),
+                                            color = palette.modalBg,
+                                            modifier = Modifier.clickable {
+                                                onSendGif(gif)
+                                                showEmojiPanel = false
+                                            },
+                                        ) {
+                                            Text(
+                                                text = gif.title,
+                                                color = palette.primaryText,
+                                                fontSize = 12.sp,
+                                                textAlign = TextAlign.Center,
+                                                modifier = Modifier.padding(12.dp),
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -759,212 +676,276 @@ fun TelegramComposer(
             }
         }
     }
+}
 
-    // Attachment Bottom Sheet
-    TelegramBottomSheet(visible = showAttachmentSheet, onDismiss = { showAttachmentSheet = false }) {
-        Text("发送附件与富媒体", color = palette.primaryText, fontSize = 17.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp))
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            modifier = Modifier.fillMaxWidth().height(196.dp),
-            contentPadding = PaddingValues(12.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+// ============================================================================
+// Hoisted Root-Level Attachment Sheet & Dialogs (Rendered inside TelegramChatScreen Root Box!)
+// ============================================================================
+
+@Composable
+internal fun TelegramAttachmentRootOverlay(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    onPickPhotoOrFile: () -> Unit,
+    onOpenPollCreator: () -> Unit,
+    onOpenContactDialog: () -> Unit,
+    onRequestLocation: () -> Unit,
+    onRequestQuickVoice: () -> Unit,
+) {
+    if (!visible) return
+    val palette = LocalTelegramPalette.current
+    val strings = LocalAppleUiStrings.current
+
+    TelegramBottomSheet(visible = visible, onDismiss = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .testTag("chat-root-attachment-sheet"),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            val itemsList = listOf(
-                Triple("🖼", "相册图片") { showAttachmentSheet = false; mediaPicker.launch("image/*") },
-                Triple("📄", "文件文档") { showAttachmentSheet = false; mediaPicker.launch("*/*") },
-                Triple("📊", "投票/测验") { showAttachmentSheet = false; showPollCreatorDialog = true },
-                Triple("📍", "实时位置") {
-                    showAttachmentSheet = false
-                    locPermLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-                },
-                Triple("👤", "联系人") { showAttachmentSheet = false; showContactDialog = true },
-                Triple("🎙", "快捷语音") {
-                    showAttachmentSheet = false
-                    onStartRecording()
-                },
-                Triple("🪷", "全球法布施") { showAttachmentSheet = false; onOpenGlobalDharmaMiniApp() },
-                Triple("🤖", "Mika 操控") { showAttachmentSheet = false; onPromptMikaTask() },
+            Text(
+                text = if (strings.isEnglish) "Share & Attach" else "发送附件与互动",
+                color = palette.primaryText,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
             )
-            items(itemsList) { (emoji, title, action) ->
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable(onClick = action),
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(50.dp)
-                            .clip(CircleShape)
-                            .background(palette.primaryAccent.copy(alpha = 0.14f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(emoji, fontSize = 22.sp)
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Text(title, color = palette.primaryText, fontSize = 12.sp, maxLines = 1)
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                AttachmentTile(
+                    glyph = TelegramGlyph.MEDIA_PHOTO,
+                    color = Color(0xFF007AFF),
+                    label = if (strings.isEnglish) "Photo / File" else "照片/文件",
+                    onClick = {
+                        onDismiss()
+                        onPickPhotoOrFile()
+                    },
+                )
+                AttachmentTile(
+                    glyph = TelegramGlyph.POLL_BARS,
+                    color = Color(0xFFFF9500),
+                    label = if (strings.isEnglish) "Poll" else "投票",
+                    onClick = {
+                        onDismiss()
+                        onOpenPollCreator()
+                    },
+                )
+                AttachmentTile(
+                    glyph = TelegramGlyph.LOCATION_PIN,
+                    color = Color(0xFF34C759),
+                    label = if (strings.isEnglish) "Location" else "位置",
+                    onClick = {
+                        onDismiss()
+                        onRequestLocation()
+                    },
+                )
+                AttachmentTile(
+                    glyph = TelegramGlyph.CONTACTS,
+                    color = Color(0xFF5856D6),
+                    label = if (strings.isEnglish) "Contact" else "联系人",
+                    onClick = {
+                        onDismiss()
+                        onOpenContactDialog()
+                    },
+                )
+                AttachmentTile(
+                    glyph = TelegramGlyph.MIC,
+                    color = Color(0xFFFF3B30),
+                    label = if (strings.isEnglish) "Voice" else "语音",
+                    onClick = {
+                        onDismiss()
+                        onRequestQuickVoice()
+                    },
+                )
             }
+            Spacer(Modifier.height(4.dp))
         }
     }
-
-    if (showLinkDialog) {
-        var urlInput by remember { mutableStateOf("https://") }
-        AlertDialog(
-            onDismissRequest = { showLinkDialog = false },
-            title = { Text("插入超链接 (UTF-16 text_url)") },
-            text = {
-                OutlinedTextField(value = urlInput, onValueChange = { urlInput = it }, label = { Text("目标 URL") }, singleLine = true)
-            },
-            confirmButton = {
-                Button(onClick = {
-                    val next = TelegramEntitiesEngine.wrapDraftSelectionWithMarkdown(
-                        draft = tfv.text,
-                        selectionStart = tfv.selection.min,
-                        selectionEnd = tfv.selection.max,
-                        type = MessageEntityType.TEXT_URL,
-                        url = urlInput.trim(),
-                    )
-                    tfv = TextFieldValue(next, TextRange(next.length))
-                    onDraftChange(next)
-                    showLinkDialog = false
-                }) { Text("确定") }
-            },
-            dismissButton = { TextButton(onClick = { showLinkDialog = false }) { Text("取消") } },
-        )
-    }
-
-    if (showPollCreatorDialog) {
-        PollAndQuizCreatorDialog(
-            onDismiss = { showPollCreatorDialog = false },
-            onCreate = { q, opts, anon, multi, quiz, correctIdx, exp ->
-                onSendPollOrQuiz(q, opts, anon, multi, quiz, correctIdx, exp)
-                showPollCreatorDialog = false
-            },
-        )
-    }
-
-    if (showContactDialog) {
-        var cName by remember { mutableStateOf("觉行居士") }
-        var cPhone by remember { mutableStateOf("+86 139 1080 2026") }
-        AlertDialog(
-            onDismissRequest = { showContactDialog = false },
-            title = { Text("发送联系人名片") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(value = cName, onValueChange = { cName = it }, label = { Text("姓名") }, singleLine = true)
-                    OutlinedTextField(value = cPhone, onValueChange = { cPhone = it }, label = { Text("电话号码") }, singleLine = true)
-                }
-            },
-            confirmButton = {
-                Button(onClick = {
-                    onSendContact(cName, cPhone)
-                    showContactDialog = false
-                }) { Text("发送") }
-            },
-            dismissButton = { TextButton(onClick = { showContactDialog = false }) { Text("取消") } },
-        )
-    }
 }
 
 @Composable
-private fun FormatChip(label: String, onClick: () -> Unit) {
-    val palette = LocalTelegramPalette.current
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = palette.surfaceColor,
-        modifier = Modifier.clickable(onClick = onClick),
-        shadowElevation = 1.dp,
-    ) {
-        Text(
-            text = label,
-            color = palette.primaryText,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-        )
-    }
-}
-
-@Composable
-private fun PollAndQuizCreatorDialog(
-    onDismiss: () -> Unit,
-    onCreate: (String, List<String>, Boolean, Boolean, Boolean, Int, String?) -> Unit,
+private fun AttachmentTile(
+    glyph: TelegramGlyph,
+    color: Color,
+    label: String,
+    onClick: () -> Unit,
 ) {
-    var question by remember { mutableStateOf("") }
-    var opt1 by remember { mutableStateOf("") }
-    var opt2 by remember { mutableStateOf("") }
-    var opt3 by remember { mutableStateOf("") }
-    var anonymous by remember { mutableStateOf(true) }
-    var multiple by remember { mutableStateOf(false) }
-    var quizMode by remember { mutableStateOf(false) }
-    var correctIdx by remember { mutableIntStateOf(0) }
-    var explanation by remember { mutableStateOf("") }
+    val palette = LocalTelegramPalette.current
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(6.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(color),
+            contentAlignment = Alignment.Center,
+        ) {
+            TelegramIcon(glyph = glyph, tint = Color.White, size = 22.dp)
+        }
+        Spacer(Modifier.height(5.dp))
+        Text(label, color = palette.primaryText, fontSize = 11.sp, maxLines = 1)
+    }
+}
+
+@Composable
+internal fun TelegramContactShareDialog(
+    onDismiss: () -> Unit,
+    onSendContact: (name: String, phone: String) -> Unit,
+) {
+    val palette = LocalTelegramPalette.current
+    val strings = LocalAppleUiStrings.current
+    var cName by remember { mutableStateOf("") }
+    var cPhone by remember { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("创建投票或测验问答 (Poll / Quiz)") },
+        containerColor = palette.modalBg,
+        titleContentColor = palette.primaryText,
+        textContentColor = palette.primaryText,
+        title = { Text(if (strings.isEnglish) "Share Contact" else "发送联系人名片") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = cName,
+                    onValueChange = { cName = it },
+                    label = { Text(if (strings.isEnglish) "Name" else "姓名") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = palette.primaryText,
+                        unfocusedTextColor = palette.primaryText,
+                        cursorColor = palette.searchCursorColor,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = cPhone,
+                    onValueChange = { cPhone = it },
+                    label = { Text(if (strings.isEnglish) "Phone Number" else "电话号码") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = palette.primaryText,
+                        unfocusedTextColor = palette.primaryText,
+                        cursorColor = palette.searchCursorColor,
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = cName.isNotBlank() && cPhone.isNotBlank(),
+                onClick = {
+                    onSendContact(cName.trim(), cPhone.trim())
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = palette.primaryAccent, contentColor = Color.White),
+            ) {
+                Text(if (strings.isEnglish) "Send" else "发送")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(strings.cancel, color = palette.topBarActionColor)
+            }
+        },
+    )
+}
+
+@Composable
+internal fun TelegramPollCreatorDialog(
+    onDismiss: () -> Unit,
+    onCreatePoll: (
+        question: String,
+        options: List<String>,
+        isAnonymous: Boolean,
+        multipleAnswers: Boolean,
+        isQuiz: Boolean,
+        correctIndex: Int,
+        explanation: String?,
+    ) -> Unit,
+) {
+    val palette = LocalTelegramPalette.current
+    val strings = LocalAppleUiStrings.current
+    var question by remember { mutableStateOf("") }
+    var option1 by remember { mutableStateOf("") }
+    var option2 by remember { mutableStateOf("") }
+    var option3 by remember { mutableStateOf("") }
+    var isAnonymous by remember { mutableStateOf(true) }
+    var multipleAnswers by remember { mutableStateOf(false) }
+
+    val options = listOf(option1.trim(), option2.trim(), option3.trim()).filter { it.isNotEmpty() }
+    val canCreate = question.isNotBlank() && options.size >= 2
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = palette.modalBg,
+        titleContentColor = palette.primaryText,
+        textContentColor = palette.primaryText,
+        title = { Text(if (strings.isEnglish) "Create Poll" else "发起投票") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = question, onValueChange = { question = it }, label = { Text("投票问题") }, singleLine = true)
-                OutlinedTextField(value = opt1, onValueChange = { opt1 = it }, label = { Text("选项 1") }, singleLine = true)
-                OutlinedTextField(value = opt2, onValueChange = { opt2 = it }, label = { Text("选项 2") }, singleLine = true)
-                OutlinedTextField(value = opt3, onValueChange = { opt3 = it }, label = { Text("选项 3 (可选)") }, singleLine = true)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    TextButton(onClick = { anonymous = !anonymous }) { Text(if (anonymous) "☑️ 匿名" else "⬜ 匿名") }
-                    TextButton(onClick = { multiple = !multiple; if (multiple) quizMode = false }) { Text(if (multiple) "☑️ 多选" else "⬜ 多选") }
-                    TextButton(onClick = { quizMode = !quizMode; if (quizMode) multiple = false }) { Text(if (quizMode) "☑️ 测验" else "⬜ 测验") }
+                val colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = palette.primaryText,
+                    unfocusedTextColor = palette.primaryText,
+                    cursorColor = palette.searchCursorColor,
+                )
+                OutlinedTextField(value = question, onValueChange = { question = it }, label = { Text("问题") }, singleLine = true, colors = colors, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = option1, onValueChange = { option1 = it }, label = { Text("选项 1") }, singleLine = true, colors = colors, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = option2, onValueChange = { option2 = it }, label = { Text("选项 2") }, singleLine = true, colors = colors, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = option3, onValueChange = { option3 = it }, label = { Text("选项 3（可选）") }, singleLine = true, colors = colors, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("匿名投票", color = palette.primaryText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = isAnonymous, onCheckedChange = { isAnonymous = it })
                 }
-                if (quizMode) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Text("正确答案:", fontSize = 12.sp)
-                        listOf(0, 1, 2).forEach { idx ->
-                            TextButton(onClick = { correctIdx = idx }) {
-                                Text(if (correctIdx == idx) "● #${idx + 1}" else "#${idx + 1}")
-                            }
-                        }
-                    }
-                    OutlinedTextField(value = explanation, onValueChange = { explanation = it }, label = { Text("测验答案解析说明") }, singleLine = true)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("允许多选", color = palette.primaryText, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Switch(checked = multipleAnswers, onCheckedChange = { multipleAnswers = it })
                 }
             }
         },
         confirmButton = {
-            Button(onClick = {
-                onCreate(question, listOf(opt1, opt2, opt3), anonymous, multiple, quizMode, correctIdx, explanation)
-            }) { Text("发送投票") }
+            Button(
+                enabled = canCreate,
+                onClick = {
+                    onCreatePoll(question.trim(), options, isAnonymous, multipleAnswers, false, 0, null)
+                    onDismiss()
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = palette.primaryAccent, contentColor = Color.White),
+            ) {
+                Text(if (strings.isEnglish) "Create" else "发起")
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(strings.cancel, color = palette.topBarActionColor)
+            }
+        },
     )
 }
 
+/**
+ * Fetches real device coordinates ONLY when fine or coarse location permission is granted and a real
+ * last-known fix exists. NEVER fabricates Hangzhou/Shanghai fallback coordinates!
+ */
 @SuppressLint("MissingPermission")
-private fun fetchCurrentOrDefaultLocation(
-    context: Context,
-    onResult: (Double, Double, String) -> Unit,
-) {
-    val fineGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-    val coarseGranted = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-    if (!fineGranted && !coarseGranted) {
-        onResult(30.2741, 120.1551, "共享位置 · 灵隐禅境坐标")
-        return
-    }
-    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
-    val provider = when {
-        lm?.isProviderEnabled(LocationManager.GPS_PROVIDER) == true -> LocationManager.GPS_PROVIDER
-        lm?.isProviderEnabled(LocationManager.NETWORK_PROVIDER) == true -> LocationManager.NETWORK_PROVIDER
-        else -> null
-    }
-    if (lm == null || provider == null) {
-        onResult(30.2741, 120.1551, "共享位置 · 当前设备坐标")
-        return
-    }
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        lm.getCurrentLocation(provider, CancellationSignal(), context.mainExecutor) { loc ->
-            if (loc != null) onResult(loc.latitude, loc.longitude, "GPS 实时位置")
-            else onResult(30.2741, 120.1551, "共享位置")
+internal fun fetchRealDeviceLocationOrNull(context: Context): Pair<Double, Double>? {
+    val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+    if (!fine && !coarse) return null
+    val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+    val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
+    for (p in providers) {
+        val loc = runCatching { lm.getLastKnownLocation(p) }.getOrNull()
+        if (loc != null && (loc.latitude != 0.0 || loc.longitude != 0.0)) {
+            return loc.latitude to loc.longitude
         }
-    } else {
-        @Suppress("DEPRECATION")
-        val loc = lm.getLastKnownLocation(provider)
-        if (loc != null) onResult(loc.latitude, loc.longitude, "实时位置")
-        else onResult(30.2741, 120.1551, "共享位置")
     }
+    return null
 }

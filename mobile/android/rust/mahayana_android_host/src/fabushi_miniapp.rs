@@ -8,8 +8,7 @@ use ::fabushi_miniapp::achievements::AchievementSystem;
 use ::fabushi_miniapp::countries::{all_countries, country_by_code, search_countries};
 use ::fabushi_miniapp::scene_math::{render_home_scene, render_zen_scene};
 use ::fabushi_miniapp::state::{
-    dharma_ai_fallback_reply, FabushiClientState, HttpActionEffect, HttpResponsePayload,
-    LockedPractice, UiCommand,
+    FabushiClientState, HttpActionEffect, HttpResponsePayload, LockedPractice, UiCommand,
 };
 use ::fabushi_miniapp::storage::{
     activate_membership, create_manual_practice_record, delete_practice_record,
@@ -90,13 +89,14 @@ fn hydrate_client_state_from_db(
     Ok(())
 }
 
-fn execute_effects_against_sqlite(
+fn execute_local_effects_against_sqlite(
     conn: &Connection,
     st: &mut FabushiClientState,
     user_id: i64,
     effects: Vec<HttpActionEffect>,
-) -> Result<usize, String> {
+) -> Result<(usize, Vec<(String, Option<String>)>), String> {
     let mut applied = 0usize;
+    let mut pending_ai_chats: Vec<(String, Option<String>)> = Vec::new();
     for effect in effects {
         applied += 1;
         match effect {
@@ -280,66 +280,179 @@ fn execute_effects_against_sqlite(
                 });
             }
             HttpActionEffect::SendAiChat { message, .. } => {
-                let reply = run_dharma_ai_query(
-                    conn,
-                    &message,
-                    st.locked_practice.as_ref().map(|lp| lp.title.as_str()),
-                    st.locale.as_str(),
-                )
-                .0;
-                let _ = st.apply_http_effect(HttpResponsePayload::AiChatReply { reply });
+                pending_ai_chats.push((
+                    message,
+                    st.locked_practice.as_ref().map(|lp| lp.title.clone()),
+                ));
             }
             HttpActionEffect::SyncCloudStorage { .. } | HttpActionEffect::EmitWebAppData { .. } => {}
         }
     }
-    Ok(applied)
+    Ok((applied, pending_ai_chats))
 }
 
 fn run_dharma_ai_query(
-    conn: &Connection,
+    db: &std::sync::Mutex<Connection>,
     prompt: &str,
     locked_practice: Option<&str>,
-    locale: &str,
-) -> (String, &'static str) {
-    if crate::magpie::has_configured_live_seat(conn) {
-        let sys = format!(
-            "你是全球法布施与禅修室的佛学参学顾问。请以温和、恭敬、契合大乘般若经典的语言解答问题。{}",
-            locked_practice
-                .map(|s| format!("修行者当前一门深入的主修功课为《{s}》。"))
-                .unwrap_or_default()
+) -> Result<(String, &'static str), String> {
+    let has_seat = crate::with_db(db, |conn| Ok(crate::magpie::has_configured_live_seat(conn)))?;
+    if !has_seat {
+        return Err(
+            "PROVIDER_NOT_CONFIGURED: Configure an LLM API key in Magpie Gateway before using Dharma AI Chat"
+                .into(),
         );
-        let req = UnifiedRequest {
-            model: "auto".into(),
-            system_prompt: sys,
-            messages: vec![UnifiedMessage {
-                role: UnifiedRole::User,
-                content: prompt.to_string(),
-                name: None,
-                tool_call_id: None,
-                tool_calls: Vec::new(),
-                reasoning: None,
-            }],
-            tools: Vec::new(),
-            temperature: Some(0.5),
-            max_tokens: Some(512),
-            thinking_budget_tokens: None,
-            stream: true,
-        };
-        if let Ok(live) = crate::magpie::execute_live_request(conn, &req, None, None, None, |_| {}) {
-            if !live.reply.trim().is_empty() {
-                return (live.reply, "magpie_live");
-            }
-        }
     }
-    (
-        dharma_ai_fallback_reply(prompt, locked_practice, locale),
-        "sutra_canon",
-    )
+    let sys = format!(
+        "你是全球法布施与禅修室的佛学参学顾问。请以温和、恭敬、契合大乘般若经典的语言解答问题。{}",
+        locked_practice
+            .map(|s| format!("修行者当前一门深入的主修功课为《{s}》。"))
+            .unwrap_or_default()
+    );
+    let req = UnifiedRequest {
+        model: "auto".into(),
+        system_prompt: sys,
+        messages: vec![UnifiedMessage {
+            role: UnifiedRole::User,
+            content: prompt.to_string(),
+            name: None,
+            tool_call_id: None,
+            tool_calls: Vec::new(),
+            reasoning: None,
+        }],
+        tools: Vec::new(),
+        temperature: Some(0.5),
+        max_tokens: Some(512),
+        thinking_budget_tokens: None,
+        stream: true,
+    };
+    let live = crate::magpie::execute_live_request(db, &req, None, None, None, |_| {})?;
+    if live.reply.trim().is_empty() {
+        return Err(
+            "UPSTREAM_EMPTY_REPLY: Configured Magpie provider returned an empty response".into(),
+        );
+    }
+    Ok((live.reply, "magpie_live"))
 }
 
-pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<Value, String> {
-    init_schema(conn)?;
+pub fn handle_rpc(
+    db: &std::sync::Mutex<Connection>,
+    submethod: &str,
+    params: &Value,
+) -> Result<Value, String> {
     let user_id = resolve_user_id(params);
+    match submethod {
+        "dispatchUi" => {
+            let cmd_val = params
+                .get("command")
+                .cloned()
+                .unwrap_or_else(|| params.clone());
+            let cmd: UiCommand = serde_json::from_value(cmd_val)
+                .map_err(|e| format!("Invalid fabushiMiniapp UiCommand JSON: {e}"))?;
+            let (applied, pending_ai) = crate::with_db(db, |conn| {
+                init_schema(conn)?;
+                let mut st = shared_client_state().lock();
+                if st.profile.user_id != user_id {
+                    let _ = hydrate_client_state_from_db(conn, &mut st, user_id);
+                }
+                let dispatched = st.dispatch(cmd);
+                execute_local_effects_against_sqlite(conn, &mut st, user_id, dispatched.effects)
+            })?;
+            // Run any AI chat queries with BOTH shared_client_state and DB mutexes unlocked!
+            for (msg, locked_title) in pending_ai {
+                let (reply, _) = run_dharma_ai_query(db, &msg, locked_title.as_deref())?;
+                let mut st = shared_client_state().lock();
+                let _ = st.apply_http_effect(HttpResponsePayload::AiChatReply { reply });
+            }
+            let st = shared_client_state().lock();
+            let snapshot = st.snapshot();
+            let draw_commands = st.render_scene(st.last_viewport_w, st.last_viewport_h);
+            Ok(json!({
+                "effectsApplied": applied,
+                "snapshot": snapshot,
+                "drawCommands": draw_commands,
+            }))
+        }
+
+        "tickScene" => {
+            let dt_ms = params.get("dtMs").and_then(Value::as_f64).unwrap_or(16.0);
+            let width = params.get("width").and_then(Value::as_f64).unwrap_or(420.0);
+            let height = params.get("height").and_then(Value::as_f64).unwrap_or(780.0);
+            let now_ms = chrono::Utc::now().timestamp_millis() as f64;
+            let (applied, pending_ai) = crate::with_db(db, |conn| {
+                init_schema(conn)?;
+                let mut st = shared_client_state().lock();
+                let res = st.tick(dt_ms, now_ms, width, height);
+                execute_local_effects_against_sqlite(conn, &mut st, user_id, res.effects)
+            })?;
+            // Run any AI chat queries with BOTH shared_client_state and DB mutexes unlocked!
+            for (msg, locked_title) in pending_ai {
+                let (reply, _) = run_dharma_ai_query(db, &msg, locked_title.as_deref())?;
+                let mut st = shared_client_state().lock();
+                let _ = st.apply_http_effect(HttpResponsePayload::AiChatReply { reply });
+            }
+            let st = shared_client_state().lock();
+            Ok(json!({
+                "effectsApplied": applied,
+                "snapshot": st.snapshot(),
+                "drawCommands": st.render_scene(width, height),
+            }))
+        }
+
+        "renderHomeScene" => {
+            let width = params.get("width").and_then(Value::as_f64).unwrap_or(420.0);
+            let height = params.get("height").and_then(Value::as_f64).unwrap_or(780.0);
+            let dt_ms = params.get("dtMs").and_then(Value::as_f64).unwrap_or(16.0);
+            let is_3d = params.get("is3d").and_then(Value::as_bool).unwrap_or(false);
+            let now_ms = chrono::Utc::now().timestamp_millis() as f64;
+            let mut st = shared_client_state().lock();
+            if let Some(dx) = params.get("dragDx").and_then(Value::as_f64) {
+                let dy = params.get("dragDy").and_then(Value::as_f64).unwrap_or(0.0);
+                st.globe_scene.drag(dx, dy, is_3d);
+            } else {
+                st.globe_scene.advance(dt_ms, now_ms);
+            }
+            let cmds = render_home_scene(&st.globe_scene, width, height, now_ms, is_3d);
+            Ok(json!({
+                "rotationLonDeg": st.globe_scene.rotation_lon_deg,
+                "tiltLatDeg": st.globe_scene.tilt_lat_deg,
+                "activeBeams": st.globe_scene.beams.len(),
+                "drawCommands": cmds,
+            }))
+        }
+
+        "aiDharmaChat" => {
+            let prompt = params
+                .get("prompt")
+                .or_else(|| params.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("如何安住当下？");
+            let locked = crate::with_db(db, |conn| {
+                init_schema(conn)?;
+                Ok(get_locked_practice(conn, user_id)
+                    .ok()
+                    .flatten()
+                    .map(|lp| lp.title))
+            })?;
+            let (reply, source) = run_dharma_ai_query(db, prompt, locked.as_deref())?;
+            Ok(json!({
+                "prompt": prompt,
+                "reply": reply,
+                "source": source,
+            }))
+        }
+
+        _ => crate::with_db(db, |conn| handle_rpc_local(conn, user_id, submethod, params)),
+    }
+}
+
+fn handle_rpc_local(
+    conn: &Connection,
+    user_id: i64,
+    submethod: &str,
+    params: &Value,
+) -> Result<Value, String> {
+    init_schema(conn)?;
 
     match submethod {
         "status" => {
@@ -360,7 +473,7 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                     "wheelRotations": wheel_rot,
                     "totalOfferings": bundle.profile.total_transfer_count,
                     "totalTransferBytes": bundle.profile.total_transfer_bytes,
-                    "totalPracticeSeconds": bundle.profile.total_practice_minutes * 60,
+                    "totalPracticeSeconds": bundle.profile.total_practice_minutes.saturating_mul(60),
                     "totalPracticeMinutes": bundle.profile.total_practice_minutes,
                     "totalPracticeSessions": bundle.profile.total_practice_sessions,
                     "totalChantCount": bundle.profile.total_practice_chants,
@@ -614,15 +727,19 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 .find(|s| s.id == raw_sutra || s.title == raw_sutra)
                 .map(|s| s.title.clone())
                 .unwrap_or_else(|| raw_sutra.to_string());
+            const MAX_PRACTICE_DURATION_SECS: u64 = 604_800; // 7 days
+            const MAX_PRACTICE_CHANT_COUNT: u64 = 1_000_000;
             let duration_sec = params
                 .get("durationSeconds")
                 .and_then(Value::as_u64)
-                .unwrap_or(600);
-            let duration_mins = ((duration_sec + 59) / 60).max(1) as u32;
+                .unwrap_or(600)
+                .min(MAX_PRACTICE_DURATION_SECS);
+            let duration_mins = (duration_sec.saturating_add(59) / 60).max(1) as u32;
             let chant_count = params
                 .get("chantCount")
                 .and_then(Value::as_u64)
-                .unwrap_or(21) as u32;
+                .unwrap_or(21)
+                .min(MAX_PRACTICE_CHANT_COUNT) as u32;
             let lock_sutra = params
                 .get("lockPractice")
                 .and_then(Value::as_bool)
@@ -647,13 +764,15 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 &sutra_title,
                 duration_mins,
                 chant_count,
-                Some(now_ms - (duration_sec as i64) * 1000),
+                Some(now_ms.saturating_sub((duration_sec as i64).saturating_mul(1000))),
                 Some(now_ms),
                 notes,
             )
             .map_err(|e| e.to_string())?;
 
-            let merit_delta = ((duration_sec / 60) as i64) * 5 + (chant_count as i64) / 3;
+            let merit_delta = ((duration_sec / 60) as i64)
+                .saturating_mul(5)
+                .saturating_add((chant_count as i64) / 3);
             conn.execute(
                 "UPDATE dharma_android_aux SET merit_points = merit_points + ?1, updated_at_ms = ?2 WHERE user_id = ?3",
                 params![merit_delta, now_ms, user_id],
@@ -718,28 +837,6 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
             }))
         }
 
-        "renderHomeScene" => {
-            let width = params.get("width").and_then(Value::as_f64).unwrap_or(420.0);
-            let height = params.get("height").and_then(Value::as_f64).unwrap_or(780.0);
-            let dt_ms = params.get("dtMs").and_then(Value::as_f64).unwrap_or(16.0);
-            let is_3d = params.get("is3d").and_then(Value::as_bool).unwrap_or(false);
-            let now_ms = chrono::Utc::now().timestamp_millis() as f64;
-            let mut st = shared_client_state().lock();
-            if let Some(dx) = params.get("dragDx").and_then(Value::as_f64) {
-                let dy = params.get("dragDy").and_then(Value::as_f64).unwrap_or(0.0);
-                st.globe_scene.drag(dx, dy, is_3d);
-            } else {
-                st.globe_scene.advance(dt_ms, now_ms);
-            }
-            let cmds = render_home_scene(&st.globe_scene, width, height, now_ms, is_3d);
-            Ok(json!({
-                "rotationLonDeg": st.globe_scene.rotation_lon_deg,
-                "tiltLatDeg": st.globe_scene.tilt_lat_deg,
-                "activeBeams": st.globe_scene.beams.len(),
-                "drawCommands": cmds,
-            }))
-        }
-
         "renderZenScene" => {
             let width = params.get("width").and_then(Value::as_f64).unwrap_or(420.0);
             let height = params.get("height").and_then(Value::as_f64).unwrap_or(780.0);
@@ -763,66 +860,6 @@ pub fn handle_rpc(conn: &Connection, submethod: &str, params: &Value) -> Result<
                 "incenseProgress": st.zen_scene.incense_progress,
                 "isBurning": st.zen_scene.is_burning,
                 "drawCommands": cmds,
-            }))
-        }
-
-        "dispatchUi" => {
-            let cmd_val = params
-                .get("command")
-                .cloned()
-                .unwrap_or_else(|| params.clone());
-            let cmd: UiCommand = serde_json::from_value(cmd_val)
-                .map_err(|e| format!("Invalid fabushiMiniapp UiCommand JSON: {e}"))?;
-            let mut st = shared_client_state().lock();
-            if st.profile.user_id == 0 {
-                let _ = hydrate_client_state_from_db(conn, &mut st, user_id);
-            }
-            let dispatched = st.dispatch(cmd);
-            let applied =
-                execute_effects_against_sqlite(conn, &mut st, user_id, dispatched.effects)?;
-            let snapshot = st.snapshot();
-            let draw_commands = st.render_scene(st.last_viewport_w, st.last_viewport_h);
-            Ok(json!({
-                "effectsApplied": applied,
-                "snapshot": snapshot,
-                "drawCommands": draw_commands,
-            }))
-        }
-
-        "tickScene" => {
-            let dt_ms = params.get("dtMs").and_then(Value::as_f64).unwrap_or(16.0);
-            let width = params.get("width").and_then(Value::as_f64).unwrap_or(420.0);
-            let height = params.get("height").and_then(Value::as_f64).unwrap_or(780.0);
-            let now_ms = chrono::Utc::now().timestamp_millis() as f64;
-            let mut st = shared_client_state().lock();
-            let res = st.tick(dt_ms, now_ms, width, height);
-            let applied = execute_effects_against_sqlite(conn, &mut st, user_id, res.effects)?;
-            Ok(json!({
-                "effectsApplied": applied,
-                "snapshot": st.snapshot(),
-                "drawCommands": st.render_scene(width, height),
-            }))
-        }
-
-        "aiDharmaChat" => {
-            let prompt = params
-                .get("prompt")
-                .or_else(|| params.get("message"))
-                .and_then(Value::as_str)
-                .unwrap_or("如何安住当下？");
-            let locale = params
-                .get("locale")
-                .and_then(Value::as_str)
-                .unwrap_or("zh-CN");
-            let locked = get_locked_practice(conn, user_id)
-                .ok()
-                .flatten()
-                .map(|lp| lp.title);
-            let (reply, source) = run_dharma_ai_query(conn, prompt, locked.as_deref(), locale);
-            Ok(json!({
-                "prompt": prompt,
-                "reply": reply,
-                "source": source,
             }))
         }
 
